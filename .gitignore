@@ -1,0 +1,34 @@
+# Secrets — never commit
+.env
+
+# Data directory (cc.db lives here)
+data/
+
+# Local reference notes
+local-notes/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# DB files
+*.db
+*.db-wal
+*.db-shm
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp

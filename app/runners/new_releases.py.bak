@@ -1,0 +1,463 @@
+#!/usr/bin/env python3
+
+# PARITY TARGET:
+# This runner should match behavior/output of new_releases_v2.25.py
+# Chunk 3 refactor: shared config + logging ONLY (no logic changes)
+
+import os
+import sys
+import time
+import json
+import csv
+import re
+import logging
+import subprocess
+import shlex
+from datetime import datetime, timedelta
+from pathlib import Path
+
+import requests
+import pylast
+import spotipy
+from plexapi.server import PlexServer
+from plexapi.exceptions import PlexApiException
+from spotipy.oauth2 import SpotifyClientCredentials
+from spotipy.cache_handler import CacheFileHandler
+
+# ---- Shared core plumbing ----
+from core.config import CONFIG
+from core.logging import setup_logger
+
+# ---- Logger ----
+logger, run_id = setup_logger("new_releases")
+logger.info(f"Starting new_releases run_id={run_id}")
+
+# IMPORTANT: Keep legacy logging calls working (logging.info/error/etc)
+_root = logging.getLogger()
+_root.setLevel(logging.INFO)
+for h in list(_root.handlers):
+    _root.removeHandler(h)
+for h in logger.handlers:
+    _root.addHandler(h)
+
+# --- SCRIPT VERSION ---
+SCRIPT_VERSION = "New Release Finder v2.25"  # Correctly gets year from parent album for matching.
+
+# --- CONSTANTS ---
+__PLEX_API_ERROR__ = "__PLEX_API_ERROR__"
+
+# --- LOAD CONFIGURATION ---
+#CONFIG_FILE = '/mnt/user/data/scripts/discovery/credentials.env'
+#load_dotenv(dotenv_path=CONFIG_FILE)
+
+# Load variables from the .env file
+PLEX_URL = os.getenv('PLEX_URL')
+PLEX_TOKEN = os.getenv('PLEX_TOKEN')
+PLEX_MUSIC_LIBRARY_NAME = os.getenv('PLEX_MUSIC_LIBRARY_NAME')
+LASTFM_API_KEY = os.getenv('LASTFM_API_KEY')
+LASTFM_API_SECRET = os.getenv('LASTFM_API_SECRET')
+LASTFM_USERNAME = os.getenv('LASTFM_USERNAME')
+SPOTIPY_CLIENT_ID = os.getenv('SPOTIPY_CLIENT_ID')
+SPOTIPY_CLIENT_SECRET = os.getenv('SPOTIPY_CLIENT_SECRET')
+DISCORD_WEBHOOK_URL = os.getenv('DISCORD_WEBHOOK_URL')
+
+# --- Script Specific Config ---
+LOG_FILE = os.getenv('NEW_MUSIC_LOG_FILE')
+DOWNLOAD_DIR = os.getenv('DOWNLOAD_DIR')
+STREAMRIP_CONFIG = os.getenv('STREAMRIP_CONFIG')
+BEETS_IMPORT_COMMAND = os.getenv('BEETS_IMPORT_COMMAND')
+
+SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
+SPOTIFY_CACHE_FILE = os.getenv('SPOTIFY_CACHE', os.path.join(SCRIPT_DIR, 'spotify_cache.json'))
+SKIPPED_TRACKS_LOG = os.path.join(SCRIPT_DIR, 'skipped_tracks.json')
+FALLBACK_DIR = os.path.join(SCRIPT_DIR, 'playlist_fallback')
+STREAMRIP_HOME_DIR = os.path.join(SCRIPT_DIR, 'streamrip_home')
+
+
+# --- MODES ---
+# Dry run will test and print final results. No actual downloads will happen. Values: True = On False = Off
+DRY_RUN = False
+# Set to a specific artist name for testing, Example: 'dmx' or None for a full run.
+DEBUG_SINGLE_ARTIST = None
+
+# --- PARAMETERS ---
+# Minimum scrobbles an artist needs to be in your core artist pool.
+MIN_SCROBBLES = 17
+# How far back (in days) to look for new releases from your core artists.
+DAYS_AGO = 14
+# Last.fm period to find your core artists. Options: '7day', '1month', '3month', '6month', '12month', 'overall'
+LASTFM_PERIOD = 'overall'
+# Maximum number of tracks to add to the playlist per run. Set to 0 for unlimited.
+MAX_TRACKS_PER_RUN = 0
+# REPORTING: Reporting level for Discord notifications. Options: 'none', 'downloaded', 'skipped', 'all'
+REPORT_LEVEL = 'skipped'
+# FALLBACK: Save a CSV backup of the playlist in case the Plex API fails.
+PLAYLIST_FALLBACK = True
+# FALLBACK REFRESH: If enabled, deletes old "New Releases..." CSVs from the fallback folder on each run.
+REFRESH_FALLBACK = False
+# LOGIC #1: Global ignore filter. Do not download album titles that contain the following words
+IGNORE_KEYWORDS = ['live', 'instrumental', 'demo']
+# LOGIC #2: Allowlist Override. Releases with these words will be kept, even if they match an IGNORE_KEYWORD.
+ALLOW_KEYWORDS = ['Sugarshack']
+# LOGIC #3: Release filter. If you already have an album, new album versions with these words will be skipped. IE - remaster, anniversary, commentary, etc.
+RE_RELEASE_KEYWORDS = ['remaster', 'deluxe', 'remastered', 'commentary', 'anniversary', 'anthology']
+# LOGIC #4: Artists to completely ignore during the Spotify search. Great for stubborn or special use cases. Artists to completely skip before making any API calls.
+IGNORE_ARTISTS = ['Academy of St Martin']
+
+
+# --- PLEX MATCHING LOGIC ---
+
+def _normalize_for_comparison(text, is_artist=False):
+    if not text: return ""
+    text = text.lower().replace('’', "'").replace('“', '"').replace('”', '"')
+    text = re.sub(r' - .*', '', text).strip()
+    text = re.sub(r'[\(\[].*?[\)\]]', '', text).strip()
+    text = re.sub(r'[^\w\s]', '', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    if is_artist and text.startswith("the "): text = text[4:]
+    return text
+
+def find_plex_album(plex_music, artist_name, album_name):
+    """Finds a specific album by an artist in Plex."""
+    try:
+        results = plex_music.searchAlbums(title=album_name)
+        norm_artist = _normalize_for_comparison(artist_name, is_artist=True)
+        for album in results:
+            if _normalize_for_comparison(album.parentTitle, is_artist=True) == norm_artist:
+                return album
+        return None
+    except (PlexApiException, requests.exceptions.RequestException) as e:
+        logging.error(f"Plex API Error finding album '{album_name}': {e}")
+        return __PLEX_API_ERROR__
+
+def find_any_plex_track_version(plex_music, artist_name, track_title, year=None):
+    """Finds if any version of a track by an artist exists, ignoring the album. Optionally matches year."""
+    try:
+        candidates = plex_music.searchTracks(title=track_title)
+    except (PlexApiException, requests.exceptions.RequestException) as e:
+        logging.error(f"Plex API Error during track check for '{track_title}': {e}")
+        return __PLEX_API_ERROR__
+
+    norm_artist = _normalize_for_comparison(artist_name, is_artist=True)
+    norm_title = _normalize_for_comparison(track_title)
+    for track in candidates:
+        # FINAL LOGIC: Get year from the track's parent album.
+        plex_year = None
+        try:
+            album = track.album()
+            if hasattr(album, 'originallyAvailableAt') and album.originallyAvailableAt:
+                plex_year = album.originallyAvailableAt.year
+            elif hasattr(album, 'year'):
+                plex_year = album.year
+        except (PlexApiException, requests.exceptions.RequestException):
+            logging.warning(f"Could not fetch album details for track '{track.title}' to check year.")
+            continue # Skip this candidate if we can't get its album
+
+        artist_match = _normalize_for_comparison(track.grandparentTitle, is_artist=True) == norm_artist
+        title_match = _normalize_for_comparison(track.title) == norm_title
+        
+        # A match is valid if the year matches OR if the year is missing in Plex.
+        year_match = year is None or plex_year is None or plex_year == year
+
+        if artist_match and title_match and year_match:
+            return track
+    return None
+
+# --- SCRIPT FUNCTIONS ---
+
+def clear_fallback_files(directory, prefix):
+    if not os.path.isdir(directory): return
+    logging.info(f"Refreshing fallback directory: Deleting old '{prefix}...' files...")
+    for filename in os.listdir(directory):
+        if filename.startswith(prefix) and filename.endswith(".csv"):
+            try: os.remove(os.path.join(directory, filename))
+            except OSError as e: logging.error(f"  - Error deleting file {filename}: {e}")
+
+def save_fallback_playlist(directory, all_playlist_tracks):
+    """Saves playlist content to a CSV, now including the album."""
+    if not all_playlist_tracks: return
+    os.makedirs(directory, exist_ok=True)
+    playlist_title = f"New Releases - {datetime.now().strftime('%Y-%m-%d')}"
+    fallback_filepath = os.path.join(directory, f"{playlist_title}.csv")
+    logging.info(f"--- Saving fallback playlist to: {fallback_filepath} ---")
+    
+    unique_track_tuples = sorted(list({(t['artist'], t['album'], t['title']) for t in all_playlist_tracks}))
+    
+    try:
+        with open(fallback_filepath, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow(['Artist', 'Album', 'Title'])
+            writer.writerows(unique_track_tuples)
+    except IOError as e: logging.error(f"Failed to write fallback playlist file: {e}")
+
+def send_failure_notification(title, message):
+    if not DISCORD_WEBHOOK_URL: return
+    embed = {"title": f"❌ Script Error: {title}", "description": message, "color": 15158332, "footer": { "text": f"Automated by New Release Finder | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"}}
+    try: requests.post(DISCORD_WEBHOOK_URL, json={"username": "Plex Butler", "embeds": [embed]}, timeout=10)
+    except requests.exceptions.RequestException as e: logging.error(f"Failed to send Discord failure notification: {e}")
+
+def get_new_releases(sp, network, min_scrobbles, days_ago, lastfm_period):
+    try:
+        user = network.get_user(LASTFM_USERNAME)
+        top_artists = user.get_top_artists(period=lastfm_period, limit=1000)
+        core_artists = [artist.item for artist in top_artists if int(artist.weight) >= min_scrobbles]
+        if DEBUG_SINGLE_ARTIST:
+            core_artists = [artist for artist in core_artists if artist.name.lower() == DEBUG_SINGLE_ARTIST.lower()]
+        logging.info(f"Found {len(core_artists)} total core artists.")
+    except Exception as e:
+        logging.error(f"Failed to fetch artists from Last.fm: {e}")
+        return [], []
+
+    new_releases, skipped_in_search, total_tracks_found = [], [], 0
+    cutoff_date, processed_album_ids = datetime.now() - timedelta(days=days_ago), set()
+    current_year = datetime.now().year
+    years_to_search = {current_year}
+    if datetime.now().month == 1 and days_ago > datetime.now().day: years_to_search.add(current_year - 1)
+    logging.info(f"Checking Spotify for new releases from the last {days_ago} days...")
+
+    for artist in core_artists:
+        if artist.name in IGNORE_ARTISTS: continue
+        if MAX_TRACKS_PER_RUN > 0 and total_tracks_found >= MAX_TRACKS_PER_RUN:
+            logging.info(f"MAX_TRACKS_PER_RUN limit met. Halting search.")
+            break
+        try:
+            time.sleep(0.5)
+            for year in years_to_search:
+                results = sp.search(q=f'artist:"{artist.name}" year:{year}', type='album', limit=50)
+                for album in results['albums']['items']:
+                    if album['id'] in processed_album_ids: continue
+                    main_album_artist = album['artists'][0]['name'] if album['artists'] else ''
+                    if _normalize_for_comparison(artist.name, True) != _normalize_for_comparison(main_album_artist, True): continue
+                    
+                    album_name_lower = album['name'].lower()
+                    if any(word in ALLOW_KEYWORDS for word in album_name_lower.split()): pass
+                    elif any(keyword in album_name_lower for keyword in IGNORE_KEYWORDS):
+                        skipped_in_search.append({'artist': main_album_artist, 'name': album['name'], 'reason': f'Ignored keyword'})
+                        continue
+                    
+                    processed_album_ids.add(album['id'])
+                    try:
+                        if album['release_date_precision'] == 'day' and datetime.strptime(album['release_date'], '%Y-%m-%d') >= cutoff_date:
+                            logging.info(f"Found new release from '{main_album_artist}': '{album['name']}'")
+                            album_tracks_data = sp.album_tracks(album['id'])
+                            track_ids = [track['id'] for track in album_tracks_data['items']]
+                            tracks_details = sp.tracks(track_ids)
+                            tracks = [{'artist': main_album_artist, 'title': t['name'], 'isrc': t['external_ids'].get('isrc')} for t in tracks_details['tracks']]
+                            new_releases.append({
+                                'artist': main_album_artist, 
+                                'name': album['name'], 
+                                'type': album['album_type'], 
+                                'tracks': tracks, 
+                                'url': album['external_urls']['spotify'], 
+                                'release_date': album['release_date']
+                            })
+                            total_tracks_found += len(tracks)
+                            if MAX_TRACKS_PER_RUN > 0 and total_tracks_found >= MAX_TRACKS_PER_RUN: break
+                    except ValueError: continue
+                if MAX_TRACKS_PER_RUN > 0 and total_tracks_found >= MAX_TRACKS_PER_RUN: break
+        except Exception as e: logging.error(f"Error checking Spotify for artist '{artist.name}': {e}")
+    return new_releases, skipped_in_search
+
+def download_releases_with_streamrip(releases_to_download):
+    if not releases_to_download: return []
+    successfully_downloaded = []
+    logging.info(f"--- Starting download process for {len(releases_to_download)} releases ---")
+    for release in releases_to_download:
+        logging.info(f"Attempting to download: '{release['artist']} - {release['name']}'")
+        def run_rip_command(command_str, item_name):
+            logging.info(f"  - Executing command: {command_str}")
+            command = ['su', '-s', '/bin/bash', 'nobody', '-c', command_str]
+            try:
+                subprocess.run(command, capture_output=True, text=True, check=True, timeout=600); return True
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired, Exception) as e:
+                logging.error(f"streamrip failed for '{item_name}'. Error: {getattr(e, 'stderr', e)}"); return False
+        if (deezer_release_url := convert_spotify_url_to_deezer_url(release['url'])) and run_rip_command(f"HOME={shlex.quote(STREAMRIP_HOME_DIR)} rip --config-path {shlex.quote(STREAMRIP_CONFIG)} url {shlex.quote(deezer_release_url)}", release['name']):
+            successfully_downloaded.append(release)
+        else:
+            if all((deezer_track_url := find_deezer_url_by_isrc(track['isrc'])) and run_rip_command(f"HOME={shlex.quote(STREAMRIP_HOME_DIR)} rip --config-path {shlex.quote(STREAMRIP_CONFIG)} url {shlex.quote(deezer_track_url)}", track['title']) for track in release['tracks']):
+                successfully_downloaded.append(release)
+    logging.info(f"--- Download process finished. Successfully downloaded {len(successfully_downloaded)} releases. ---")
+    return successfully_downloaded
+
+def convert_spotify_url_to_deezer_url(spotify_url):
+    try:
+        response = requests.get(f"https://api.song.link/v1-alpha.1/links?url={spotify_url}", timeout=15)
+        if response.status_code == 200: return response.json()['linksByPlatform'].get('deezer', {}).get('url')
+    except requests.exceptions.RequestException: return None
+    return None
+
+def find_deezer_url_by_isrc(isrc):
+    if not isrc: return None
+    try:
+        response = requests.get(f"https://api.deezer.com/track/isrc:{isrc}", timeout=10)
+        if response.status_code == 200 and 'error' not in response.json(): return response.json().get('link')
+    except requests.exceptions.RequestException: return None
+    return None
+
+def run_beets_import():
+    if not BEETS_IMPORT_COMMAND: logging.info("  - Beets import command not configured. Skipping."); return True
+    logging.info("--- Starting Beets import process... ---")
+    try:
+        command = shlex.split(BEETS_IMPORT_COMMAND)
+        subprocess.run(command, capture_output=True, text=True, check=True, timeout=1800)
+        logging.info("--- Beets import finished successfully. ---"); return True
+    except (subprocess.TimeoutExpired, subprocess.CalledProcessError, Exception) as e:
+        error_message = getattr(e, 'stderr', str(e)); logging.error(f"Beets import failed: {error_message}")
+        send_failure_notification("Beets Import Failed", f"The beets import script failed. Check logs for details.\n\n`{error_message[-1000:]}`"); return False
+
+def trigger_plex_scan(plex_music, downloaded_items, wait_time=300):
+    if not downloaded_items: return
+    logging.info(f"--- Triggering Plex library scan and waiting {wait_time} seconds... ---")
+    try:
+        plex_music.update(); time.sleep(wait_time)
+        logging.info("--- Plex scan wait time complete. ---")
+    except Exception as e: logging.error(f"Failed to trigger Plex scan: {e}")
+
+def create_plex_playlist(plex_server, plex_track_objects):
+    if not plex_track_objects: return None
+    playlist_title = f"New Releases - {datetime.now().strftime('%Y-%m-%d')}"
+    logging.info(f"--- Creating Plex playlist: '{playlist_title}'... ---")
+    try:
+        for playlist in plex_server.playlists():
+            if "New Releases" in playlist.title:
+                logging.info(f"  - Deleting old playlist: '{playlist.title}'"); playlist.delete()
+        plex_server.createPlaylist(title=playlist_title, items=plex_track_objects)
+        logging.info("--- Successfully created Plex playlist. ---"); return playlist_title
+    except Exception as e:
+        logging.error(f"Failed to create Plex playlist: {e}"); return None
+
+def send_discord_notification(playlist_name, downloaded, skipped, report_level):
+    if not DISCORD_WEBHOOK_URL: return
+    def format_field(items, reason_field=False):
+        if not items: return "None."
+        lines = [f"- {item['artist']} - {item['name']}" + (f" ({item['reason']})" if reason_field else "") for item in items]
+        output = "\n".join(lines); return output[:1020] + "..." if len(output) > 1024 else output
+    embed = {"title": "💿 New Music Releases Found!", "description": f"Playlist **'{playlist_name or 'Not Created'}'** updated.", "color": 16762880, "fields": [{"name": "Releases Downloaded", "value": str(len(downloaded)), "inline": True},], "footer": { "text": f"New Release Finder v{SCRIPT_VERSION} | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"}}
+    if report_level in ['downloaded', 'all']: embed['fields'].append({"name": "⬇️ Downloaded", "value": format_field(downloaded), "inline": False})
+    if report_level in ['skipped', 'all']: embed['fields'].append({"name": "🚫 Skipped", "value": format_field(skipped, True), "inline": False})
+    try: requests.post(DISCORD_WEBHOOK_URL, json={"username": "Plex Butler", "embeds": [embed]}, timeout=10)
+    except requests.exceptions.RequestException as e: logging.error(f"Failed to send Discord notification: {e}")
+
+# --- MAIN LOGIC ---
+def main():
+    logging.info(f"--- Starting Script v{SCRIPT_VERSION} (Dry Run: {DRY_RUN}) ---")
+    if REFRESH_FALLBACK:
+        clear_fallback_files(FALLBACK_DIR, "New Releases")
+
+    try:
+        os.makedirs(STREAMRIP_HOME_DIR, exist_ok=True)
+        lastfm = pylast.LastFMNetwork(api_key=LASTFM_API_KEY, api_secret=LASTFM_API_SECRET)
+        sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(client_id=SPOTIPY_CLIENT_ID, client_secret=SPOTIPY_CLIENT_SECRET, cache_handler=CacheFileHandler(cache_path=SPOTIFY_CACHE_FILE)))
+        plex = PlexServer(PLEX_URL, PLEX_TOKEN, timeout=30)
+        plex_music = plex.library.section(PLEX_MUSIC_LIBRARY_NAME)
+    except Exception as e:
+        send_failure_notification("Service Connection Failed", f"Could not connect. Error: {e}"); return
+
+    all_releases, skipped_by_keyword = get_new_releases(sp, lastfm, MIN_SCROBBLES, DAYS_AGO, LASTFM_PERIOD)
+    
+    albums = [r for r in all_releases if r['type'] == 'album']
+    eps = [r for r in all_releases if r['type'] == 'single' and len(r['tracks']) > 1]
+    singles = [r for r in all_releases if r['type'] == 'single' and len(r['tracks']) == 1]
+
+    releases_to_download, skipped_releases = [], list(skipped_by_keyword)
+    final_playlist_plex_objects, final_playlist_for_fallback = [], []
+    queued_track_titles = set()
+
+    # 1. PROCESS ALBUMS & EPs
+    logging.info(f"--- Evaluating {len(albums) + len(eps)} new albums & EPs... ---")
+    for release in albums + eps:
+        if any(_normalize_for_comparison(t['title']) in queued_track_titles for t in release.get('tracks', [])):
+            skipped_releases.append({'artist': release['artist'], 'name': release['name'], 'reason': 'Included in queued album'}); continue
+        if any(keyword in release['name'].lower() for keyword in RE_RELEASE_KEYWORDS):
+            logging.info(f"  - Skipping '{release['artist']} - {release['name']}' due to re-release keyword.")
+            skipped_releases.append({'artist': release['artist'], 'name': release['name'], 'reason': 'Skipped re-release'}); continue
+        
+        plex_album = find_plex_album(plex_music, release['artist'], release['name'])
+        if plex_album == __PLEX_API_ERROR__: continue
+        if plex_album and len(plex_album.tracks()) >= len(release.get('tracks', [])):
+            logging.info(f"  - Match found in Plex: '{release['artist']} - {release['name']}' is already complete.")
+            skipped_releases.append({'artist': release['artist'], 'name': release['name'], 'reason': 'Already complete in Plex'})
+            final_playlist_plex_objects.extend(plex_album.tracks())
+            for t in release['tracks']: final_playlist_for_fallback.append({'artist': t['artist'], 'album': release['name'], 'title': t['title']})
+            continue
+
+        release_year = int(release['release_date'].split('-')[0])
+        all_tracks_exist = True
+        plex_track_matches = []
+        for track in release['tracks']:
+            match = find_any_plex_track_version(plex_music, track['artist'], track['title'], year=release_year)
+            if match == __PLEX_API_ERROR__: all_tracks_exist = False; break 
+            if not match: all_tracks_exist = False; break
+            plex_track_matches.append(match)
+        
+        if all_tracks_exist:
+            logging.info(f"  - Match found in Plex: All tracks from '{release['artist']} - {release['name']}' already exist.")
+            skipped_releases.append({'artist': release['artist'], 'name': release['name'], 'reason': 'All tracks already in Plex'})
+            final_playlist_plex_objects.extend(plex_track_matches)
+            for t in release['tracks']: final_playlist_for_fallback.append({'artist': t['artist'], 'album': release['name'], 'title': t['title']})
+            continue
+
+        releases_to_download.append(release)
+        for track in release['tracks']: queued_track_titles.add(_normalize_for_comparison(track['title']))
+
+    # 2. PROCESS SINGLES
+    logging.info(f"--- Evaluating {len(singles)} new singles... ---")
+    for release in singles:
+        track = release['tracks'][0]
+        if _normalize_for_comparison(track['title']) in queued_track_titles:
+            skipped_releases.append({'artist': track['artist'], 'name': track['title'], 'reason': 'Included in queued album/EP'}); continue
+        
+        release_year = int(release['release_date'].split('-')[0])
+        match = find_any_plex_track_version(plex_music, track['artist'], track['title'], year=release_year)
+        if match == __PLEX_API_ERROR__: continue
+        if match:
+            logging.info(f"  - Match found in Plex: '{track['artist']} - {track['title']}' (Year: {release_year}) already exists.")
+            skipped_releases.append({'artist': track['artist'], 'name': track['title'], 'reason': f'Already exists in Plex (Year: {release_year})'})
+            final_playlist_plex_objects.append(match)
+            final_playlist_for_fallback.append({'artist': track['artist'], 'album': release['name'], 'title': track['title']})
+            continue
+        
+        releases_to_download.append(release)
+
+    logging.info(f"Final download queue has {len(releases_to_download)} releases.")
+
+    if DRY_RUN:
+        for r in releases_to_download: logging.info(f"  - Would download: {r['artist']} - {r['name']}")
+        logging.info(f"Skipped {len(skipped_releases)} releases."); return
+
+    downloaded = download_releases_with_streamrip(releases_to_download) if releases_to_download else []
+
+    if downloaded:
+        for release in downloaded:
+            for track in release['tracks']:
+                final_playlist_for_fallback.append({'artist': track['artist'], 'album': release['name'], 'title': track['title']})
+        
+        if PLAYLIST_FALLBACK: save_fallback_playlist(FALLBACK_DIR, final_playlist_for_fallback)
+
+        if run_beets_import():
+            trigger_plex_scan(plex_music, downloaded)
+            logging.info("--- Finding newly added tracks in Plex... ---")
+            for release in downloaded:
+                release_year = int(release['release_date'].split('-')[0])
+                for track in release['tracks']:
+                    time.sleep(0.2)
+                    if (plex_obj := find_any_plex_track_version(plex_music, track['artist'], track['title'], year=release_year)):
+                        final_playlist_plex_objects.append(plex_obj)
+                    else:
+                        logging.warning(f"Could not find downloaded track in Plex: {track['artist']} - {track['title']}")
+        else:
+            logging.error("Beets import failed. Downloaded tracks will not be processed."); downloaded = []
+    
+    elif final_playlist_for_fallback:
+        if PLAYLIST_FALLBACK: save_fallback_playlist(FALLBACK_DIR, final_playlist_for_fallback)
+
+    playlist_name = create_plex_playlist(plex, final_playlist_plex_objects)
+    
+    if playlist_name or downloaded or skipped_releases:
+        send_discord_notification(playlist_name, downloaded, skipped_releases, REPORT_LEVEL.lower())
+
+    logging.info("--- Script finished successfully ---")
+
+if __name__ == "__main__":
+    main()
+
