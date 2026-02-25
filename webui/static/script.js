@@ -83,6 +83,7 @@ function navigateTo(page) {
     switch (page) {
         case 'discovery':     loadDiscovery();    break;
         case 'cruise-control': loadCruiseControl(); break;
+        case 'activity':      loadActivity();     break;
         case 'playlists':     loadPlaylists();    break;
         case 'stats':         loadStats();        break;
         case 'settings':      loadSettings();     break;
@@ -1133,6 +1134,7 @@ function init() {
     setupDiscoveryFilters();
     setupPlaylistButtons();
     setupCCForm();
+    setupActivityPage();
     setupPlaylistsPage();
     setupStatsPage();
     setupSettingsPage();
@@ -1154,6 +1156,104 @@ function init() {
             } catch (_) {}
         }
     }, 10000);
+}
+
+// ── Activity ─────────────────────────────────────────────────
+
+let _actFilter = '';  // current status filter ('', 'pending', 'submitted', etc.)
+
+async function loadActivity() {
+    try {
+        const [statsData, queueData] = await Promise.all([
+            api('/acquisition/stats'),
+            api(`/acquisition/queue${_actFilter ? '?status=' + _actFilter : ''}`),
+        ]);
+        _renderActivityStats(statsData);
+        _renderQueueTable(queueData.items || []);
+    } catch (err) {
+        showToast('Failed to load activity data', 'error');
+    }
+}
+
+function _renderActivityStats(s) {
+    const set = (id, val) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = val !== undefined ? String(val) : '—';
+    };
+    set('act-stat-pending',   s.pending);
+    set('act-stat-submitted', s.submitted);
+    set('act-stat-found',     s.found);
+    set('act-stat-failed',    s.failed);
+    set('act-stat-skipped',   s.skipped);
+}
+
+function _renderQueueTable(items) {
+    const tbody = document.getElementById('act-queue-table');
+    const empty = document.getElementById('act-queue-empty');
+    if (!items.length) {
+        tbody.innerHTML = '';
+        empty.classList.remove('hidden');
+        return;
+    }
+    empty.classList.add('hidden');
+
+    const pillClass = {
+        pending:   'pill-pending',
+        submitted: 'pill-submitted',
+        found:     'pill-found',
+        failed:    'pill-failed',
+        skipped:   'pill-skipped',
+    };
+
+    tbody.innerHTML = items.map(r => `
+        <tr class="text-sm">
+            <td class="py-3 pr-4 text-text-primary font-medium">${escHtml(r.artist_name || '—')}</td>
+            <td class="py-3 pr-4 text-text-secondary">${escHtml(r.album_title || '—')}</td>
+            <td class="py-3 pr-4 text-text-muted">${escHtml(r.kind || '—')}</td>
+            <td class="py-3 pr-4 text-text-muted font-mono text-xs">${escHtml(r.source || '—')}</td>
+            <td class="py-3 pr-4">
+                <span class="text-xs px-2 py-0.5 rounded-full ${pillClass[r.status] || ''}">
+                    ${escHtml(r.status || '—')}
+                </span>
+            </td>
+            <td class="py-3 pr-4 text-text-muted text-xs">${escHtml(r.requested_by || '—')}${r.playlist_name ? ' · ' + escHtml(r.playlist_name) : ''}</td>
+            <td class="py-3 text-text-muted text-xs">${formatDate(r.created_at)}</td>
+        </tr>
+    `).join('');
+}
+
+function setupActivityPage() {
+    // Filter tab buttons
+    document.querySelectorAll('.act-filter-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            _actFilter = btn.dataset.status;
+            document.querySelectorAll('.act-filter-btn').forEach(b =>
+                b.classList.toggle('active', b === btn));
+            loadActivity();
+        });
+    });
+
+    // Check Now button
+    document.getElementById('btn-check-now').addEventListener('click', async () => {
+        const btn = document.getElementById('btn-check-now');
+        btn.disabled = true;
+        btn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Checking...`;
+        lucide.createIcons({ icons: lucide.icons, nameAttr: 'data-lucide' });
+        try {
+            const result = await api('/acquisition/check-now', { method: 'POST' });
+            showToast('Worker run complete', 'success');
+            _renderActivityStats(result);
+            // Refresh table
+            const queueData = await api(`/acquisition/queue${_actFilter ? '?status=' + _actFilter : ''}`);
+            _renderQueueTable(queueData.items || []);
+        } catch (err) {
+            showToast(`Check failed: ${err.message}`, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = `<i data-lucide="refresh-cw" class="w-4 h-4"></i> Check Now`;
+            lucide.createIcons({ icons: lucide.icons, nameAttr: 'data-lucide' });
+        }
+    });
 }
 
 document.addEventListener('DOMContentLoaded', init);

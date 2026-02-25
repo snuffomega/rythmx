@@ -75,6 +75,10 @@
                        class="nav-link flex items-center gap-3 px-4 py-3 rounded-xl text-text-secondary hover:text-text-primary hover:bg-surface-highlight transition-all">
                     <i data-lucide="list-music" class="w-5 h-5"></i><span>Playlists</span>
                 </a></li>
+                <li><a href="#activity" data-page="activity"
+                       class="nav-link flex items-center gap-3 px-4 py-3 rounded-xl text-text-secondary hover:text-text-primary hover:bg-surface-highlight transition-all">
+                    <i data-lucide="inbox" class="w-5 h-5"></i><span>Activity</span>
+                </a></li>
                 <li><a href="#stats" data-page="stats"
                        class="nav-link flex items-center gap-3 px-4 py-3 rounded-xl text-text-secondary hover:text-text-primary hover:bg-surface-highlight transition-all">
                     <i data-lucide="bar-chart-3" class="w-5 h-5"></i><span>Stats</span>
@@ -444,6 +448,108 @@
                     </table>
                 </div>
                 <div id="cc-history-empty" class="text-center py-8 text-text-muted">No cycle history yet</div>
+            </div>
+        </section>
+
+        <!-- ── Activity Page ──────────────────────── -->
+        <section id="page-activity" class="page hidden p-8">
+            <header class="mb-6">
+                <h2 class="font-display text-4xl font-bold mb-2">Activity</h2>
+                <p class="text-text-secondary">Acquisition queue — what's been found, what's waiting, what failed</p>
+            </header>
+
+            <!-- Stats strip -->
+            <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">
+                <div class="bg-surface rounded-2xl border border-border-default p-4 text-center">
+                    <div id="act-stat-pending" class="text-3xl font-bold text-accent-warning mb-1">—</div>
+                    <div class="text-xs text-text-muted">Pending</div>
+                </div>
+                <div class="bg-surface rounded-2xl border border-border-default p-4 text-center">
+                    <div id="act-stat-submitted" class="text-3xl font-bold text-accent-primary mb-1">—</div>
+                    <div class="text-xs text-text-muted">Submitted</div>
+                </div>
+                <div class="bg-surface rounded-2xl border border-border-default p-4 text-center">
+                    <div id="act-stat-found" class="text-3xl font-bold text-accent-success mb-1">—</div>
+                    <div class="text-xs text-text-muted">Found</div>
+                </div>
+                <div class="bg-surface rounded-2xl border border-border-default p-4 text-center">
+                    <div id="act-stat-failed" class="text-3xl font-bold text-accent-danger mb-1">—</div>
+                    <div class="text-xs text-text-muted">Failed</div>
+                </div>
+                <div class="bg-surface rounded-2xl border border-border-default p-4 text-center">
+                    <div id="act-stat-skipped" class="text-3xl font-bold text-text-muted mb-1">—</div>
+                    <div class="text-xs text-text-muted">Skipped</div>
+                </div>
+            </div>
+
+            <!-- Provider status + Check Now -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                <div class="bg-surface rounded-2xl border border-border-default p-6">
+                    <h3 class="font-display text-lg font-semibold mb-3 flex items-center gap-2">
+                        <i data-lucide="plug" class="w-5 h-5 text-accent-primary"></i>Downloader
+                    </h3>
+                    <div class="flex items-center gap-3 mb-3">
+                        <span class="w-2.5 h-2.5 rounded-full bg-accent-warning shrink-0"></span>
+                        <span class="text-text-primary font-medium">Stub mode — no downloader wired</span>
+                    </div>
+                    <p class="text-sm text-text-muted mb-4">
+                        Queue items are tracked and owned-checked, but no download requests are sent.
+                        To activate a downloader, implement <span class="font-mono text-xs bg-surface-highlight px-1.5 py-0.5 rounded">_submit_item()</span>
+                        in <span class="font-mono text-xs bg-surface-highlight px-1.5 py-0.5 rounded">app/acquisition.py</span>.
+                    </p>
+                    <p class="text-xs text-text-muted">Compatible providers: SoulSync watchlist · Lidarr · Slskd · any HTTP API</p>
+                </div>
+
+                <div class="bg-surface rounded-2xl border border-border-default p-6 flex flex-col justify-between">
+                    <div>
+                        <h3 class="font-display text-lg font-semibold mb-3 flex items-center gap-2">
+                            <i data-lucide="refresh-cw" class="w-5 h-5 text-accent-primary"></i>Worker
+                        </h3>
+                        <p class="text-sm text-text-muted mb-4">
+                            The acquisition worker runs automatically after each Cruise Control cycle.
+                            Trigger it manually to re-check submitted items and time out stale entries.
+                        </p>
+                    </div>
+                    <button id="btn-check-now"
+                            class="w-full px-4 py-3 rounded-xl bg-accent-primary text-white font-medium hover:bg-opacity-90 transition-all flex items-center justify-center gap-2">
+                        <i data-lucide="refresh-cw" class="w-4 h-4"></i>Check Now
+                    </button>
+                </div>
+            </div>
+
+            <!-- Queue table -->
+            <div class="bg-surface rounded-2xl border border-border-default p-6">
+                <div class="flex items-center justify-between mb-5">
+                    <h3 class="font-display text-xl font-semibold flex items-center gap-2">
+                        <i data-lucide="list" class="w-5 h-5 text-accent-primary"></i>Queue
+                    </h3>
+                    <!-- Status filter tabs -->
+                    <div class="flex rounded-lg overflow-hidden border border-border-default text-sm" id="act-filter-tabs">
+                        <button class="act-filter-btn px-3 py-1.5 active" data-status="">All</button>
+                        <button class="act-filter-btn px-3 py-1.5" data-status="pending">Pending</button>
+                        <button class="act-filter-btn px-3 py-1.5" data-status="submitted">Submitted</button>
+                        <button class="act-filter-btn px-3 py-1.5" data-status="found">Found</button>
+                        <button class="act-filter-btn px-3 py-1.5" data-status="failed">Failed</button>
+                        <button class="act-filter-btn px-3 py-1.5" data-status="skipped">Skipped</button>
+                    </div>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="text-left text-text-muted border-b border-border-default">
+                                <th class="pb-3 font-medium">Artist</th>
+                                <th class="pb-3 font-medium">Album</th>
+                                <th class="pb-3 font-medium">Kind</th>
+                                <th class="pb-3 font-medium">Source</th>
+                                <th class="pb-3 font-medium">Status</th>
+                                <th class="pb-3 font-medium">Requested by</th>
+                                <th class="pb-3 font-medium">Queued</th>
+                            </tr>
+                        </thead>
+                        <tbody id="act-queue-table"></tbody>
+                    </table>
+                </div>
+                <div id="act-queue-empty" class="text-center py-8 text-text-muted hidden">No items in queue</div>
             </div>
         </section>
 

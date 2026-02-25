@@ -197,6 +197,18 @@ def create_app() -> Flask:
         stats = cc_store.get_queue_stats()
         return jsonify({"status": "ok", **stats})
 
+    @app.route("/api/acquisition/check-now", methods=["POST"])
+    def acquisition_check_now():
+        """Trigger the acquisition worker immediately (re-check submitted items, timeout stale)."""
+        try:
+            from app import acquisition
+            acquisition.check_queue()
+            stats = cc_store.get_queue_stats()
+            return jsonify({"status": "ok", "message": "Acquisition worker run complete", **stats})
+        except Exception as e:
+            logger.warning("acquisition check-now failed: %s", e)
+            return jsonify({"status": "error", "message": str(e)}), 500
+
     @app.route("/api/cruise-control/history")
     def cc_history():
         limit = min(int(request.args.get("limit", 100)), 500)

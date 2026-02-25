@@ -146,3 +146,28 @@ table tbody tr:hover { background-color: #1E1E1E; }
     color: #000;
     font-weight: 500;
 }
+
+/* ── Activity Filter Tabs ────────────────────── */
+.act-filter-btn {
+    color: #A1A1AA;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    transition: background .15s, color .15s;
+}
+.act-filter-btn:hover {
+    background: #27272A;
+    color: #F4F4F5;
+}
+.act-filter-btn.active {
+    background: #27272A;
+    color: #F4F4F5;
+    font-weight: 500;
+}
+
+/* ── Acquisition Status Pills ────────────────── */
+.pill-pending   { background-color: rgba(245,158,11,0.15);  color: #F59E0B; border: 1px solid rgba(245,158,11,0.3);  }
+.pill-submitted { background-color: rgba(123,97,255,0.15);  color: #7B61FF; border: 1px solid rgba(123,97,255,0.3);  }
+.pill-found     { background-color: rgba(16,185,129,0.15);  color: #10B981; border: 1px solid rgba(16,185,129,0.3);  }
+.pill-failed    { background-color: rgba(255,59,48,0.15);   color: #FF3B30; border: 1px solid rgba(255,59,48,0.3);   }
+.pill-skipped   { background-color: rgba(161,161,170,0.10); color: #71717A; border: 1px solid rgba(161,161,170,0.2); }
