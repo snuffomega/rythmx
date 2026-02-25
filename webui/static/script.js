@@ -371,17 +371,17 @@ function populateCCForm(cfg) {
         if (el.type === 'checkbox') el.checked = cfg[key] === 'true';
         else el.value = cfg[key] ?? fallback;
     };
-    set('cc-enabled',       'cc_enabled',                  false);
-    set('cc-min-listens',   'cc_min_listens',              '10');
-    set('cc-period',        'cc_period',                   '6month');
-    set('cc-lookback',      'cc_lookback_days',            '90');
-    set('cc-max',           'cc_max_per_cycle',            '10');
-    set('cc-auto-push',     'cc_auto_push_playlist',       false);
-    set('cc-cache-weekday', 'release_cache_refresh_weekday', '3');
-    set('cc-cache-hour',    'release_cache_refresh_hour',    '5');
-    // Run mode toggle
+    set('cc-enabled',          'cc_enabled',                    false);
+    set('cc-min-listens',      'cc_min_listens',                '10');
+    set('cc-period',           'cc_period',                     '6month');
+    set('cc-lookback',         'cc_lookback_days',              '90');
+    set('cc-max',              'cc_max_per_cycle',              '10');
+    set('cc-auto-push',        'cc_auto_push_playlist',         false);
+    set('cc-cache-weekday',    'release_cache_refresh_weekday', '3');
+    set('cc-cache-hour',       'release_cache_refresh_hour',    '5');
+    set('cc-schedule-weekday', 'cc_schedule_weekday',           '3');
+    set('cc-schedule-hour',    'cc_schedule_hour',              '5');
     setRunMode(cfg['cc_run_mode'] || 'playlist');
-    // Playlist prefix
     const prefixEl = document.getElementById('cc-playlist-prefix');
     if (prefixEl) prefixEl.value = cfg['cc_playlist_prefix'] || 'New Music';
 }
@@ -422,14 +422,17 @@ function updateCCStatus() {
         }
     });
 
-    // Run Now button state
-    const runBtn = document.getElementById('btn-run-now');
+    // Button states
+    const runBtn     = document.getElementById('btn-run-now');
+    const saveRunBtn = document.getElementById('btn-save-and-run');
     if (s.is_running) {
         runBtn.disabled = true;
         runBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Running...`;
+        if (saveRunBtn) { saveRunBtn.disabled = true; saveRunBtn.textContent = 'Running…'; }
     } else {
         runBtn.disabled = false;
         runBtn.innerHTML = `<i data-lucide="play" class="w-4 h-4"></i> Run Now`;
+        if (saveRunBtn) { saveRunBtn.disabled = false; saveRunBtn.textContent = 'Save Config & Run Cruise Control'; }
     }
 
     lucide.createIcons({ icons: lucide.icons, nameAttr: 'data-lucide' });
@@ -465,63 +468,89 @@ function renderCCHistory(history) {
     `).join('');
 }
 
+function _collectCCConfig() {
+    const payload = {};
+    const fieldMap = {
+        cc_min_listens:                'cc-min-listens',
+        cc_period:                     'cc-period',
+        cc_lookback_days:              'cc-lookback',
+        cc_max_per_cycle:              'cc-max',
+        cc_playlist_prefix:            'cc-playlist-prefix',
+        release_cache_refresh_weekday: 'cc-cache-weekday',
+        release_cache_refresh_hour:    'cc-cache-hour',
+        cc_run_mode:                   'cc-run-mode',
+        cc_schedule_weekday:           'cc-schedule-weekday',
+        cc_schedule_hour:              'cc-schedule-hour',
+    };
+    for (const [key, id] of Object.entries(fieldMap)) {
+        const el = document.getElementById(id);
+        if (el) payload[key] = el.value;
+    }
+    ['cc_enabled', 'cc_auto_push_playlist'].forEach(k => {
+        const el = document.querySelector(`[name="${k}"]`);
+        payload[k] = el?.checked ? 'true' : 'false';
+    });
+    return payload;
+}
+
+async function _saveCCConfig() {
+    try {
+        await api('/cruise-control/config', {
+            method: 'POST',
+            body: JSON.stringify(_collectCCConfig()),
+        });
+        showToast('Configuration saved!', 'success');
+        return true;
+    } catch (err) {
+        showToast(`Save failed: ${err.message}`, 'error');
+        return false;
+    }
+}
+
+async function _runCCNow() {
+    const runMode      = document.getElementById('cc-run-mode')?.value || 'playlist';
+    const forceRefresh = document.getElementById('cc-force-refresh')?.checked || false;
+    try {
+        await api('/cruise-control/run-now', {
+            method: 'POST',
+            body: JSON.stringify({ run_mode: runMode, force_refresh: forceRefresh }),
+        });
+        showToast('Cycle started!', 'success');
+
+        const poll = setInterval(async () => {
+            try {
+                state.ccStatus = await api('/cruise-control/status');
+                updateCCStatus();
+                if (!state.ccStatus.is_running) {
+                    clearInterval(poll);
+                    await loadCruiseControl();
+                    const result = state.ccStatus.last_result || {};
+                    if (result.playlist_name) {
+                        showToast(
+                            `Playlist '${result.playlist_name}' ready — ${result.playlist_tracks || 0} tracks`,
+                            'success'
+                        );
+                        navigateTo('playlists');
+                    } else {
+                        showToast('Cycle complete!', 'success');
+                    }
+                }
+            } catch (_) { clearInterval(poll); }
+        }, 2000);
+    } catch (err) {
+        showToast(`Failed to start: ${err.message}`, 'error');
+    }
+}
+
 function setupCCForm() {
-    // Run mode toggle buttons
     document.querySelectorAll('.cc-mode-btn').forEach(btn => {
         btn.addEventListener('click', () => setRunMode(btn.dataset.mode));
     });
-
-    document.getElementById('cc-config-form').addEventListener('submit', async e => {
-        e.preventDefault();
-        const form    = e.target;
-        const payload = {};
-        new FormData(form).forEach((v, k) => { payload[k] = v; });
-        // Checkboxes missing from FormData when unchecked
-        ['cc_enabled', 'cc_auto_push_playlist'].forEach(k => {
-            payload[k] = form.querySelector(`[name="${k}"]`)?.checked ? 'true' : 'false';
-        });
-        try {
-            await api('/cruise-control/config', { method: 'POST', body: JSON.stringify(payload) });
-            showToast('Configuration saved!', 'success');
-        } catch (err) {
-            showToast(`Save failed: ${err.message}`, 'error');
-        }
-    });
-
-    document.getElementById('btn-run-now').addEventListener('click', async () => {
-        const runMode     = document.getElementById('cc-run-mode')?.value || 'playlist';
-        const forceRefresh = document.getElementById('cc-force-refresh')?.checked || false;
-        try {
-            await api('/cruise-control/run-now', {
-                method: 'POST',
-                body: JSON.stringify({ run_mode: runMode, force_refresh: forceRefresh }),
-            });
-            showToast('Cycle started!', 'success');
-
-            // Poll status every 2s while running
-            const poll = setInterval(async () => {
-                try {
-                    state.ccStatus = await api('/cruise-control/status');
-                    updateCCStatus();
-                    if (!state.ccStatus.is_running) {
-                        clearInterval(poll);
-                        await loadCruiseControl();
-                        const result = state.ccStatus.last_result || {};
-                        if (result.playlist_name) {
-                            showToast(
-                                `Playlist '${result.playlist_name}' ready — ${result.playlist_tracks || 0} tracks`,
-                                'success'
-                            );
-                            navigateTo('playlists');
-                        } else {
-                            showToast('Cycle complete!', 'success');
-                        }
-                    }
-                } catch (_) { clearInterval(poll); }
-            }, 2000);
-        } catch (err) {
-            showToast(`Failed to start: ${err.message}`, 'error');
-        }
+    document.getElementById('btn-save-config').addEventListener('click', _saveCCConfig);
+    document.getElementById('btn-run-now').addEventListener('click', _runCCNow);
+    document.getElementById('btn-save-and-run').addEventListener('click', async () => {
+        const saved = await _saveCCConfig();
+        if (saved) await _runCCNow();
     });
 }
 
