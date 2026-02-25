@@ -35,8 +35,13 @@ logger = logging.getLogger(__name__)
 
 
 def _connect():
-    """Return a read-only connection to the SoulSync DB."""
-    uri = f"file:{config.SOULSYNC_DB}?mode=ro"
+    """Return a read-only connection to the SoulSync DB.
+
+    immutable=1 bypasses WAL locking entirely — safe because the Docker mount
+    is :ro and we never write. Prevents intermittent 'unable to open database
+    file' errors when SoulSync checkpoints its WAL journal.
+    """
+    uri = f"file:{config.SOULSYNC_DB}?mode=ro&immutable=1"
     return sqlite3.connect(uri, uri=True)
 
 
