@@ -8,7 +8,7 @@ import logging
 import threading
 from flask import Flask, jsonify, request, send_from_directory
 from app import config, scheduler
-from app.db import cc_store, soulsync_reader
+from app.db import cc_store
 from app import last_fm_client, plex_push, soulsync_api
 
 # Configure logging before anything else
@@ -133,6 +133,7 @@ def create_app() -> Flask:
             "cc_enabled", "cc_max_per_cycle", "cc_cycle_hours",
             "cc_min_listens", "cc_period", "cc_lookback_days",
             "cc_auto_push_playlist", "cc_run_mode", "cc_playlist_prefix",
+            "release_cache_refresh_weekday", "release_cache_refresh_hour",
         }
         for key, value in data.items():
             if key in allowed_keys:
@@ -147,11 +148,22 @@ def create_app() -> Flask:
         run_mode = data.get("run_mode", "cruise")
         if run_mode not in ("dry", "playlist", "cruise"):
             run_mode = "cruise"
+        force_refresh = bool(data.get("force_refresh", False))
         # Run in background so the request returns immediately; client polls /status
-        t = threading.Thread(target=scheduler.run_cycle, args=(run_mode,), daemon=True,
-                             name="cc-manual-run")
+        t = threading.Thread(
+            target=scheduler.run_cycle,
+            args=(run_mode,),
+            kwargs={"force_refresh": force_refresh},
+            daemon=True,
+            name="cc-manual-run",
+        )
         t.start()
         return jsonify({"status": "ok", "message": "cycle_started", "run_mode": run_mode})
+
+    @app.route("/api/release-cache/clear", methods=["POST"])
+    def release_cache_clear():
+        cc_store.clear_release_cache()
+        return jsonify({"status": "ok", "message": "release cache cleared"})
 
     @app.route("/api/cruise-control/history")
     def cc_history():
@@ -429,6 +441,8 @@ def create_app() -> Flask:
 
     @app.route("/api/settings", methods=["GET"])
     def settings_get():
+        from app.db import get_library_reader
+        lr = get_library_reader()
         # Return non-secret settings only — never return key values
         return jsonify({
             "status": "ok",
@@ -438,7 +452,7 @@ def create_app() -> Flask:
             "plex_configured": bool(config.PLEX_URL and config.PLEX_TOKEN),
             "soulsync_url": config.SOULSYNC_URL,
             "soulsync_db": config.SOULSYNC_DB,
-            "soulsync_db_accessible": soulsync_reader.is_db_accessible(),
+            "soulsync_db_accessible": lr.is_db_accessible(),
         })
 
     @app.route("/api/settings/test-lastfm", methods=["POST"])
@@ -451,7 +465,9 @@ def create_app() -> Flask:
 
     @app.route("/api/settings/test-soulsync", methods=["POST"])
     def settings_test_soulsync():
-        db_available = soulsync_reader.is_db_accessible()
+        from app.db import get_library_reader
+        lr = get_library_reader()
+        db_available = lr.is_db_accessible()
         api_status   = soulsync_api.test_connection()
         ok = db_available or api_status["status"] == "ok"
         return jsonify({

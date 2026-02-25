@@ -68,6 +68,7 @@ class Release:
     deezer_album_id: str = ""
     spotify_album_id: str = ""
     itunes_album_id: str = ""
+    is_upcoming: bool = False   # True if release_date > today at fetch time (pre-announcement)
 
 
 # ---------------------------------------------------------------------------
@@ -159,8 +160,7 @@ def _itunes_get_releases(itunes_artist_id: str, cutoff: datetime,
             continue
         if rel_date < cutoff:
             continue
-        if rel_date > datetime.utcnow():
-            continue  # skip future-dated pre-announcements
+        is_upcoming = rel_date > datetime.utcnow()
         title = item.get("collectionName", "")
         if any(kw in title.lower() for kw in ignore_kw):
             continue
@@ -185,6 +185,7 @@ def _itunes_get_releases(itunes_artist_id: str, cutoff: datetime,
             source="itunes",
             source_url=item.get("collectionViewUrl", ""),
             itunes_album_id=str(item.get("collectionId", "")),
+            is_upcoming=is_upcoming,
         ))
     return releases
 
@@ -297,8 +298,7 @@ def _deezer_get_releases(deezer_id: str, cutoff: datetime,
                 continue
             if rel_date < cutoff:
                 continue
-            if rel_date > datetime.utcnow():
-                continue  # skip future-dated pre-announcements
+            is_upcoming = rel_date > datetime.utcnow()
             title = album.get("title", "")
             if any(kw in title.lower() for kw in ignore_kw):
                 continue
@@ -313,6 +313,7 @@ def _deezer_get_releases(deezer_id: str, cutoff: datetime,
                 source="deezer",
                 source_url=album.get("link", ""),
                 deezer_album_id=str(album.get("id", "")),
+                is_upcoming=is_upcoming,
             ))
         if data.get("next"):
             index += 50
@@ -402,6 +403,7 @@ def _mb_get_releases(mbid: str, cutoff: datetime,
                 continue
             if rel_date < cutoff:
                 continue
+            is_upcoming = rel_date > datetime.utcnow()
             title = rel.get("title", "")
             if any(kw in title.lower() for kw in ignore_kw):
                 continue
@@ -415,6 +417,7 @@ def _mb_get_releases(mbid: str, cutoff: datetime,
                 kind=kind,
                 source="musicbrainz",
                 source_url=f"https://musicbrainz.org/release/{rel['id']}",
+                is_upcoming=is_upcoming,
             ))
         release_count = data.get("release-count", 0)
         offset += 100
@@ -448,6 +451,7 @@ def _spotify_get_releases(name: str, cutoff: datetime,
         return []
 
     cutoff_str = cutoff.strftime("%Y-%m-%d")
+    today_str = datetime.utcnow().strftime("%Y-%m-%d")
     releases = []
 
     artist_id = spotify_artist_id
@@ -489,6 +493,7 @@ def _spotify_get_releases(name: str, cutoff: datetime,
                     source="spotify",
                     source_url=album.get("external_urls", {}).get("spotify", ""),
                     spotify_album_id=album.get("id", ""),
+                    is_upcoming=date_str > today_str,
                 ))
             if resp.get("next"):
                 offset += 50
@@ -510,29 +515,57 @@ def get_new_releases_for_artist(
     ignore_keywords: list[str] | None = None,
     cached_ids: dict | None = None,
     spotify_artist_id: str = None,
+    force_refresh: bool = False,
 ) -> tuple[list[Release], dict]:
     """
     Discover new releases for a single artist using the configured provider chain:
       Spotify → iTunes → Deezer  (MusicBrainz only when MUSIC_API_PROVIDER=musicbrainz)
 
+    Results are cached in cc.db for 7 days (release_cache table). Set force_refresh=True
+    to bypass the cache and re-fetch from the provider.
+
     Returns (releases, resolved_ids) where resolved_ids contains any provider IDs
     discovered during this call — caller should write them to artist_identity_cache.
+    Upcoming (future-dated) releases are stored in the cache but NOT returned to the
+    caller — they're filtered here and available for a future "Upcoming" UI feature.
 
     artist_name       — Last.fm artist name
     days_ago          — how far back to look (cc_lookback_days)
     ignore_keywords   — release title substrings to skip (e.g. remix, remaster)
     cached_ids        — dict from cc_store.get_cached_artist() with cached provider IDs
     spotify_artist_id — Spotify artist ID from SoulSync DB (skips name-based search)
+    force_refresh     — bypass the 7-day cache and re-fetch from provider
     """
+    from app.db import cc_store as _cc_store
+
     cutoff = datetime.utcnow() - timedelta(days=days_ago)
+    cutoff_str = cutoff.strftime("%Y-%m-%d")
     ignore_kw = [k.strip().lower() for k in (ignore_keywords or [])]
     allowed_kinds = {k.strip().lower() for k in config.CC_RELEASE_KINDS.split(",") if k.strip()}
     provider = config.MUSIC_API_PROVIDER
+
+    # --- Release cache check (7-day TTL) ---
+    if not force_refresh:
+        cached = _cc_store.get_cached_releases(artist_name, max_age_days=7)
+        if cached is not None:
+            releases = [
+                r for r in cached
+                if not r.is_upcoming and (r.release_date or "") >= cutoff_str
+            ]
+            logger.debug("Release cache hit for '%s': %d/%d in window",
+                         artist_name, len(releases), len(cached))
+            return releases, {}
 
     ids = dict(cached_ids or {})
     sp_id = spotify_artist_id or ids.get("spotify_artist_id")
     if sp_id:
         ids["spotify_artist_id"] = sp_id
+
+    def _done(releases_list: list, resolved_ids: dict):
+        """Save all fetched releases (including upcoming) to cache; return non-upcoming."""
+        if releases_list:
+            _cc_store.save_releases_to_cache(artist_name, releases_list)
+        return [r for r in releases_list if not r.is_upcoming], resolved_ids
 
     # --- Spotify ---
     if provider in ("spotify", "auto") and _spotify_available():
@@ -540,9 +573,9 @@ def get_new_releases_for_artist(
                                          spotify_artist_id=sp_id)
         if releases:
             logger.info("Spotify: %d releases for '%s'", len(releases), artist_name)
-            return releases, ids
+            return _done(releases, ids)
         if provider == "spotify":
-            return [], ids
+            return _done([], ids)
 
     # --- iTunes (primary free provider) ---
     if provider in ("itunes", "auto"):
@@ -554,9 +587,9 @@ def get_new_releases_for_artist(
             releases = _itunes_get_releases(it_id, cutoff, allowed_kinds, ignore_kw)
             if releases:
                 logger.info("iTunes: %d releases for '%s'", len(releases), artist_name)
-                return releases, ids
+                return _done(releases, ids)
         if provider == "itunes":
-            return [], ids
+            return _done([], ids)
 
     # --- Deezer (fallback) ---
     if provider in ("deezer", "auto"):
@@ -568,9 +601,9 @@ def get_new_releases_for_artist(
             releases = _deezer_get_releases(deezer_id, cutoff, allowed_kinds, ignore_kw)
             if releases:
                 logger.info("Deezer: %d releases for '%s'", len(releases), artist_name)
-                return releases, ids
+                return _done(releases, ids)
         if provider == "deezer":
-            return [], ids
+            return _done([], ids)
 
     # --- MusicBrainz (explicit only — not in auto chain) ---
     # MB is excluded from "auto" because it hits a 1 req/sec rate limit and
@@ -586,10 +619,10 @@ def get_new_releases_for_artist(
             ids["mb_artist_id"] = mb_id
             releases = _mb_get_releases(mb_id, cutoff, allowed_kinds, ignore_kw)
             logger.debug("MusicBrainz: %d releases for '%s'", len(releases), artist_name)
-            return releases, ids
+            return _done(releases, ids)
 
     logger.info("No releases found for '%s' via any provider", artist_name)
-    return [], ids
+    return _done([], ids)
 
 
 def get_active_provider() -> str:

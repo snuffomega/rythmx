@@ -39,13 +39,14 @@ def get_status() -> dict:
     }
 
 
-def run_cycle(run_mode: str = "cruise") -> dict:
+def run_cycle(run_mode: str = "cruise", force_refresh: bool = False) -> dict:
     """
     Execute one cruise control cycle.
     run_mode: "dry" | "playlist" | "cruise"
       dry      — scan only, no playlist saved
       playlist — scan + build named playlist from owned new releases
       cruise   — playlist + queue downloads for unowned releases
+    force_refresh — bypass 7-day release cache, re-fetch from provider
     Returns a result summary dict.
     """
     global _is_running, _last_run, _last_result
@@ -58,7 +59,7 @@ def run_cycle(run_mode: str = "cruise") -> dict:
     _last_run = datetime.utcnow()
 
     try:
-        result = _execute_cycle(run_mode=run_mode)
+        result = _execute_cycle(run_mode=run_mode, force_refresh=force_refresh)
         _last_result = result
         return result
     except Exception as e:
@@ -69,7 +70,7 @@ def run_cycle(run_mode: str = "cruise") -> dict:
         _is_running = False
 
 
-def _execute_cycle(run_mode: str = "cruise") -> dict:
+def _execute_cycle(run_mode: str = "cruise", force_refresh: bool = False) -> dict:
     """
     Full 7-stage Cruise Control pipeline.
     Imports inline to avoid circular imports.
@@ -80,10 +81,15 @@ def _execute_cycle(run_mode: str = "cruise") -> dict:
     from app import last_fm_client, plex_push, music_client, identity_resolver
     from datetime import date as _date
 
-    logger.info("Cruise control cycle starting (run_mode=%s)", run_mode)
+    logger.info("Cruise control cycle starting (run_mode=%s, force_refresh=%s)",
+                run_mode, force_refresh)
 
     # Load settings from cc.db (user overrides via UI take precedence over config defaults)
     settings = cc_store.get_all_settings()
+
+    if force_refresh:
+        cc_store.clear_release_cache()
+        logger.info("Stage 2-3: release cache cleared (force_refresh=True)")
     min_listens = int(settings.get("cc_min_listens", config.CC_MIN_LISTENS))
     lookback_days = int(settings.get("cc_lookback_days", config.CC_LOOKBACK_DAYS))
     max_per_cycle = int(settings.get("cc_max_per_cycle", config.CC_MAX_PER_CYCLE))
@@ -152,6 +158,7 @@ def _execute_cycle(run_mode: str = "cruise") -> dict:
             ignore_keywords=ignore_keywords,
             cached_ids=cached,
             spotify_artist_id=sp_artist_id,
+            force_refresh=force_refresh,
         )
 
         # Write resolved IDs back to cache so subsequent cycles skip API searches.
@@ -226,11 +233,13 @@ def _execute_cycle(run_mode: str = "cruise") -> dict:
     if run_mode == "cruise":
         # Sort by release_date descending (newest first)
         unowned.sort(key=lambda r: r.release_date, reverse=True)
-        # Skip releases already identified in a previous cycle — prevents re-adding
-        # the same unowned release every run until it's actually acquired.
+        today_str = _date.today().isoformat()
+        # Skip releases already identified in a previous cycle, and never queue
+        # future-dated (pre-announced) releases for download.
         new_unowned = [
             r for r in unowned
             if not cc_store.is_release_in_history(r.artist, r.title)
+            and (r.release_date or "9999") <= today_str
         ]
         skipped_count = len(unowned) - len(new_unowned)
         if skipped_count:
@@ -438,6 +447,22 @@ def _auto_sync_playlist(pl, owned_releases, top_artists, settings, soulsync_read
         logger.warning("Stage 8: auto-sync failed for playlist '%s': %s", name, e)
 
 
+def _should_weekly_refresh(settings: dict) -> bool:
+    """
+    Return True if it's time for the weekly release cache refresh.
+    Default: Thursday (weekday=3) at 05:00 UTC.
+    Checks cc_settings['release_cache_last_cleared_weekday'] to avoid multiple
+    refreshes in the same day.
+    """
+    weekday = int(settings.get("release_cache_refresh_weekday", "3"))
+    hour = int(settings.get("release_cache_refresh_hour", "5"))
+    now = datetime.utcnow()
+    if now.weekday() != weekday or now.hour < hour:
+        return False
+    last_cleared = cc_store.get_setting("release_cache_last_cleared_weekday") or ""
+    return last_cleared != now.date().isoformat()
+
+
 def _loop():
     """Background loop — runs a cycle every CC_CYCLE_HOURS hours."""
     interval_secs = config.CC_CYCLE_HOURS * 3600
@@ -445,7 +470,14 @@ def _loop():
         if config.CC_ENABLED:
             settings = cc_store.get_all_settings()
             mode = settings.get("cc_run_mode", "cruise")
-            run_cycle(run_mode=mode)
+            force = _should_weekly_refresh(settings)
+            if force:
+                cc_store.set_setting("release_cache_last_cleared_weekday",
+                                     datetime.utcnow().date().isoformat())
+                logger.info("Weekly release cache refresh triggered (weekday=%s, hour=%s)",
+                            settings.get("release_cache_refresh_weekday", "3"),
+                            settings.get("release_cache_refresh_hour", "5"))
+            run_cycle(run_mode=mode, force_refresh=force)
         _stop_event.wait(timeout=interval_secs)
 
 

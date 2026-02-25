@@ -107,6 +107,21 @@ def init_db():
                 last_synced_ts INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS release_cache (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                artist_name TEXT    NOT NULL,
+                source      TEXT    NOT NULL,
+                album_title TEXT    NOT NULL,
+                release_date TEXT,
+                kind        TEXT,
+                itunes_album_id  TEXT,
+                deezer_album_id  TEXT,
+                spotify_album_id TEXT,
+                is_upcoming INTEGER DEFAULT 0,
+                cached_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(artist_name, source, album_title)
+            );
         """)
 
     # Migrations: add columns that may not exist in older cc.db files
@@ -473,3 +488,81 @@ def delete_playlist(name: str):
     with _connect() as conn:
         conn.execute("DELETE FROM playlists WHERE name = ?", (name,))
         conn.execute("DELETE FROM cc_playlist WHERE playlist_name = ?", (name,))
+
+
+# --- Release cache ---
+
+def get_cached_releases(artist_name: str, max_age_days: int = 7):
+    """
+    Return Release objects for this artist if fetched within max_age_days, else None.
+    Returns ALL stored releases (including upcoming) — caller filters as needed.
+    Returns None if no cache entry exists or the cache is stale.
+    """
+    import time
+    from app.music_client import Release
+    max_age_secs = max_age_days * 86400
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*), MAX(strftime('%s', cached_at)) FROM release_cache WHERE artist_name = ?",
+            (artist_name,)
+        ).fetchone()
+        if not row or not row[1]:
+            return None
+        if time.time() - int(row[1]) > max_age_secs:
+            return None
+        rows = conn.execute(
+            """SELECT album_title, release_date, kind, source,
+                      itunes_album_id, deezer_album_id, spotify_album_id, is_upcoming
+               FROM release_cache WHERE artist_name = ?""",
+            (artist_name,)
+        ).fetchall()
+        return [
+            Release(
+                artist=artist_name,
+                title=r["album_title"],
+                release_date=r["release_date"] or "",
+                kind=r["kind"] or "album",
+                source=r["source"],
+                itunes_album_id=r["itunes_album_id"] or "",
+                deezer_album_id=r["deezer_album_id"] or "",
+                spotify_album_id=r["spotify_album_id"] or "",
+                is_upcoming=bool(r["is_upcoming"]),
+            )
+            for r in rows
+        ]
+
+
+def save_releases_to_cache(artist_name: str, releases: list):
+    """Upsert a list of Release objects into release_cache (including upcoming)."""
+    with _connect() as conn:
+        for r in releases:
+            conn.execute(
+                """INSERT INTO release_cache
+                   (artist_name, source, album_title, release_date, kind,
+                    itunes_album_id, deezer_album_id, spotify_album_id, is_upcoming, cached_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                   ON CONFLICT(artist_name, source, album_title) DO UPDATE SET
+                       release_date     = excluded.release_date,
+                       kind             = excluded.kind,
+                       itunes_album_id  = COALESCE(excluded.itunes_album_id,  itunes_album_id),
+                       deezer_album_id  = COALESCE(excluded.deezer_album_id,  deezer_album_id),
+                       spotify_album_id = COALESCE(excluded.spotify_album_id, spotify_album_id),
+                       is_upcoming      = excluded.is_upcoming,
+                       cached_at        = CURRENT_TIMESTAMP""",
+                (
+                    artist_name, r.source, r.title, r.release_date, r.kind,
+                    r.itunes_album_id or None,
+                    r.deezer_album_id or None,
+                    r.spotify_album_id or None,
+                    1 if r.is_upcoming else 0,
+                )
+            )
+
+
+def clear_release_cache(artist_name: str | None = None):
+    """Delete all rows (or rows for one artist) from release_cache."""
+    with _connect() as conn:
+        if artist_name:
+            conn.execute("DELETE FROM release_cache WHERE artist_name = ?", (artist_name,))
+        else:
+            conn.execute("DELETE FROM release_cache")

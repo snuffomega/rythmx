@@ -252,6 +252,28 @@
                             </label>
                         </div>
 
+                        <div>
+                            <label class="block text-sm text-text-secondary mb-2">Weekly release cache refresh</label>
+                            <div class="flex items-center gap-2">
+                                <select id="cc-cache-weekday" name="release_cache_refresh_weekday"
+                                        class="flex-1 bg-surface-highlight border border-border-default rounded-xl px-3 py-3 text-text-primary focus:outline-none focus:border-accent-primary transition-colors appearance-none cursor-pointer text-sm">
+                                    <option value="0">Monday</option>
+                                    <option value="1">Tuesday</option>
+                                    <option value="2">Wednesday</option>
+                                    <option value="3">Thursday</option>
+                                    <option value="4">Friday</option>
+                                    <option value="5">Saturday</option>
+                                    <option value="6">Sunday</option>
+                                </select>
+                                <span class="text-text-secondary text-sm shrink-0">at</span>
+                                <input type="number" id="cc-cache-hour" name="release_cache_refresh_hour"
+                                       value="5" min="0" max="23"
+                                       class="w-16 bg-surface-highlight border border-border-default rounded-xl px-3 py-3 text-text-primary text-sm text-center focus:outline-none focus:border-accent-primary transition-colors">
+                                <span class="text-text-secondary text-sm shrink-0">UTC</span>
+                            </div>
+                            <p class="text-xs text-text-muted mt-1">Clears cache and re-fetches all releases from providers (most labels drop on Thursdays)</p>
+                        </div>
+
                         <button type="submit"
                                 class="w-full px-4 py-3 rounded-xl bg-accent-primary text-white font-medium hover:bg-opacity-90 transition-all">
                             Save Configuration
@@ -304,8 +326,15 @@
                             </div>
                         </div>
 
+                        <div class="mt-6 flex items-center gap-2">
+                            <label class="flex items-center gap-2 cursor-pointer text-sm text-text-secondary select-none">
+                                <input type="checkbox" id="cc-force-refresh" class="accent-accent-warning w-4 h-4 shrink-0">
+                                Force Refresh
+                            </label>
+                            <span class="text-xs text-text-muted">— bypass cache, re-fetch releases from API</span>
+                        </div>
                         <button id="btn-run-now"
-                                class="w-full mt-6 px-4 py-3 rounded-xl bg-accent-secondary text-black font-medium hover:bg-opacity-90 transition-all flex items-center justify-center gap-2">
+                                class="w-full mt-3 px-4 py-3 rounded-xl bg-accent-secondary text-black font-medium hover:bg-opacity-90 transition-all flex items-center justify-center gap-2">
                             <i data-lucide="play" class="w-4 h-4"></i>Run Now
                         </button>
                     </div>
@@ -559,7 +588,11 @@
                     <i data-lucide="alert-triangle" class="w-5 h-5"></i>Danger Zone
                 </h3>
                 <p class="text-text-secondary text-sm mb-4">These actions cannot be undone.</p>
-                <div class="flex gap-4">
+                <div class="flex flex-wrap gap-4">
+                    <button id="btn-clear-release-cache"
+                            class="px-4 py-2 rounded-xl border border-border-default text-text-secondary text-sm hover:border-accent-warning hover:text-accent-warning transition-all flex items-center gap-2">
+                        <i data-lucide="trash-2" class="w-4 h-4"></i>Clear Release Cache
+                    </button>
                     <button id="btn-clear-history"
                             class="px-4 py-2 rounded-xl border border-accent-danger/50 text-accent-danger text-sm hover:bg-accent-danger/10 transition-all">
                         Clear History

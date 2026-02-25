@@ -371,12 +371,14 @@ function populateCCForm(cfg) {
         if (el.type === 'checkbox') el.checked = cfg[key] === 'true';
         else el.value = cfg[key] ?? fallback;
     };
-    set('cc-enabled',    'cc_enabled',           false);
-    set('cc-min-listens','cc_min_listens',        '10');
-    set('cc-period',     'cc_period',             '6month');
-    set('cc-lookback',   'cc_lookback_days',      '90');
-    set('cc-max',        'cc_max_per_cycle',      '10');
-    set('cc-auto-push',  'cc_auto_push_playlist', false);
+    set('cc-enabled',       'cc_enabled',                  false);
+    set('cc-min-listens',   'cc_min_listens',              '10');
+    set('cc-period',        'cc_period',                   '6month');
+    set('cc-lookback',      'cc_lookback_days',            '90');
+    set('cc-max',           'cc_max_per_cycle',            '10');
+    set('cc-auto-push',     'cc_auto_push_playlist',       false);
+    set('cc-cache-weekday', 'release_cache_refresh_weekday', '3');
+    set('cc-cache-hour',    'release_cache_refresh_hour',    '5');
     // Run mode toggle
     setRunMode(cfg['cc_run_mode'] || 'playlist');
     // Playlist prefix
@@ -481,11 +483,12 @@ function setupCCForm() {
     });
 
     document.getElementById('btn-run-now').addEventListener('click', async () => {
-        const runMode = document.getElementById('cc-run-mode')?.value || 'playlist';
+        const runMode     = document.getElementById('cc-run-mode')?.value || 'playlist';
+        const forceRefresh = document.getElementById('cc-force-refresh')?.checked || false;
         try {
             await api('/cruise-control/run-now', {
                 method: 'POST',
-                body: JSON.stringify({ run_mode: runMode }),
+                body: JSON.stringify({ run_mode: runMode, force_refresh: forceRefresh }),
             });
             showToast('Cycle started!', 'success');
 
@@ -1038,6 +1041,18 @@ function setupSettingsPage() {
     });
 
     // Danger zone
+    document.getElementById('btn-clear-release-cache').addEventListener('click', async () => {
+        const ok = await showConfirm('Clear Release Cache',
+            'This will delete the cached release data. The next CC cycle will re-fetch from providers.');
+        if (!ok) return;
+        try {
+            await api('/release-cache/clear', { method: 'POST' });
+            showToast('Release cache cleared', 'success');
+        } catch (err) {
+            showToast(`Failed: ${err.message}`, 'error');
+        }
+    });
+
     document.getElementById('btn-clear-history').addEventListener('click', async () => {
         const ok = await showConfirm('Clear History',
             'This will delete all cycle history. This cannot be undone.');
