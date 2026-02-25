@@ -122,6 +122,25 @@ def init_db():
                 cached_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(artist_name, source, album_title)
             );
+
+            CREATE TABLE IF NOT EXISTS download_queue (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                artist_name      TEXT NOT NULL,
+                album_title      TEXT NOT NULL,
+                release_date     TEXT,
+                kind             TEXT,
+                source           TEXT,
+                itunes_album_id  TEXT,
+                deezer_album_id  TEXT,
+                spotify_album_id TEXT,
+                status           TEXT DEFAULT 'pending',
+                requested_by     TEXT,
+                playlist_name    TEXT,
+                provider_response TEXT,
+                created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(artist_name, album_title)
+            );
         """)
 
     # Migrations: add columns that may not exist in older cc.db files
@@ -129,6 +148,8 @@ def init_db():
     _migrate_add_column("artist_identity_cache", "soulsync_artist_id", "TEXT")
     _migrate_add_column("artist_identity_cache", "resolution_method", "TEXT")
     _migrate_add_column("playlists", "max_tracks", "INTEGER DEFAULT 50")
+    _migrate_add_column("cc_playlist", "is_owned", "INTEGER DEFAULT 1")
+    _migrate_add_column("cc_playlist", "release_date", "TEXT")
 
     logger.info("cc.db initialized at %s", config.CC_DB)
 
@@ -200,6 +221,98 @@ def is_release_in_history(artist_name: str, album_name: str) -> bool:
         return row is not None
 
 
+# --- Download queue ---
+
+def is_in_queue(artist_name: str, album_title: str) -> bool:
+    """
+    Return True if this release has a pending or submitted acquisition request.
+    Does NOT block 'found', 'failed', or 'skipped' — those can be re-evaluated.
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            """SELECT 1 FROM download_queue
+               WHERE lower(artist_name) = lower(?)
+               AND lower(album_title) = lower(?)
+               AND status IN ('pending', 'submitted')
+               LIMIT 1""",
+            (artist_name, album_title)
+        ).fetchone()
+        return row is not None
+
+
+def add_to_queue(artist_name: str, album_title: str, release_date: str = None,
+                 kind: str = None, source: str = None,
+                 itunes_album_id: str = None, deezer_album_id: str = None,
+                 spotify_album_id: str = None,
+                 requested_by: str = "cc", playlist_name: str = None) -> int:
+    """
+    Insert a release into the download queue. UNIQUE(artist_name, album_title) —
+    if an entry already exists (any status), the existing row is left unchanged and
+    its id is returned.
+    """
+    with _connect() as conn:
+        conn.execute(
+            """INSERT OR IGNORE INTO download_queue
+               (artist_name, album_title, release_date, kind, source,
+                itunes_album_id, deezer_album_id, spotify_album_id,
+                requested_by, playlist_name)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (artist_name, album_title, release_date, kind, source,
+             itunes_album_id or None, deezer_album_id or None, spotify_album_id or None,
+             requested_by, playlist_name)
+        )
+        row = conn.execute(
+            "SELECT id FROM download_queue WHERE lower(artist_name)=lower(?) AND lower(album_title)=lower(?)",
+            (artist_name, album_title)
+        ).fetchone()
+        return row["id"] if row else -1
+
+
+def get_queue(status: str = None, playlist_name: str = None) -> list[dict]:
+    """Return queue rows, optionally filtered by status and/or playlist_name."""
+    with _connect() as conn:
+        query = "SELECT * FROM download_queue WHERE 1=1"
+        params = []
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+        if playlist_name:
+            query += " AND playlist_name = ?"
+            params.append(playlist_name)
+        query += " ORDER BY created_at DESC"
+        rows = conn.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+
+
+def update_queue_status(queue_id: int, status: str, provider_response: str = None):
+    """Update status and updated_at for a queue row."""
+    with _connect() as conn:
+        conn.execute(
+            """UPDATE download_queue
+               SET status = ?, provider_response = COALESCE(?, provider_response),
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE id = ?""",
+            (status, provider_response, queue_id)
+        )
+
+
+def get_queue_stats() -> dict:
+    """Return counts by status."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT status, COUNT(*) AS cnt FROM download_queue GROUP BY status"
+        ).fetchall()
+        stats = {r["status"]: r["cnt"] for r in rows}
+        return {
+            "pending":   stats.get("pending", 0),
+            "submitted": stats.get("submitted", 0),
+            "found":     stats.get("found", 0),
+            "failed":    stats.get("failed", 0),
+            "skipped":   stats.get("skipped", 0),
+            "total":     sum(stats.values()),
+        }
+
+
 def get_history_summary() -> dict:
     with _connect() as conn:
         row = conn.execute("""
@@ -224,8 +337,8 @@ def save_playlist(tracks: list[dict], playlist_name: str = "For You"):
             conn.execute(
                 """INSERT OR REPLACE INTO cc_playlist
                    (playlist_name, track_id, spotify_track_id, track_name, artist_name,
-                    album_name, album_cover_url, score, position)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    album_name, album_cover_url, score, position, is_owned, release_date)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     playlist_name,
                     t.get("plex_rating_key"),
@@ -236,6 +349,8 @@ def save_playlist(tracks: list[dict], playlist_name: str = "For You"):
                     t.get("album_cover_url"),
                     t.get("score"),
                     i,
+                    1 if t.get("is_owned", True) else 0,
+                    t.get("release_date"),
                 )
             )
 
@@ -376,6 +491,7 @@ def reset_db():
             DELETE FROM artist_identity_cache;
             DELETE FROM cc_candidates;
             DELETE FROM playlists;
+            DELETE FROM download_queue;
         """)
     logger.info("cc.db reset — all user data cleared")
 
@@ -496,7 +612,9 @@ def get_cached_releases(artist_name: str, max_age_days: int = 7):
     """
     Return Release objects for this artist if fetched within max_age_days, else None.
     Returns ALL stored releases (including upcoming) — caller filters as needed.
-    Returns None if no cache entry exists or the cache is stale.
+    Returns None  → cache miss (never fetched, or stale) — call providers.
+    Returns []    → cache hit, no releases found (sentinel row present).
+    Returns [...]  → cache hit with results.
     """
     import time
     from app.music_client import Release
@@ -510,12 +628,14 @@ def get_cached_releases(artist_name: str, max_age_days: int = 7):
             return None
         if time.time() - int(row[1]) > max_age_secs:
             return None
+        # Fetch real releases only (exclude sentinel rows)
         rows = conn.execute(
             """SELECT album_title, release_date, kind, source,
                       itunes_album_id, deezer_album_id, spotify_album_id, is_upcoming
-               FROM release_cache WHERE artist_name = ?""",
+               FROM release_cache WHERE artist_name = ? AND source != 'sentinel'""",
             (artist_name,)
         ).fetchall()
+        # Returns [] for sentinel-only (cache hit, no releases found)
         return [
             Release(
                 artist=artist_name,
@@ -533,8 +653,23 @@ def get_cached_releases(artist_name: str, max_age_days: int = 7):
 
 
 def save_releases_to_cache(artist_name: str, releases: list):
-    """Upsert a list of Release objects into release_cache (including upcoming)."""
+    """
+    Upsert a list of Release objects into release_cache (including upcoming).
+    If releases is empty, writes a sentinel row (source='sentinel', album_title='')
+    so that get_cached_releases() can distinguish "checked but found nothing" from
+    "never checked" — preventing an API call on every re-run for quiet artists.
+    """
     with _connect() as conn:
+        if not releases:
+            conn.execute(
+                """INSERT INTO release_cache
+                   (artist_name, source, album_title, cached_at)
+                   VALUES (?, 'sentinel', '', CURRENT_TIMESTAMP)
+                   ON CONFLICT(artist_name, source, album_title) DO UPDATE SET
+                       cached_at = CURRENT_TIMESTAMP""",
+                (artist_name,)
+            )
+            return
         for r in releases:
             conn.execute(
                 """INSERT INTO release_cache

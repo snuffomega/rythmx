@@ -225,8 +225,17 @@ def _execute_cycle(run_mode: str = "cruise", force_refresh: bool = False) -> dic
 
     logger.info("Stage 4: %d owned, %d unowned", owned_count, len(unowned))
 
+    # Compute playlist name now so both Stage 6 and Stage 7 share the same value.
+    playlist_prefix = settings.get("cc_playlist_prefix", "New Music")
+    playlist_name_date = (f"{playlist_prefix}_{_date.today().isoformat()}"
+                          if run_mode in ("playlist", "cruise") else None)
+
     # -------------------------------------------------------------------------
-    # Stage 5-6 — Download queue (cruise mode only)
+    # Stage 5-6 — Acquisition queue (cruise mode only)
+    #
+    # Writes unowned releases to download_queue (provider-agnostic).
+    # is_in_queue() blocks only 'pending'/'submitted' — 'found'/'failed' are
+    # re-evaluatable.  Future-dated (pre-announced) releases are never queued.
     # -------------------------------------------------------------------------
     queued_count = 0
 
@@ -234,56 +243,47 @@ def _execute_cycle(run_mode: str = "cruise", force_refresh: bool = False) -> dic
         # Sort by release_date descending (newest first)
         unowned.sort(key=lambda r: r.release_date, reverse=True)
         today_str = _date.today().isoformat()
-        # Skip releases already identified in a previous cycle, and never queue
-        # future-dated (pre-announced) releases for download.
         new_unowned = [
             r for r in unowned
-            if not cc_store.is_release_in_history(r.artist, r.title)
+            if not cc_store.is_in_queue(r.artist, r.title)
             and (r.release_date or "9999") <= today_str
         ]
         skipped_count = len(unowned) - len(new_unowned)
         if skipped_count:
-            logger.info("Stage 5: skipped %d already-identified releases", skipped_count)
+            logger.info("Stage 5: skipped %d releases already in acquisition queue", skipped_count)
         to_queue = new_unowned[:max_per_cycle]
         logger.info("Stage 5: %d releases selected for acquisition (cap=%d)",
                     len(to_queue), max_per_cycle)
 
-        # Stage 6 — mark as identified (download integration pending)
-        # TODO: POST /api/watchlist/add to SoulSync once endpoint is confirmed.
         for r in to_queue:
-            queued_count += 1
-            cc_store.add_history_entry(
-                {
-                    "track_name": r.title,
-                    "artist_name": r.artist,
-                    "album_name": r.title,
-                    "source": r.source,
-                    "score": None,
-                },
-                status="identified",
-                reason=f"release_date={r.release_date} kind={r.kind} provider={r.source}",
+            queue_id = cc_store.add_to_queue(
+                artist_name=r.artist, album_title=r.title,
+                release_date=r.release_date, kind=r.kind, source=r.source,
+                itunes_album_id=r.itunes_album_id or None,
+                deezer_album_id=r.deezer_album_id or None,
+                spotify_album_id=r.spotify_album_id or None,
+                requested_by="cc", playlist_name=playlist_name_date,
             )
-        logger.info("Stage 6: %d releases identified for acquisition (download integration pending)",
-                    queued_count)
+            queued_count += 1
+            logger.info("Stage 6: queued '%s \u2014 %s' (queue_id=%d)", r.artist, r.title, queue_id)
+        logger.info("Stage 6: %d releases added to acquisition queue", queued_count)
     else:
         logger.info("Stage 5-6: skipped (run_mode=%s)", run_mode)
 
     # -------------------------------------------------------------------------
-    # Stage 7 — Build named playlist from owned new releases (playlist/cruise modes)
+    # Stage 7 — Build named playlist (playlist/cruise modes)
     #
-    # Expands each owned release to individual tracks via get_tracks_for_album().
-    # Saves to cc_playlist as "New Music_YYYY-MM-DD" (prefix configurable).
+    # Owned releases: expanded to individual tracks (have plex_rating_key).
+    # Unowned releases: album-level placeholder cards (is_owned=0, no plex_rating_key).
+    # Saves to cc_playlist as "{prefix}_{YYYY-MM-DD}".
     # Dry mode skips playlist creation entirely.
     # -------------------------------------------------------------------------
     playlist_tracks = []
     plex_playlist_id = None
-    playlist_name_date = None
 
     if run_mode in ("playlist", "cruise"):
-        playlist_prefix = settings.get("cc_playlist_prefix", "New Music")
-        playlist_name_date = f"{playlist_prefix}_{_date.today().isoformat()}"
-
         try:
+            # Owned: expand each album to individual tracks
             for r in owned_releases:
                 cached_r = cc_store.get_cached_artist(r.artist) or {}
                 ss_id = (cached_r.get("soulsync_artist_id")
@@ -298,19 +298,37 @@ def _execute_cycle(run_mode: str = "cruise", force_refresh: bool = False) -> dic
                             "album_name": r.title,
                             "album_cover_url": t.get("album_thumb_url") or "",
                             "score": None,
+                            "is_owned": 1,
+                            "release_date": r.release_date,
                         })
                 else:
                     logger.debug("Stage 7: no SoulSync ID for owned release artist '%s'", r.artist)
 
+            # Unowned: album-level placeholder (shown as "Missing" in playlist UI)
+            for r in unowned:
+                playlist_tracks.append({
+                    "plex_rating_key": None,
+                    "track_name": r.title,
+                    "artist_name": r.artist,
+                    "album_name": r.title,
+                    "album_cover_url": "",
+                    "score": None,
+                    "is_owned": 0,
+                    "release_date": r.release_date,
+                })
+
+            owned_track_count = sum(1 for t in playlist_tracks if t.get("is_owned", 1))
+            unowned_count = len(playlist_tracks) - owned_track_count
             cc_store.create_playlist_meta(playlist_name_date, source="cc", mode="cc_new_music")
             cc_store.save_playlist(playlist_tracks, playlist_name=playlist_name_date)
             cc_store.mark_playlist_synced(playlist_name_date)
-            logger.info("Stage 7: playlist '%s' saved with %d tracks",
-                        playlist_name_date, len(playlist_tracks))
+            logger.info("Stage 7: playlist '%s' saved — %d owned tracks, %d missing albums",
+                        playlist_name_date, owned_track_count, unowned_count)
 
             if auto_push and playlist_tracks:
+                # Plex push: only owned tracks with a valid plex_rating_key
                 rating_keys = [t["plex_rating_key"] for t in playlist_tracks
-                               if t.get("plex_rating_key")]
+                               if t.get("is_owned", 1) and t.get("plex_rating_key")]
                 if rating_keys:
                     plex_playlist_id = plex_push.create_or_update_playlist(
                         playlist_name_date, rating_keys)
@@ -336,6 +354,7 @@ def _execute_cycle(run_mode: str = "cruise", force_refresh: bool = False) -> dic
     else:
         logger.info("Stage 8: skipped (run_mode=dry)")
 
+    queue_stats = cc_store.get_queue_stats()
     return {
         "status": "ok",
         "run_mode": run_mode,
@@ -349,6 +368,7 @@ def _execute_cycle(run_mode: str = "cruise", force_refresh: bool = False) -> dic
         "playlist_name": playlist_name_date,
         "plex_playlist_id": plex_playlist_id,
         "provider": music_client.get_active_provider(),
+        "queue_stats": queue_stats,
     }
 
 
@@ -478,6 +498,12 @@ def _loop():
                             settings.get("release_cache_refresh_weekday", "3"),
                             settings.get("release_cache_refresh_hour", "5"))
             run_cycle(run_mode=mode, force_refresh=force)
+        # Run acquisition worker after each CC cycle (or on its own schedule)
+        try:
+            from app import acquisition
+            acquisition.check_queue()
+        except Exception as e:
+            logger.warning("Acquisition worker error (non-fatal): %s", e)
         _stop_event.wait(timeout=interval_secs)
 
 

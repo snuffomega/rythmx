@@ -399,6 +399,12 @@ function updateCCStatus() {
     document.getElementById('cc-failed').textContent     = dash(r.failed);
     document.getElementById('cc-provider').textContent   = r.provider || '—';
 
+    const qs = r.queue_stats;
+    const queueEl = document.getElementById('cc-queue-stats');
+    if (queueEl && qs) {
+        queueEl.textContent = `${qs.pending || 0} pending · ${qs.found || 0} found · ${qs.failed || 0} failed`;
+    }
+
     // Stage icons
     document.querySelectorAll('#pipeline-stages .stage').forEach(stage => {
         stage.classList.remove('completed', 'active', 'failed');
@@ -740,14 +746,19 @@ function buildPlaylistCard(pl) {
             try {
                 const data = await api(`/playlists/${encodeURIComponent(pl.name)}/tracks`);
                 const tracks = data.tracks || [];
-                container.innerHTML = tracks.map(t => `
-                    <div class="flex items-center gap-2 py-1 text-xs">
-                        <span class="${t.track_id ? 'text-accent-success' : 'text-text-muted'}">
-                            ${t.track_id ? '●' : '○'}
+                container.innerHTML = tracks.map(t => {
+                    const owned = t.is_owned !== undefined ? t.is_owned : (t.track_id ? 1 : 0);
+                    return `
+                    <div class="flex items-center gap-2 py-1 text-xs ${owned ? '' : 'opacity-60'}">
+                        <span class="${owned ? 'text-accent-success' : 'text-text-muted'} shrink-0">
+                            ${owned ? '●' : '○'}
                         </span>
-                        <span class="text-text-primary truncate">${escHtml(t.artist_name || '')} – ${escHtml(t.track_name || '')}</span>
-                    </div>
-                `).join('') || '<p class="text-text-muted text-xs py-2">No tracks</p>';
+                        <span class="${owned ? 'text-text-primary' : 'text-text-secondary'} truncate flex-1">
+                            ${escHtml(t.artist_name || '')} – ${escHtml(t.track_name || '')}
+                        </span>
+                        ${!owned ? '<span class="shrink-0 px-1.5 rounded bg-surface-highlight text-text-muted" style="font-size:0.65rem">Missing</span>' : ''}
+                    </div>`;
+                }).join('') || '<p class="text-text-muted text-xs py-2">No tracks</p>';
                 container.dataset.loaded = '1';
             } catch (_) {
                 container.innerHTML = '<p class="text-accent-danger text-xs py-2">Failed to load tracks</p>';

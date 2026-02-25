@@ -165,6 +165,38 @@ def create_app() -> Flask:
         cc_store.clear_release_cache()
         return jsonify({"status": "ok", "message": "release cache cleared"})
 
+    # -------------------------------------------------------------------------
+    # Acquisition queue
+    # -------------------------------------------------------------------------
+
+    @app.route("/api/acquisition/queue", methods=["GET"])
+    def acquisition_queue_get():
+        status = request.args.get("status")
+        playlist = request.args.get("playlist")
+        items = cc_store.get_queue(status=status, playlist_name=playlist)
+        return jsonify({"status": "ok", "items": items})
+
+    @app.route("/api/acquisition/queue", methods=["POST"])
+    def acquisition_queue_add():
+        data = request.get_json() or {}
+        artist = data.get("artist_name", "").strip()
+        album = data.get("album_title", "").strip()
+        if not artist or not album:
+            return jsonify({"status": "error", "message": "artist_name and album_title required"}), 400
+        queue_id = cc_store.add_to_queue(
+            artist_name=artist, album_title=album,
+            release_date=data.get("release_date"),
+            kind=data.get("kind"),
+            source=data.get("source"),
+            requested_by="manual",
+        )
+        return jsonify({"status": "ok", "queue_id": queue_id})
+
+    @app.route("/api/acquisition/stats", methods=["GET"])
+    def acquisition_stats():
+        stats = cc_store.get_queue_stats()
+        return jsonify({"status": "ok", **stats})
+
     @app.route("/api/cruise-control/history")
     def cc_history():
         limit = min(int(request.args.get("limit", 100)), 500)
@@ -375,7 +407,8 @@ def create_app() -> Flask:
     @app.route("/api/playlists/<path:name>/publish", methods=["POST"])
     def playlists_publish(name):
         tracks = cc_store.get_playlist(playlist_name=name)
-        rating_keys = [t["track_id"] for t in tracks if t.get("track_id")]
+        # Only push owned tracks (is_owned=1, track_id present); unowned albums have no plex_rating_key
+        rating_keys = [t["track_id"] for t in tracks if t.get("track_id") and t.get("is_owned", 1)]
         if not rating_keys:
             return jsonify({"status": "error", "message": "No owned tracks in playlist to push"}), 400
         playlist_id = plex_push.create_or_update_playlist(name, rating_keys)

@@ -562,9 +562,10 @@ def get_new_releases_for_artist(
         ids["spotify_artist_id"] = sp_id
 
     def _done(releases_list: list, resolved_ids: dict):
-        """Save all fetched releases (including upcoming) to cache; return non-upcoming."""
-        if releases_list:
-            _cc_store.save_releases_to_cache(artist_name, releases_list)
+        """Save all fetched releases (including upcoming) to cache; return non-upcoming.
+        Always saves — even an empty list writes a sentinel so quiet artists are not
+        re-fetched from the API on every run within the cache TTL window."""
+        _cc_store.save_releases_to_cache(artist_name, releases_list)
         return [r for r in releases_list if not r.is_upcoming], resolved_ids
 
     # --- Spotify ---
