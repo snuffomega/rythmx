@@ -147,6 +147,28 @@ table tbody tr:hover { background-color: #1E1E1E; }
     font-weight: 500;
 }
 
+/* ── Library Backend Selector ───────────────── */
+.lib-backend-btn {
+    padding: 0.4rem 0.9rem;
+    border-radius: 0.6rem;
+    border: 1px solid #3F3F46;
+    background: transparent;
+    color: #A1A1AA;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.lib-backend-btn:hover:not(:disabled) {
+    background: #27272A;
+    color: #F4F4F5;
+}
+.lib-backend-btn.active {
+    background: #27272A;
+    color: #F4F4F5;
+    border-color: #7B61FF;
+    font-weight: 500;
+}
+
 /* ── Activity Filter Tabs ────────────────────── */
 .act-filter-btn {
     color: #A1A1AA;

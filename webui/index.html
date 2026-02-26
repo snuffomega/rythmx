@@ -675,6 +675,32 @@
                 <p class="text-text-secondary">Connection status — configure credentials in your <code class="font-mono text-accent-primary">.env</code> file</p>
             </header>
 
+            <!-- Library Backend — full width, above connection cards -->
+            <div class="lg:col-span-2 bg-surface rounded-2xl border border-border-default p-6 mb-8">
+                <h3 class="font-display text-xl font-semibold mb-1 flex items-center gap-2">
+                    <i data-lucide="library" class="w-5 h-5 text-accent-primary"></i>Library Backend
+                </h3>
+                <p class="text-text-muted text-xs mb-4">
+                    Source for owned-checks and playlist expansion.
+                    <strong class="text-text-secondary">Plex (native)</strong> reads your Plex library directly — no SoulSync dependency required.
+                </p>
+                <div class="flex gap-2 flex-wrap mb-4">
+                    <button class="lib-backend-btn" data-backend="soulsync">SoulSync</button>
+                    <button class="lib-backend-btn" data-backend="plex">Plex (native)</button>
+                    <button class="lib-backend-btn opacity-40 cursor-not-allowed" data-backend="navidrome" disabled>
+                        Navidrome <span class="text-xs opacity-60">soon</span>
+                    </button>
+                    <button class="lib-backend-btn opacity-40 cursor-not-allowed" data-backend="jellyfin" disabled>
+                        Jellyfin <span class="text-xs opacity-60">soon</span>
+                    </button>
+                </div>
+                <div id="library-status" class="text-sm mb-4 min-h-5 text-text-muted"></div>
+                <button id="btn-sync-library"
+                        class="hidden px-4 py-3 rounded-xl bg-surface-highlight border border-border-default text-text-primary font-medium hover:border-accent-primary transition-all flex items-center justify-center gap-2">
+                    <i data-lucide="refresh-cw" class="w-4 h-4"></i>Sync Library Now
+                </button>
+            </div>
+
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 <!-- Last.fm -->
                 <div class="bg-surface rounded-2xl border border-border-default p-6">

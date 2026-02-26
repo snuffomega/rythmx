@@ -1022,7 +1022,25 @@ async function loadSettings() {
                 ? `DB accessible`
                 : 'DB not accessible — check SOULSYNC_DB path',
             data.soulsync_db_accessible);
+
+        // Library backend
+        const backend = data.library_backend || 'soulsync';
+        document.querySelectorAll('.lib-backend-btn').forEach(b =>
+            b.classList.toggle('active', b.dataset.backend === backend));
+        document.getElementById('btn-sync-library')?.classList.toggle('hidden', backend === 'soulsync');
+        const trackLabel = (data.library_track_count || 0).toLocaleString() + ' tracks';
+        const syncLabel  = data.library_last_synced ? ` · Last sync: ${data.library_last_synced}` : '';
+        setStatus('library-status',
+            data.library_accessible
+                ? `${_libBackendLabel(backend)} — ${trackLabel}${syncLabel}`
+                : `${_libBackendLabel(backend)} — not accessible`,
+            data.library_accessible);
     } catch (_) {}
+}
+
+function _libBackendLabel(b) {
+    return { soulsync: 'SoulSync', plex: 'Plex (native)',
+             navidrome: 'Navidrome', jellyfin: 'Jellyfin' }[b] || b;
 }
 
 function setStatus(elId, html, ok) {
@@ -1030,6 +1048,44 @@ function setStatus(elId, html, ok) {
     if (!el) return;
     el.innerHTML = html;
     el.className = `text-sm mb-4 min-h-5 ${ok ? 'status-connected' : 'status-disconnected'}`;
+}
+
+function setupLibraryBackend() {
+    document.querySelectorAll('.lib-backend-btn:not(:disabled)').forEach(btn => {
+        btn.addEventListener('click', () => _setLibBackend(btn.dataset.backend));
+    });
+    document.getElementById('btn-sync-library')?.addEventListener('click', async () => {
+        const btn = document.getElementById('btn-sync-library');
+        const el  = document.getElementById('library-status');
+        btn.disabled = true;
+        el.innerHTML = 'Syncing library…';
+        el.className = 'text-sm mb-4 min-h-5 text-text-muted';
+        try {
+            const r = await api('/library/sync', { method: 'POST' });
+            const label = `${(r.track_count || 0).toLocaleString()} tracks` +
+                          (r.album_count ? ` · ${r.album_count} albums` : '');
+            setStatus('library-status', `Sync complete — ${label}`, true);
+        } catch (err) {
+            setStatus('library-status', `Sync failed: ${err.message}`, false);
+        } finally {
+            btn.disabled = false;
+        }
+    });
+}
+
+async function _setLibBackend(backend) {
+    document.querySelectorAll('.lib-backend-btn').forEach(b =>
+        b.classList.toggle('active', b.dataset.backend === backend));
+    document.getElementById('btn-sync-library')?.classList.toggle('hidden', backend === 'soulsync');
+    try {
+        await api('/settings/library-backend', {
+            method: 'POST',
+            body: JSON.stringify({ backend }),
+        });
+        await loadSettings();
+    } catch (err) {
+        setStatus('library-status', `Failed to save backend: ${err.message}`, false);
+    }
 }
 
 function setupSettingsPage() {
@@ -1138,6 +1194,7 @@ function init() {
     setupPlaylistsPage();
     setupStatsPage();
     setupSettingsPage();
+    setupLibraryBackend();
 
     const initial = window.location.hash.slice(1) || 'discovery';
     navigateTo(initial);

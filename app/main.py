@@ -6,6 +6,7 @@ Never log secret values.
 """
 import logging
 import threading
+from datetime import datetime
 from flask import Flask, jsonify, request, send_from_directory
 from app import config, scheduler
 from app.db import cc_store
@@ -488,6 +489,7 @@ def create_app() -> Flask:
     def settings_get():
         from app.db import get_library_reader
         lr = get_library_reader()
+        accessible = lr.is_db_accessible()
         # Return non-secret settings only — never return key values
         return jsonify({
             "status": "ok",
@@ -497,7 +499,12 @@ def create_app() -> Flask:
             "plex_configured": bool(config.PLEX_URL and config.PLEX_TOKEN),
             "soulsync_url": config.SOULSYNC_URL,
             "soulsync_db": config.SOULSYNC_DB,
-            "soulsync_db_accessible": lr.is_db_accessible(),
+            "soulsync_db_accessible": accessible,
+            # Library backend
+            "library_backend": cc_store.get_setting("library_backend") or config.LIBRARY_BACKEND,
+            "library_accessible": accessible,
+            "library_track_count": lr.get_track_count() if accessible else 0,
+            "library_last_synced": cc_store.get_setting("library_last_synced"),
         })
 
     @app.route("/api/settings/test-lastfm", methods=["POST"])
@@ -536,6 +543,50 @@ def create_app() -> Flask:
             return jsonify({"status": "ok"})
         except Exception as e:
             return jsonify({"status": "error", "message": str(e)})
+
+    # -------------------------------------------------------------------------
+    # Library backend
+    # -------------------------------------------------------------------------
+
+    @app.route("/api/library/status", methods=["GET"])
+    def library_status():
+        from app.db import get_library_reader
+        lr = get_library_reader()
+        accessible = lr.is_db_accessible()
+        backend = cc_store.get_setting("library_backend") or config.LIBRARY_BACKEND
+        return jsonify({
+            "status": "ok",
+            "backend": backend,
+            "accessible": accessible,
+            "track_count": lr.get_track_count() if accessible else 0,
+            "last_synced": cc_store.get_setting("library_last_synced"),
+        })
+
+    @app.route("/api/library/sync", methods=["POST"])
+    def library_sync():
+        from app.db import get_library_reader
+        try:
+            lr = get_library_reader()
+            result = lr.sync_library()
+            cc_store.set_setting(
+                "library_last_synced",
+                datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+            )
+            return jsonify({"status": "ok", **result})
+        except NotImplementedError as e:
+            return jsonify({"status": "error", "message": str(e)}), 400
+        except Exception as e:
+            logger.warning("library sync failed: %s", e)
+            return jsonify({"status": "error", "message": str(e)}), 500
+
+    @app.route("/api/settings/library-backend", methods=["POST"])
+    def settings_set_library_backend():
+        data = request.get_json() or {}
+        backend = data.get("backend", "").lower()
+        if backend not in {"soulsync", "plex", "navidrome", "jellyfin"}:
+            return jsonify({"status": "error", "message": f"Invalid backend: {backend}"}), 400
+        cc_store.set_setting("library_backend", backend)
+        return jsonify({"status": "ok", "backend": backend})
 
     @app.route("/api/settings/clear-history", methods=["POST"])
     def settings_clear_history():
