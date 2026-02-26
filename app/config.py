@@ -37,6 +37,10 @@ LASTFM_BASE_URL = "https://ws.audioscrobbler.com/2.0/"
 # --- Plex ---
 PLEX_URL = _optional("PLEX_URL")
 PLEX_TOKEN = _optional("PLEX_TOKEN")
+PLEX_MUSIC_SECTION = _optional("PLEX_MUSIC_SECTION", "Music")
+
+# --- Library DB (plex_reader local cache) ---
+LIBRARY_DB = _optional("LIBRARY_DB", "/data/cc/library.db")
 
 # --- Spotify ---
 SPOTIFY_CLIENT_ID = _optional("SPOTIFY_CLIENT_ID")
@@ -89,3 +93,5 @@ def log_config_summary():
     logger.info("  PLEX_TOKEN: %s", "set" if PLEX_TOKEN else "NOT SET")
     logger.info("  SPOTIFY_CLIENT_ID: %s", "set" if SPOTIFY_CLIENT_ID else "NOT SET")
     logger.info("  CC_ENABLED: %s", CC_ENABLED)
+    logger.info("  LIBRARY_BACKEND: %s", LIBRARY_BACKEND)
+    logger.info("  LIBRARY_DB: %s", LIBRARY_DB)

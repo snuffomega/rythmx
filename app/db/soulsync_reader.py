@@ -560,3 +560,22 @@ def is_db_accessible() -> bool:
     except Exception as e:
         logger.warning("SoulSync DB not accessible: %s", e)
         return False
+
+
+def get_track_count() -> int:
+    """Return total track count from SoulSync DB."""
+    try:
+        with _connect() as conn:
+            row = conn.execute("SELECT COUNT(*) FROM tracks").fetchone()
+            return row[0] if row else 0
+    except Exception:
+        return 0
+
+
+def sync_library() -> dict:
+    """No-op for SoulSync backend — SoulSync manages its own DB.
+
+    Present for interface parity with plex_reader and other backends.
+    """
+    logger.info("sync_library() called on SoulSync backend — no action needed")
+    return {"message": "SoulSync manages its own library database"}
