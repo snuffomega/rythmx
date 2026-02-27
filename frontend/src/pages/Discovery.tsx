@@ -98,7 +98,7 @@ function TrackRow({ track, rank }: { track: Track; rank?: number }) {
         style={{ background: placeholderGradient(track.artist) }}
       >
         <div className="w-full h-full flex items-center justify-center">
-          <Disc3 size={14} className="text-[#555]" />
+          <Disc3 size={28} className="text-[#555]" />
         </div>
       </div>
       <div className="flex-1 min-w-0">

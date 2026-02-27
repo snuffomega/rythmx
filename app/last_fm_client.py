@@ -16,14 +16,21 @@ BASE_URL = "https://ws.audioscrobbler.com/2.0/"
 VALID_PERIODS = ("overall", "12month", "6month", "3month", "1month", "7day")
 
 
+_LASTFM_PLACEHOLDER = "2a96cbd8b46e442fc41c2b86b821562f"
+
+
 def _extract_image(image_list: list, preferred_size: str = "extralarge") -> str:
-    """Extract the best available image URL from a Last.fm image array."""
+    """Extract the best available image URL from a Last.fm image array.
+
+    Filters out Last.fm's known 'no image' placeholder (deprecated artist/track
+    images since 2020). Returns "" so callers fall back to iTunes artwork.
+    """
     if not image_list:
         return ""
     by_size = {img.get("size"): img.get("#text", "") for img in image_list}
     for size in (preferred_size, "large", "medium", "small"):
         url = by_size.get(size, "")
-        if url:
+        if url and _LASTFM_PLACEHOLDER not in url:
             return url
     return ""
 
