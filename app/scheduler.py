@@ -95,7 +95,9 @@ def _execute_cycle(run_mode: str = "cruise", force_refresh: bool = False) -> dic
     max_per_cycle = int(settings.get("cc_max_per_cycle", config.CC_MAX_PER_CYCLE))
     period = settings.get("cc_period", "1month")
     auto_push = settings.get("cc_auto_push_playlist", "false") == "true"
-    ignore_keywords = [k.strip() for k in config.CC_IGNORE_KEYWORDS.split(",") if k.strip()]
+    ignore_kw_raw = settings.get("nr_ignore_keywords", "") or config.CC_IGNORE_KEYWORDS
+    ignore_keywords = [k.strip() for k in ignore_kw_raw.split(",") if k.strip()]
+    ignore_artists = {a.strip().lower() for a in settings.get("nr_ignore_artists", "").split(",") if a.strip()}
 
     # -------------------------------------------------------------------------
     # Stage 1 — Last.fm top artists filtered by min_listens
@@ -183,10 +185,16 @@ def _execute_cycle(run_mode: str = "cruise", force_refresh: bool = False) -> dic
             all_releases.extend(releases)
             artists_with_releases += 1
 
-    # Deduplicate by normalized artist + title
+    # Deduplicate by normalized artist + title; apply ignore filters
     seen = set()
     unique_releases = []
     for r in all_releases:
+        if ignore_artists and r.artist.lower() in ignore_artists:
+            logger.debug("Ignoring artist: %s", r.artist)
+            continue
+        if ignore_keywords and any(kw in r.title.lower() for kw in ignore_keywords):
+            logger.debug("Ignoring release (keyword match): %s — %s", r.artist, r.title)
+            continue
         key = (music_client.norm(r.artist), music_client.norm(r.title))
         if key not in seen:
             seen.add(key)
