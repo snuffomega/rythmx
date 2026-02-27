@@ -1,0 +1,157 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-base: #0A0A0A;
+  --surface: #111111;
+  --surface-highlight: #181818;
+  --border-default: #222222;
+  --text-primary: #F0F0F0;
+  --text-secondary: #999999;
+  --text-muted: #555555;
+  --accent: #D4F53C;
+  --accent-hover: #C2E030;
+  --accent-success: #10B981;
+  --accent-danger: #FF3B30;
+  --accent-warning: #D4F53C;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  font-family: 'Inter', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+::selection {
+  background: rgba(212, 245, 60, 0.25);
+  color: #F0F0F0;
+}
+
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #333333;
+  border-radius: 2px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #444444;
+}
+
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+.snap-x {
+  scroll-snap-type: x mandatory;
+}
+
+.snap-start {
+  scroll-snap-align: start;
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-accent hover:bg-accent-hover text-black font-semibold px-4 py-2 rounded-sm transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-secondary {
+    @apply bg-surface-highlight hover:bg-[#222222] text-text-primary font-semibold px-4 py-2 rounded-sm transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-ghost {
+    @apply text-text-secondary hover:text-text-primary hover:bg-surface-highlight px-3 py-2 rounded-sm transition-colors duration-150;
+  }
+
+  .btn-danger {
+    background-color: rgba(255, 59, 48, 0.1);
+    color: var(--accent-danger);
+    border: 1px solid rgba(255, 59, 48, 0.3);
+    @apply font-semibold px-4 py-2 rounded-sm transition-colors duration-150;
+  }
+  .btn-danger:hover {
+    background-color: rgba(255, 59, 48, 0.2);
+  }
+
+  .card {
+    @apply bg-surface rounded-sm;
+  }
+
+  .input {
+    @apply bg-surface-highlight border border-[#2a2a2a] text-text-primary placeholder-text-muted rounded-sm px-3 py-2 w-full focus:outline-none focus:border-accent transition-colors duration-150 text-sm;
+  }
+
+  .select {
+    @apply bg-surface-highlight border border-[#2a2a2a] text-text-primary rounded-sm px-3 py-2 w-full focus:outline-none focus:border-accent transition-colors duration-150 cursor-pointer text-sm appearance-none;
+  }
+
+  .label {
+    @apply text-text-secondary text-xs font-medium mb-1 block uppercase tracking-widest;
+  }
+
+  .badge {
+    @apply text-xs font-semibold px-2 py-0.5 rounded-sm;
+  }
+
+  .badge-success {
+    @apply badge text-xs font-semibold px-2 py-0.5 rounded-sm;
+    background-color: rgba(16, 185, 129, 0.15);
+    color: var(--accent-success);
+  }
+
+  .badge-danger {
+    @apply badge text-xs font-semibold px-2 py-0.5 rounded-sm;
+    background-color: rgba(255, 59, 48, 0.15);
+    color: var(--accent-danger);
+  }
+
+  .badge-warning {
+    @apply badge text-xs font-semibold px-2 py-0.5 rounded-sm;
+    background-color: rgba(212, 245, 60, 0.15);
+    color: #D4F53C;
+  }
+
+  .badge-muted {
+    @apply badge bg-[#1e1e1e] text-text-muted text-xs font-semibold px-2 py-0.5 rounded-sm;
+  }
+
+  .badge-accent {
+    @apply badge text-xs font-semibold px-2 py-0.5 rounded-sm;
+    background-color: rgba(212, 245, 60, 0.15);
+    color: var(--accent);
+  }
+
+  .section-heading {
+    @apply text-text-primary font-bold text-base tracking-tight;
+  }
+
+  .page-title {
+    @apply text-text-primary font-bold text-2xl tracking-tighter;
+  }
+}
