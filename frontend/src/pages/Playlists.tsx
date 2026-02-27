@@ -15,6 +15,7 @@ const SOURCE_LABELS: Record<PlaylistSource, string> = {
   spotify: 'spotify',
   deezer: 'deezer',
   empty: 'empty',
+  cc: 'Cruise Control',
 };
 
 const SOURCE_COLORS: Record<PlaylistSource, string> = {
@@ -23,6 +24,7 @@ const SOURCE_COLORS: Record<PlaylistSource, string> = {
   spotify: 'text-success',
   deezer: 'text-purple-400',
   empty: 'text-text-muted',
+  cc: 'text-accent',
 };
 
 function OwnedBar({ owned, total }: { owned: number; total: number }) {

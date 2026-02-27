@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { CheckCircle, XCircle, Loader2, RefreshCw, Database, Radio, ChevronDown, ChevronUp } from 'lucide-react';
 import { useApi } from '../hooks/useApi';
 import { settingsApi, libraryApi } from '../services/api';
@@ -87,6 +87,10 @@ interface SettingsPageProps {
 export function SettingsPage({ toast }: SettingsPageProps) {
   const { data: libraryStatus, loading: libraryLoading, refetch: refetchLibrary } = useApi(() => libraryApi.getStatus());
   const [backend, setBackend] = useState<LibraryBackend>('soulsync');
+
+  useEffect(() => {
+    if (libraryStatus?.backend) setBackend(libraryStatus.backend as LibraryBackend);
+  }, [libraryStatus?.backend]);
   const [syncing, setSyncing] = useState(false);
   const [switchingBackend, setSwitchingBackend] = useState(false);
   const [confirmClearHistory, setConfirmClearHistory] = useState(false);
@@ -97,7 +101,7 @@ export function SettingsPage({ toast }: SettingsPageProps) {
     setBackend(b);
     setSwitchingBackend(true);
     try {
-      await settingsApi.setLibraryBackend(b as 'soulsync' | 'plex');
+      await settingsApi.setLibraryBackend(b);
       const labels: Record<LibraryBackend, string> = { soulsync: 'SoulSync', plex: 'Plex', jellyfin: 'Jellyfin', navidrome: 'Navidrome' };
       toast.success(`Switched to ${labels[b]}`);
       refetchLibrary();

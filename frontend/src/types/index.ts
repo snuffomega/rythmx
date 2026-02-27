@@ -57,7 +57,7 @@ export interface AcquisitionStats {
   total: number;
 }
 
-export type PlaylistSource = 'taste' | 'lastfm' | 'spotify' | 'deezer' | 'empty';
+export type PlaylistSource = 'taste' | 'lastfm' | 'spotify' | 'deezer' | 'empty' | 'cc';
 
 export interface PlaylistItem {
   name: string;

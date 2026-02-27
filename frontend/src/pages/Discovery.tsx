@@ -195,7 +195,7 @@ export function Discovery({ onNavigate }: DiscoveryProps) {
   const recentQueue = useApi(() => acquisitionApi.getQueue('pending'));
   const history = useApi(() => cruiseControlApi.getHistory());
 
-  const newReleases = history.data?.slice(0, 14) ?? null;
+  const newReleases = history.data?.length ? history.data.slice(0, 14) : null;
 
   return (
     <div className="py-8 space-y-12">
