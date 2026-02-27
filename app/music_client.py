@@ -68,6 +68,7 @@ class Release:
     deezer_album_id: str = ""
     spotify_album_id: str = ""
     itunes_album_id: str = ""
+    artwork_url: str = ""       # Album art URL (iTunes artworkUrl100 or equivalent)
     is_upcoming: bool = False   # True if release_date > today at fetch time (pre-announcement)
 
 
@@ -177,6 +178,9 @@ def _itunes_get_releases(itunes_artist_id: str, cutoff: datetime,
                 kind = "album"  # accept as album when exact kind is ambiguous
             else:
                 continue
+        # iTunes returns artworkUrl100 — upgrade to 600px for better quality
+        raw_art = item.get("artworkUrl100", "")
+        artwork = raw_art.replace("100x100bb", "600x600bb") if raw_art else ""
         releases.append(Release(
             artist=item.get("artistName", ""),
             title=title,
@@ -185,6 +189,7 @@ def _itunes_get_releases(itunes_artist_id: str, cutoff: datetime,
             source="itunes",
             source_url=item.get("collectionViewUrl", ""),
             itunes_album_id=str(item.get("collectionId", "")),
+            artwork_url=artwork,
             is_upcoming=is_upcoming,
         ))
     return releases

@@ -638,10 +638,7 @@ def create_app() -> Flask:
     def stats_top_artists():
         period = request.args.get("period", "6month")
         limit = min(int(request.args.get("limit", 50)), 200)
-        artists = last_fm_client.get_top_artists(period=period, limit=limit)
-        # Use 'name' key to match Artist type in the UI
-        ranked = [{"name": k, "playcount": v} for k, v in
-                  sorted(artists.items(), key=lambda x: x[1], reverse=True)]
+        ranked = last_fm_client.get_top_artists_ranked(period=period, limit=limit)
         return jsonify({"status": "ok", "artists": ranked, "period": period})
 
     @app.route("/api/stats/top-tracks")

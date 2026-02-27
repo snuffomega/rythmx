@@ -16,6 +16,18 @@ BASE_URL = "https://ws.audioscrobbler.com/2.0/"
 VALID_PERIODS = ("overall", "12month", "6month", "3month", "1month", "7day")
 
 
+def _extract_image(image_list: list, preferred_size: str = "extralarge") -> str:
+    """Extract the best available image URL from a Last.fm image array."""
+    if not image_list:
+        return ""
+    by_size = {img.get("size"): img.get("#text", "") for img in image_list}
+    for size in (preferred_size, "large", "medium", "small"):
+        url = by_size.get(size, "")
+        if url:
+            return url
+    return ""
+
+
 def _get(method: str, extra_params: dict = None) -> dict | None:
     """
     Make a GET request to the Last.fm API.
@@ -72,6 +84,32 @@ def get_top_artists(period: str = "6month", limit: int = 200) -> dict:
     return result
 
 
+def get_top_artists_ranked(period: str = "6month", limit: int = 200) -> list[dict]:
+    """
+    Returns top artists as a ranked list: [{name, playcount, image}, ...]
+    Used by stats routes. Preserves get_top_artists() dict format for scheduler.
+    """
+    if period not in VALID_PERIODS:
+        period = "6month"
+
+    data = _get("user.getTopArtists", {
+        "user": config.LASTFM_USERNAME,
+        "period": period,
+        "limit": limit,
+    })
+    if not data:
+        return []
+
+    result = []
+    for artist in data.get("topartists", {}).get("artist", []):
+        result.append({
+            "name": artist.get("name", ""),
+            "playcount": int(artist.get("playcount", 0)),
+            "image": _extract_image(artist.get("image", [])),
+        })
+    return result
+
+
 def get_top_tracks(period: str = "6month", limit: int = 200) -> list[dict]:
     """
     Returns a list of top tracks: [{name, artist, playcount}, ...]
@@ -93,6 +131,7 @@ def get_top_tracks(period: str = "6month", limit: int = 200) -> list[dict]:
             "name": t.get("name", ""),
             "artist": t.get("artist", {}).get("name", ""),
             "playcount": int(t.get("playcount", 0)),
+            "image": _extract_image(t.get("image", [])),
         })
 
     logger.debug("Last.fm top tracks fetched: %d (period=%s)", len(tracks), period)
@@ -121,6 +160,7 @@ def get_top_albums(period: str = "6month", limit: int = 200) -> list[dict]:
             "artist": a.get("artist", {}).get("name", ""),
             "title": a.get("name", ""),
             "playcount": int(a.get("playcount", 0)),
+            "image": _extract_image(a.get("image", [])),
         })
 
     logger.debug("Last.fm top albums fetched: %d (period=%s)", len(albums), period)
