@@ -1,14 +1,23 @@
 """
-image_service.py — Lazy image URL resolution via iTunes.
+image_service.py — Non-blocking image URL resolution via iTunes.
 
-Checks image_cache first (instant). On miss, fetches from iTunes and stores.
-Uses a dedicated rate limiter (1s between calls) separate from the CC pipeline's
-iTunes rate limiter so image fetches don't block cruise control and vice versa.
+Flow:
+  - Cache hit  → return (url, False) immediately (~5ms DB lookup)
+  - Cache miss → submit background fetch to thread pool, return ("", True)
+                 Flask request thread is NEVER blocked by iTunes calls.
+
+The caller (frontend useImage hook) retries after a short delay when it
+gets pending=True, picking up the cached result once the background fetch
+completes.
+
+Two iTunes worker threads run concurrently (max), each respecting the 1s
+rate limit via _img_lock. This is isolated from the CC pipeline's limiter.
 """
 import threading
 import time
 import logging
 import requests
+from concurrent.futures import ThreadPoolExecutor
 
 from app.db import cc_store
 
@@ -18,6 +27,8 @@ _ITUNES_BASE = "https://itunes.apple.com"
 _IMG_RATE = 1.0  # seconds between image iTunes calls (~60/min)
 _img_lock = threading.Lock()
 _img_last_call = 0.0
+
+_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="img-worker")
 
 _session = requests.Session()
 _session.headers["Accept"] = "application/json"
@@ -66,45 +77,34 @@ def _search_artist_itunes(name: str) -> str | None:
     for artist in data["results"]:
         if artist.get("artistName", "").lower() == name_lower:
             return str(artist["artistId"])
-    # Best-effort: return first result
     first = data["results"][0]
     return str(first.get("artistId", "")) or None
 
 
-def resolve_image(entity_type: str, name: str, artist: str = "") -> str:
-    """
-    Return an image URL for an artist / album / track.
+def _entity_key(entity_type: str, name: str, artist: str) -> str:
+    return name.lower() if entity_type == "artist" else f"{artist.lower()}|||{name.lower()}"
 
-    Checks image_cache first — instant on cache hit.
-    On miss, fetches from iTunes, stores result, and returns URL.
-    Returns "" if nothing found; caller shows gradient fallback.
 
-    entity_type: 'artist' | 'album' | 'track'
-    name:        artist name, album title, or track title
-    artist:      artist name (required for album and track lookups)
-    """
-    entity_key = name.lower() if entity_type == "artist" else f"{artist.lower()}|||{name.lower()}"
+def _fetch_and_cache(entity_type: str, name: str, artist: str) -> None:
+    """Background worker: fetch image from iTunes and write to cache."""
+    key = _entity_key(entity_type, name, artist)
 
-    # 1. Cache hit
-    cached = cc_store.get_image_cache(entity_type, entity_key)
-    if cached is not None:
-        return cached
+    # Guard: another worker may have already resolved this while we were queued
+    if cc_store.get_image_cache(entity_type, key) is not None:
+        return
 
     url = ""
 
     if entity_type == "artist":
-        # Fast path: use itunes_artist_id from artist_identity_cache if already resolved
         cached_artist = cc_store.get_cached_artist(name)
         itunes_id = (cached_artist or {}).get("itunes_artist_id")
 
         if not itunes_id:
-            # Resolve via name search and cache the ID for future use
             itunes_id = _search_artist_itunes(name)
             if itunes_id:
                 cc_store.cache_artist(name, itunes_artist_id=itunes_id)
 
         if itunes_id:
-            # Lookup artist's albums and grab the first album's artwork
             data = _itunes_img_get("/lookup", {
                 "id": itunes_id,
                 "entity": "album",
@@ -128,7 +128,28 @@ def resolve_image(entity_type: str, name: str, artist: str = "") -> str:
             "media": "music",
             "limit": 3,
         })
-        url = _extract_art(data)  # artworkUrl100 on song results = album cover art
+        url = _extract_art(data)
 
-    cc_store.set_image_cache(entity_type, entity_key, url)
-    return url
+    cc_store.set_image_cache(entity_type, key, url)
+    logger.debug("Image cached: [%s] %s — %s", entity_type, name, url[:60] if url else "(none)")
+
+
+def resolve_image(entity_type: str, name: str, artist: str = "") -> tuple[str, bool]:
+    """
+    Return (image_url, pending) for an artist / album / track.
+
+    Cache hit  → (url, False)  — instant
+    Cache miss → ("", True)    — background fetch submitted; caller retries after delay
+
+    entity_type: 'artist' | 'album' | 'track'
+    name:        artist name, album title, or track title
+    artist:      artist name (required for album and track lookups)
+    """
+    key = _entity_key(entity_type, name, artist)
+
+    cached = cc_store.get_image_cache(entity_type, key)
+    if cached is not None:
+        return cached, False
+
+    _executor.submit(_fetch_and_cache, entity_type, name, artist)
+    return "", True

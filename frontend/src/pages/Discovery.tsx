@@ -88,8 +88,6 @@ function ArtistTile({ artist }: { artist: Artist }) {
 }
 
 function TrackRow({ track, rank }: { track: Track; rank?: number }) {
-  const resolvedImg = useImage('track', track.name, track.artist);
-  const src = track.image || resolvedImg;
   return (
     <div className="flex items-center gap-3 py-3 hover:bg-[#0e0e0e] transition-colors cursor-pointer group border-b border-[#111]">
       {rank !== undefined && (
@@ -97,15 +95,11 @@ function TrackRow({ track, rank }: { track: Track; rank?: number }) {
       )}
       <div
         className="w-10 h-10 flex-shrink-0 overflow-hidden"
-        style={!src ? { background: placeholderGradient(track.artist) } : undefined}
+        style={{ background: placeholderGradient(track.artist) }}
       >
-        {src ? (
-          <img src={src} alt={track.name} className="w-full h-full object-cover" />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center">
-            <Music2 size={13} className="text-[#333]" />
-          </div>
-        )}
+        <div className="w-full h-full flex items-center justify-center">
+          <Music2 size={13} className="text-[#333]" />
+        </div>
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-text-primary text-sm font-medium truncate group-hover:text-accent transition-colors">{track.name}</p>

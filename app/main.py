@@ -835,8 +835,8 @@ def create_app() -> Flask:
         artist = body.get("artist", "")
         if not entity_type or not name:
             return jsonify({"image_url": ""})
-        url = image_service.resolve_image(entity_type, name, artist)
-        return jsonify({"image_url": url})
+        url, pending = image_service.resolve_image(entity_type, name, artist)
+        return jsonify({"image_url": url, "pending": pending})
 
     # -------------------------------------------------------------------------
     # SPA catch-all — React Router client-side navigation
