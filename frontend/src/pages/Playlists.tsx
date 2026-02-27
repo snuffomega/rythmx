@@ -106,7 +106,7 @@ function PlaylistCard({
                 </span>
               )}
               {source === 'cc' && playlist.mode && MODE_LABELS[playlist.mode] && (
-                <span className="text-[10px] font-medium border border-current/30 px-1.5 py-0.5 text-text-muted">
+                <span className="text-[10px] font-medium border border-current/30 px-1.5 py-0.5 text-white">
                   {MODE_LABELS[playlist.mode]}
                 </span>
               )}
