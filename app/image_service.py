@@ -13,6 +13,7 @@ completes.
 Two iTunes worker threads run concurrently (max), each respecting the 1s
 rate limit via _img_lock. This is isolated from the CC pipeline's limiter.
 """
+import re
 import threading
 import time
 import logging
@@ -113,11 +114,13 @@ def _fetch_and_cache(entity_type: str, name: str, artist: str) -> None:
                 url = _extract_art(data)
 
         elif entity_type == "album":
+            # Strip common release-type suffixes so "ICE - Single" searches as "ICE"
+            search_name = re.sub(r'\s*[-–]\s*(single|ep|extended play)\s*$', '', name, flags=re.IGNORECASE).strip()
             data = _itunes_img_get("/search", {
-                "term": f"{artist} {name}",
+                "term": f"{artist} {search_name}",
                 "entity": "album",
                 "media": "music",
-                "limit": 3,
+                "limit": 5,
             })
             url = _extract_art(data)
 

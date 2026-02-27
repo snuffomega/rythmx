@@ -162,6 +162,7 @@ def init_db():
     _migrate_add_column("playlists", "max_tracks", "INTEGER DEFAULT 50")
     _migrate_add_column("cc_playlist", "is_owned", "INTEGER DEFAULT 1")
     _migrate_add_column("cc_playlist", "release_date", "TEXT")
+    _migrate_add_column("release_cache", "artwork_url", "TEXT DEFAULT ''")
 
     logger.info("cc.db initialized at %s", config.CC_DB)
 
@@ -545,6 +546,7 @@ def reset_db():
             DELETE FROM cc_candidates;
             DELETE FROM playlists;
             DELETE FROM download_queue;
+            DELETE FROM release_cache;
         """)
     logger.info("cc.db reset — all user data cleared")
 
@@ -690,7 +692,8 @@ def get_cached_releases(artist_name: str, max_age_days: int = 7):
         # Fetch real releases only (exclude sentinel rows)
         rows = conn.execute(
             """SELECT album_title, release_date, kind, source,
-                      itunes_album_id, deezer_album_id, spotify_album_id, is_upcoming
+                      itunes_album_id, deezer_album_id, spotify_album_id, is_upcoming,
+                      COALESCE(artwork_url, '') AS artwork_url
                FROM release_cache WHERE artist_name = ? AND source != 'sentinel'""",
             (artist_name,)
         ).fetchall()
@@ -706,6 +709,7 @@ def get_cached_releases(artist_name: str, max_age_days: int = 7):
                 deezer_album_id=r["deezer_album_id"] or "",
                 spotify_album_id=r["spotify_album_id"] or "",
                 is_upcoming=bool(r["is_upcoming"]),
+                artwork_url=r["artwork_url"],
             )
             for r in rows
         ]
@@ -733,8 +737,9 @@ def save_releases_to_cache(artist_name: str, releases: list):
             conn.execute(
                 """INSERT INTO release_cache
                    (artist_name, source, album_title, release_date, kind,
-                    itunes_album_id, deezer_album_id, spotify_album_id, is_upcoming, cached_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    itunes_album_id, deezer_album_id, spotify_album_id, is_upcoming,
+                    artwork_url, cached_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                    ON CONFLICT(artist_name, source, album_title) DO UPDATE SET
                        release_date     = excluded.release_date,
                        kind             = excluded.kind,
@@ -742,6 +747,7 @@ def save_releases_to_cache(artist_name: str, releases: list):
                        deezer_album_id  = COALESCE(excluded.deezer_album_id,  deezer_album_id),
                        spotify_album_id = COALESCE(excluded.spotify_album_id, spotify_album_id),
                        is_upcoming      = excluded.is_upcoming,
+                       artwork_url      = COALESCE(NULLIF(excluded.artwork_url, ''), artwork_url),
                        cached_at        = CURRENT_TIMESTAMP""",
                 (
                     artist_name, r.source, r.title, r.release_date, r.kind,
@@ -749,6 +755,7 @@ def save_releases_to_cache(artist_name: str, releases: list):
                     r.deezer_album_id or None,
                     r.spotify_album_id or None,
                     1 if r.is_upcoming else 0,
+                    r.artwork_url or "",
                 )
             )
 
