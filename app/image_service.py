@@ -2,7 +2,8 @@
 image_service.py — Non-blocking image URL resolution.
 
 Artist images:  Fanart.tv (real band photos, requires FANART_API_KEY) →
-                iTunes album art fallback (always available, no auth)
+                Deezer /artist/{id} (actual artist photo, free, no auth) →
+                iTunes album art last resort (always available, no auth)
 Album images:   iTunes search (artworkUrl100, upscaled to 600px)
 Track images:   iTunes search (song → album art)
 
@@ -46,6 +47,15 @@ _img_last_call = 0.0
 _FANART_BASE = "https://webservice.fanart.tv/v3/music"
 _fanart_lock = threading.Lock()
 _fanart_last_call = 0.0
+
+# ---------------------------------------------------------------------------
+# Deezer (artist photo lookup — free, no auth, 50 req/sec)
+# ---------------------------------------------------------------------------
+
+_DEEZER_BASE = "https://api.deezer.com"
+_deezer_img_lock = threading.Lock()
+_deezer_img_last_call = 0.0
+_DEEZER_IMG_RATE = 0.2  # 5/sec — well within Deezer's 50/sec limit
 
 # ---------------------------------------------------------------------------
 # MusicBrainz (for MBID lookups when not in artist_identity_cache)
@@ -195,6 +205,66 @@ def _mb_lookup_mbid(artist_name: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# Deezer helpers
+# ---------------------------------------------------------------------------
+
+def _deezer_get_artist_photo(deezer_id: str) -> str:
+    """
+    Fetch artist photo URL from Deezer /artist/{id}.
+    Returns picture_xl (1000px) or picture_big (500px), or "" if none available.
+    Rate-limited and thread-safe.
+    """
+    global _deezer_img_last_call
+    with _deezer_img_lock:
+        elapsed = time.monotonic() - _deezer_img_last_call
+        if elapsed < _DEEZER_IMG_RATE:
+            time.sleep(_DEEZER_IMG_RATE - elapsed)
+        _deezer_img_last_call = time.monotonic()
+    try:
+        resp = _session.get(f"{_DEEZER_BASE}/artist/{deezer_id}", timeout=10)
+        if resp.status_code == 404:
+            return ""
+        resp.raise_for_status()
+        data = resp.json()
+        url = data.get("picture_xl") or data.get("picture_big", "")
+        # Deezer uses "/images/artist//" (empty hash) when no photo is available
+        if url and "/images/artist//" in url:
+            return ""
+        return url or ""
+    except requests.RequestException as e:
+        logger.debug("Deezer artist photo failed for id '%s': %s", deezer_id, e)
+        return ""
+
+
+def _deezer_search_artist_id(name: str) -> str | None:
+    """Search Deezer for an artist by name, return artist ID or None."""
+    global _deezer_img_last_call
+    with _deezer_img_lock:
+        elapsed = time.monotonic() - _deezer_img_last_call
+        if elapsed < _DEEZER_IMG_RATE:
+            time.sleep(_DEEZER_IMG_RATE - elapsed)
+        _deezer_img_last_call = time.monotonic()
+    try:
+        resp = _session.get(
+            f"{_DEEZER_BASE}/search/artist",
+            params={"q": name, "limit": 5},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        items = resp.json().get("data", [])
+        if not items:
+            return None
+        name_lower = name.lower()
+        for item in items:
+            if item.get("name", "").lower() == name_lower:
+                return str(item["id"])
+        return str(items[0]["id"])
+    except requests.RequestException as e:
+        logger.debug("Deezer artist search failed for '%s': %s", name, e)
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Core background worker
 # ---------------------------------------------------------------------------
 
@@ -222,7 +292,20 @@ def _fetch_and_cache(entity_type: str, name: str, artist: str) -> None:
                 if mbid:
                     url = _fanart_get_artist(mbid)
 
-            # --- Fallback: iTunes album art ---
+            # --- Secondary: Deezer artist photo ---
+            if not url:
+                cached_artist = cc_store.get_cached_artist(name)
+                deezer_id = (cached_artist or {}).get("deezer_artist_id")
+
+                if not deezer_id:
+                    deezer_id = _deezer_search_artist_id(name)
+                    if deezer_id:
+                        cc_store.cache_artist(name, deezer_artist_id=deezer_id)
+
+                if deezer_id:
+                    url = _deezer_get_artist_photo(deezer_id)
+
+            # --- Last resort: iTunes album art ---
             if not url:
                 cached_artist = cc_store.get_cached_artist(name)
                 itunes_id = (cached_artist or {}).get("itunes_artist_id")
