@@ -414,7 +414,18 @@ def create_app() -> Flask:
 
     @app.route("/api/playlists/<path:name>/tracks", methods=["GET"])
     def playlists_tracks(name):
-        tracks = cc_store.get_playlist(playlist_name=name)
+        rows = cc_store.get_playlist(playlist_name=name)
+        tracks = [
+            {
+                "name": r.get("track_name") or r.get("name", ""),
+                "artist": r.get("artist_name") or r.get("artist", ""),
+                "album": r.get("album_name") or r.get("album"),
+                "image": r.get("album_cover_url"),
+                "is_owned": bool(r.get("is_owned", 0)),
+                "score": r.get("score"),
+            }
+            for r in (rows or [])
+        ]
         return jsonify({"status": "ok", "tracks": tracks})
 
     @app.route("/api/playlists/<path:name>", methods=["PATCH"])
