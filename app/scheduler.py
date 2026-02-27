@@ -238,6 +238,7 @@ def _execute_cycle(run_mode: str = "cruise", force_refresh: bool = False) -> dic
     # re-evaluatable.  Future-dated (pre-announced) releases are never queued.
     # -------------------------------------------------------------------------
     queued_count = 0
+    to_queue = []
 
     if run_mode == "cruise":
         # Sort by release_date descending (newest first)
@@ -353,6 +354,19 @@ def _execute_cycle(run_mode: str = "cruise", force_refresh: bool = False) -> dic
             _auto_sync_playlist(pl, owned_releases, top_artists, settings, soulsync_reader)
     else:
         logger.info("Stage 8: skipped (run_mode=dry)")
+
+    # Write history entries for this cycle (dry runs produce no history)
+    if run_mode != "dry":
+        queued_keys = {(r.artist, r.title) for r in to_queue}
+        for r in owned_releases:
+            cc_store.add_history_entry(
+                {"artist_name": r.artist, "album_name": r.title}, status="owned"
+            )
+        for r in unowned:
+            entry_status = "queued" if (r.artist, r.title) in queued_keys else "skipped"
+            cc_store.add_history_entry(
+                {"artist_name": r.artist, "album_name": r.title}, status=entry_status
+            )
 
     queue_stats = cc_store.get_queue_stats()
     return {

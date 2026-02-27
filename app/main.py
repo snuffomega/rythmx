@@ -120,7 +120,30 @@ def create_app() -> Flask:
 
     @app.route("/api/cruise-control/status")
     def cc_status():
-        return jsonify({"status": "ok", **scheduler.get_status()})
+        raw = scheduler.get_status()
+        is_running = raw.get("is_running", False)
+        last_result = raw.get("last_result") or {}
+        if is_running:
+            state = "running"
+        elif last_result:
+            state = "error" if last_result.get("status") == "error" else "completed"
+        else:
+            state = "idle"
+        summary = None
+        if last_result:
+            summary = {
+                "artists_checked": last_result.get("artists_qualified", 0),
+                "new_releases": last_result.get("releases_found", 0),
+                "owned": last_result.get("releases_owned", 0),
+                "queued": last_result.get("queued", 0),
+            }
+        return jsonify({
+            "status": "ok",
+            "state": state,
+            "last_run": raw.get("last_run"),
+            "summary": summary,
+            "error": last_result.get("error"),
+        })
 
     @app.route("/api/cruise-control/config", methods=["GET"])
     def cc_config_get():
