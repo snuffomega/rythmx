@@ -748,6 +748,26 @@ def create_app() -> Flask:
         except Exception as e:
             return jsonify({"connected": False, "message": str(e)})
 
+    @app.route("/api/settings/test-fanart", methods=["POST"])
+    def settings_test_fanart():
+        if not config.FANART_API_KEY:
+            return jsonify({"connected": False, "message": "FANART_API_KEY not set — add to .env"})
+        # Test with Radiohead's well-known MBID (always in Fanart.tv)
+        try:
+            import requests as _req
+            resp = _req.get(
+                "https://webservice.fanart.tv/v3/music/a74b1b7f-71a5-4011-9441-d0b5e4122711",
+                params={"api_key": config.FANART_API_KEY},
+                timeout=10,
+            )
+            if resp.status_code == 401:
+                return jsonify({"connected": False, "message": "Invalid API key"})
+            if resp.status_code == 200:
+                return jsonify({"connected": True, "message": "Connected"})
+            return jsonify({"connected": False, "message": f"HTTP {resp.status_code}"})
+        except Exception as e:
+            return jsonify({"connected": False, "message": str(e)})
+
     # -------------------------------------------------------------------------
     # Library backend
     # -------------------------------------------------------------------------

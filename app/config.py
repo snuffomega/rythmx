@@ -70,6 +70,12 @@ MUSIC_API_PROVIDER = _optional("MUSIC_API_PROVIDER", "auto")  # auto|deezer|spot
 # Valid values: "soulsync" | "plex" | "jellyfin" | "navidrome"
 LIBRARY_BACKEND = _optional("LIBRARY_BACKEND", "soulsync")
 
+# --- Fanart.tv (optional) ---
+# Free API key from https://fanart.tv/get-an-api-key/
+# When set, artist images use real band photos from Fanart.tv.
+# When not set, artist images fall back to iTunes album art.
+FANART_API_KEY = _optional("FANART_API_KEY")
+
 
 def validate_lastfm():
     if not LASTFM_API_KEY or not LASTFM_USERNAME:
@@ -92,6 +98,7 @@ def log_config_summary():
     logger.info("  PLEX_URL: %s", PLEX_URL or "(not set)")
     logger.info("  PLEX_TOKEN: %s", "set" if PLEX_TOKEN else "NOT SET")
     logger.info("  SPOTIFY_CLIENT_ID: %s", "set" if SPOTIFY_CLIENT_ID else "NOT SET")
+    logger.info("  FANART_API_KEY: %s", "set" if FANART_API_KEY else "NOT SET (artist images fall back to iTunes)")
     logger.info("  CC_ENABLED: %s", CC_ENABLED)
     logger.info("  LIBRARY_BACKEND: %s", LIBRARY_BACKEND)
     logger.info("  LIBRARY_DB: %s", LIBRARY_DB)

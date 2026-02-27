@@ -165,6 +165,8 @@ export const settingsApi = {
     request<ConnectionStatus>('/settings/test-soulsync', { method: 'POST' }),
   testSpotify: () =>
     request<ConnectionStatus>('/settings/test-spotify', { method: 'POST' }),
+  testFanart: () =>
+    request<ConnectionStatus>('/settings/test-fanart', { method: 'POST' }),
   setLibraryBackend: (backend: 'soulsync' | 'plex' | 'jellyfin' | 'navidrome') =>
     request<{ status: string }>('/settings/library-backend', {
       method: 'POST',

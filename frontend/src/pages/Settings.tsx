@@ -14,11 +14,12 @@ const BACKEND_LABELS: Record<string, string> = {
 
 interface ServiceRowProps {
   name: string;
+  subtitle?: string;
   icon: React.ReactNode;
   onTest: () => Promise<{ connected: boolean; message?: string }>;
 }
 
-function ServiceCard({ name, icon, onTest }: ServiceRowProps) {
+function ServiceCard({ name, subtitle, icon, onTest }: ServiceRowProps) {
   const [status, setStatus] = useState<'idle' | 'testing' | 'connected' | 'error'>('idle');
   const [message, setMessage] = useState<string | null>(null);
 
@@ -41,7 +42,10 @@ function ServiceCard({ name, icon, onTest }: ServiceRowProps) {
         <div className="w-7 h-7 bg-[#181818] flex items-center justify-center flex-shrink-0">
           {icon}
         </div>
-        <p className="text-text-primary text-sm font-medium">{name}</p>
+        <div>
+          <p className="text-text-primary text-sm font-medium">{name}</p>
+          {subtitle && <p className="text-[#444] text-[10px]">{subtitle}</p>}
+        </div>
       </div>
 
       <div className="flex items-center justify-between gap-2">
@@ -189,6 +193,12 @@ export function SettingsPage({ toast }: SettingsPageProps) {
             name="Spotify"
             icon={<span className="text-success font-bold text-sm">S</span>}
             onTest={settingsApi.testSpotify}
+          />
+          <ServiceCard
+            name="Fanart.tv"
+            subtitle="optional — artist photos"
+            icon={<span className="text-[#e88c2a] font-bold text-sm">F</span>}
+            onTest={settingsApi.testFanart}
           />
         </div>
       </section>

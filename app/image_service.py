@@ -1,17 +1,22 @@
 """
-image_service.py — Non-blocking image URL resolution via iTunes.
+image_service.py — Non-blocking image URL resolution.
+
+Artist images:  Fanart.tv (real band photos, requires FANART_API_KEY) →
+                iTunes album art fallback (always available, no auth)
+Album images:   iTunes search (artworkUrl100, upscaled to 600px)
+Track images:   iTunes search (song → album art)
 
 Flow:
   - Cache hit  → return (url, False) immediately (~5ms DB lookup)
   - Cache miss → submit background fetch to thread pool, return ("", True)
-                 Flask request thread is NEVER blocked by iTunes calls.
+                 Flask request thread is NEVER blocked by external calls.
 
 The caller (frontend useImage hook) retries after a short delay when it
 gets pending=True, picking up the cached result once the background fetch
 completes.
 
-Two iTunes worker threads run concurrently (max), each respecting the 1s
-rate limit via _img_lock. This is isolated from the CC pipeline's limiter.
+Two worker threads run concurrently (max), each rate-limiting their own
+external service calls independently.
 """
 import re
 import threading
@@ -20,14 +25,40 @@ import logging
 import requests
 from concurrent.futures import ThreadPoolExecutor
 
+from app import config
 from app.db import cc_store
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# iTunes
+# ---------------------------------------------------------------------------
 
 _ITUNES_BASE = "https://itunes.apple.com"
 _IMG_RATE = 1.0  # seconds between image iTunes calls (~60/min)
 _img_lock = threading.Lock()
 _img_last_call = 0.0
+
+# ---------------------------------------------------------------------------
+# Fanart.tv
+# ---------------------------------------------------------------------------
+
+_FANART_BASE = "https://webservice.fanart.tv/v3/music"
+_fanart_lock = threading.Lock()
+_fanart_last_call = 0.0
+
+# ---------------------------------------------------------------------------
+# MusicBrainz (for MBID lookups when not in artist_identity_cache)
+# ---------------------------------------------------------------------------
+
+_MB_ARTIST_URL = "https://musicbrainz.org/ws/2/artist"
+_MB_RATE = 1.1  # seconds between MB calls (their rate limit is 1/sec)
+_mb_img_lock = threading.Lock()
+_mb_img_last_call = 0.0
+
+# ---------------------------------------------------------------------------
+# Thread pool + in-flight tracking
+# ---------------------------------------------------------------------------
 
 _executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="img-worker")
 
@@ -39,6 +70,10 @@ _session = requests.Session()
 _session.headers["Accept"] = "application/json"
 _session.headers["User-Agent"] = "Rythmx/1.0 (music discovery tool)"
 
+
+# ---------------------------------------------------------------------------
+# iTunes helpers
+# ---------------------------------------------------------------------------
 
 def _itunes_img_get(path: str, params: dict) -> dict | None:
     """Rate-limited iTunes GET for image lookups only. Thread-safe."""
@@ -86,32 +121,124 @@ def _search_artist_itunes(name: str) -> str | None:
     return str(first.get("artistId", "")) or None
 
 
+# ---------------------------------------------------------------------------
+# Fanart.tv helpers
+# ---------------------------------------------------------------------------
+
+def _fanart_get_artist(mbid: str) -> str:
+    """
+    Fetch artist thumbnail from Fanart.tv using a MusicBrainz ID.
+    Returns image URL or "" if not found / not configured.
+    Rate-limited and thread-safe.
+    """
+    global _fanart_last_call
+    with _fanart_lock:
+        elapsed = time.monotonic() - _fanart_last_call
+        if elapsed < 0.5:
+            time.sleep(0.5 - elapsed)
+        _fanart_last_call = time.monotonic()
+    try:
+        resp = _session.get(
+            f"{_FANART_BASE}/{mbid}",
+            params={"api_key": config.FANART_API_KEY},
+            timeout=10,
+        )
+        if resp.status_code == 404:
+            return ""  # Artist not in Fanart.tv database — normal, not an error
+        resp.raise_for_status()
+        data = resp.json()
+        thumbs = data.get("artistthumb", [])
+        if thumbs:
+            # Fanart.tv returns thumbs sorted by community likes — first is best
+            return thumbs[0].get("url", "")
+        return ""
+    except requests.RequestException as e:
+        logger.debug("Fanart.tv request failed for MBID '%s': %s", mbid, e)
+        return ""
+
+
+# ---------------------------------------------------------------------------
+# MusicBrainz MBID lookup (for artists not yet in identity cache)
+# ---------------------------------------------------------------------------
+
+def _mb_lookup_mbid(artist_name: str) -> str | None:
+    """
+    Look up a MusicBrainz artist MBID by name.
+    Rate-limited to 1 req/sec (MB policy). Thread-safe.
+    Result is cached in artist_identity_cache by the caller.
+    """
+    global _mb_img_last_call
+    with _mb_img_lock:
+        elapsed = time.monotonic() - _mb_img_last_call
+        if elapsed < _MB_RATE:
+            time.sleep(_MB_RATE - elapsed)
+        _mb_img_last_call = time.monotonic()
+    try:
+        resp = _session.get(
+            _MB_ARTIST_URL,
+            params={"query": f'artist:"{artist_name}"', "limit": 3, "fmt": "json"},
+            headers={"User-Agent": "Rythmx/1.0 (https://github.com/snuffomega/rythmx)"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        artists = resp.json().get("artists", [])
+        if not artists:
+            return None
+        name_lower = artist_name.lower()
+        for a in artists:
+            if a.get("name", "").lower() == name_lower:
+                return a["id"]
+        return artists[0]["id"]
+    except requests.RequestException as e:
+        logger.debug("MusicBrainz MBID lookup failed for '%s': %s", artist_name, e)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Core background worker
+# ---------------------------------------------------------------------------
+
 def _entity_key(entity_type: str, name: str, artist: str) -> str:
     return name.lower() if entity_type == "artist" else f"{artist.lower()}|||{name.lower()}"
 
 
 def _fetch_and_cache(entity_type: str, name: str, artist: str) -> None:
-    """Background worker: fetch image from iTunes and write to cache."""
+    """Background worker: fetch image from best available source and write to cache."""
     key = _entity_key(entity_type, name, artist)
     try:
         url = ""
 
         if entity_type == "artist":
-            cached_artist = cc_store.get_cached_artist(name)
-            itunes_id = (cached_artist or {}).get("itunes_artist_id")
+            # --- Primary: Fanart.tv (real artist photo) ---
+            if config.FANART_API_KEY:
+                cached_artist = cc_store.get_cached_artist(name)
+                mbid = (cached_artist or {}).get("mb_artist_id")
 
-            if not itunes_id:
-                itunes_id = _search_artist_itunes(name)
+                if not mbid:
+                    mbid = _mb_lookup_mbid(name)
+                    if mbid:
+                        cc_store.cache_artist(name, mb_artist_id=mbid)
+
+                if mbid:
+                    url = _fanart_get_artist(mbid)
+
+            # --- Fallback: iTunes album art ---
+            if not url:
+                cached_artist = cc_store.get_cached_artist(name)
+                itunes_id = (cached_artist or {}).get("itunes_artist_id")
+
+                if not itunes_id:
+                    itunes_id = _search_artist_itunes(name)
+                    if itunes_id:
+                        cc_store.cache_artist(name, itunes_artist_id=itunes_id)
+
                 if itunes_id:
-                    cc_store.cache_artist(name, itunes_artist_id=itunes_id)
-
-            if itunes_id:
-                data = _itunes_img_get("/lookup", {
-                    "id": itunes_id,
-                    "entity": "album",
-                    "limit": 5,
-                })
-                url = _extract_art(data)
+                    data = _itunes_img_get("/lookup", {
+                        "id": itunes_id,
+                        "entity": "album",
+                        "limit": 5,
+                    })
+                    url = _extract_art(data)
 
         elif entity_type == "album":
             # Strip common release-type suffixes so "ICE - Single" searches as "ICE"
@@ -140,6 +267,10 @@ def _fetch_and_cache(entity_type: str, name: str, artist: str) -> None:
         with _in_flight_lock:
             _in_flight.discard(key)
 
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
 def warm_image_cache(max_items: int = 40) -> int:
     """
