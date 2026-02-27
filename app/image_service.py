@@ -141,6 +141,28 @@ def _fetch_and_cache(entity_type: str, name: str, artist: str) -> None:
             _in_flight.discard(key)
 
 
+def warm_image_cache(max_items: int = 40) -> int:
+    """
+    Proactively submit background image fetches for entities not yet in cache.
+    Called by the scheduler during idle hours (when CC did not run).
+
+    Returns the number of new background fetches submitted (0 = nothing to do).
+    Non-blocking — all work runs inside the existing _executor thread pool.
+    """
+    from app.db import cc_store as _cc_store
+    missing = _cc_store.get_missing_image_entities(limit=max_items)
+    submitted = 0
+    for entity_type, name, artist in missing:
+        _, pending = resolve_image(entity_type, name, artist)
+        if pending:
+            submitted += 1
+    if submitted:
+        logger.info("Image warmer: submitted %d background fetches", submitted)
+    else:
+        logger.debug("Image warmer: nothing to fetch")
+    return submitted
+
+
 def resolve_image(entity_type: str, name: str, artist: str = "") -> tuple[str, bool]:
     """
     Return (image_url, pending) for an artist / album / track.

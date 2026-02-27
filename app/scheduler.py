@@ -558,6 +558,7 @@ def _should_run_cc(settings: dict) -> bool:
 def _loop():
     """Background loop — checks every hour whether a CC cycle should run."""
     while not _stop_event.is_set():
+        ran_cc = False
         if config.CC_ENABLED:
             settings = cc_store.get_all_settings()
             if _should_run_cc(settings):
@@ -571,12 +572,20 @@ def _loop():
                                 settings.get("release_cache_refresh_hour", "5"))
                 run_cycle(run_mode=mode, force_refresh=force)
                 cc_store.set_setting("cc_last_run", datetime.now().isoformat())
+                ran_cc = True
         # Run acquisition worker every loop regardless of whether CC ran
         try:
             from app import acquisition
             acquisition.check_queue()
         except Exception as e:
             logger.warning("Acquisition worker error (non-fatal): %s", e)
+        # Warm image cache during idle hours — no-op if everything is already cached
+        if not ran_cc:
+            try:
+                from app import image_service as _img_svc
+                _img_svc.warm_image_cache()
+            except Exception as e:
+                logger.debug("Image warmer error (non-fatal): %s", e)
         _stop_event.wait(timeout=3600)  # Check every hour
 
 

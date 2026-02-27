@@ -767,3 +767,45 @@ def clear_release_cache(artist_name: str | None = None):
             conn.execute("DELETE FROM release_cache WHERE artist_name = ?", (artist_name,))
         else:
             conn.execute("DELETE FROM release_cache")
+
+
+def get_missing_image_entities(limit: int = 40) -> list[tuple[str, str, str]]:
+    """
+    Return up to `limit` (entity_type, name, artist) tuples for entities that
+    have no resolved image in image_cache. Albums from cc_playlist are checked
+    first (most visible); artist images from artist_identity_cache fill the rest.
+
+    Only entities with a completely absent or empty image_url are returned —
+    entries with non-empty URLs are skipped (already cached).
+    """
+    with _connect() as conn:
+        albums = conn.execute("""
+            SELECT DISTINCT 'album', album_name, artist_name
+            FROM cc_playlist
+            WHERE album_name IS NOT NULL AND album_name != ''
+              AND NOT EXISTS (
+                  SELECT 1 FROM image_cache
+                  WHERE entity_type = 'album'
+                    AND entity_key = lower(cc_playlist.artist_name) || '|||' || lower(cc_playlist.album_name)
+                    AND image_url != ''
+              )
+            LIMIT ?
+        """, (limit,)).fetchall()
+
+        remaining = limit - len(albums)
+        artists = []
+        if remaining > 0:
+            artists = conn.execute("""
+                SELECT DISTINCT 'artist', lastfm_name, ''
+                FROM artist_identity_cache
+                WHERE lastfm_name IS NOT NULL AND lastfm_name != ''
+                  AND NOT EXISTS (
+                      SELECT 1 FROM image_cache
+                      WHERE entity_type = 'artist'
+                        AND entity_key = lower(artist_identity_cache.lastfm_name)
+                        AND image_url != ''
+                  )
+                LIMIT ?
+            """, (remaining,)).fetchall()
+
+        return [(r[0], r[1], r[2]) for r in albums + artists]
