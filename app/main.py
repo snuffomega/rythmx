@@ -823,6 +823,22 @@ def create_app() -> Flask:
         return jsonify([])
 
     # -------------------------------------------------------------------------
+    # Image service
+    # -------------------------------------------------------------------------
+
+    @app.route("/api/images/resolve", methods=["POST"])
+    def images_resolve():
+        from app import image_service
+        body = request.get_json(silent=True) or {}
+        entity_type = body.get("type", "")
+        name = body.get("name", "")
+        artist = body.get("artist", "")
+        if not entity_type or not name:
+            return jsonify({"image_url": ""})
+        url = image_service.resolve_image(entity_type, name, artist)
+        return jsonify({"image_url": url})
+
+    # -------------------------------------------------------------------------
     # SPA catch-all — React Router client-side navigation
     # -------------------------------------------------------------------------
 

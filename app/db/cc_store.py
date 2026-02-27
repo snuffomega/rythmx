@@ -141,7 +141,19 @@ def init_db():
                 updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(artist_name, album_title)
             );
+
+            CREATE TABLE IF NOT EXISTS image_cache (
+                entity_type  TEXT NOT NULL,
+                entity_key   TEXT NOT NULL,
+                image_url    TEXT DEFAULT '',
+                last_accessed TEXT DEFAULT (datetime('now')),
+                PRIMARY KEY (entity_type, entity_key)
+            );
         """)
+
+    # Prune stale image cache entries (> 30 days since last access)
+    with _connect() as conn:
+        conn.execute("DELETE FROM image_cache WHERE last_accessed < datetime('now', '-30 days')")
 
     # Migrations: add columns that may not exist in older cc.db files
     _migrate_add_column("artist_identity_cache", "itunes_artist_id", "TEXT")
@@ -152,6 +164,37 @@ def init_db():
     _migrate_add_column("cc_playlist", "release_date", "TEXT")
 
     logger.info("cc.db initialized at %s", config.CC_DB)
+
+
+# --- Image Cache ---
+
+def get_image_cache(entity_type: str, entity_key: str) -> str | None:
+    """Return cached image URL or None if not cached. Updates last_accessed on hit."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT image_url FROM image_cache WHERE entity_type=? AND entity_key=?",
+            (entity_type, entity_key)
+        ).fetchone()
+        if row is None:
+            return None
+        conn.execute(
+            "UPDATE image_cache SET last_accessed=datetime('now') WHERE entity_type=? AND entity_key=?",
+            (entity_type, entity_key)
+        )
+        return row["image_url"]
+
+
+def set_image_cache(entity_type: str, entity_key: str, image_url: str):
+    """Upsert an image URL into the cache."""
+    with _connect() as conn:
+        conn.execute(
+            """INSERT INTO image_cache (entity_type, entity_key, image_url, last_accessed)
+               VALUES (?, ?, ?, datetime('now'))
+               ON CONFLICT(entity_type, entity_key) DO UPDATE SET
+                   image_url=excluded.image_url,
+                   last_accessed=datetime('now')""",
+            (entity_type, entity_key, image_url)
+        )
 
 
 # --- Settings ---

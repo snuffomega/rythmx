@@ -1,5 +1,6 @@
 import { Music2, Users, ChevronRight, Disc3, Sparkles, Radio } from 'lucide-react';
 import { useApi } from '../hooks/useApi';
+import { useImage } from '../hooks/useImage';
 import { statsApi, cruiseControlApi, acquisitionApi } from '../services/api';
 import type { Artist, Track, QueueItem } from '../types';
 
@@ -26,17 +27,19 @@ function AlbumTile({
   sub?: string;
   wide?: boolean;
 }) {
+  const resolvedImg = useImage('album', title, artist);
+  const src = image || resolvedImg;
   const w = wide ? 'w-48' : 'w-40';
   const h = wide ? 'h-48' : 'h-40';
   return (
     <div className={`flex-shrink-0 ${w} snap-start group cursor-pointer`}>
       <div
         className={`${w} ${h} overflow-hidden relative`}
-        style={!image ? { background: placeholderGradient(artist) } : undefined}
+        style={!src ? { background: placeholderGradient(artist) } : undefined}
       >
-        {image ? (
+        {src ? (
           <img
-            src={image}
+            src={src}
             alt={title}
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
           />
@@ -55,15 +58,17 @@ function AlbumTile({
 }
 
 function ArtistTile({ artist }: { artist: Artist }) {
+  const resolvedImg = useImage('artist', artist.name);
+  const src = artist.image || resolvedImg;
   return (
     <div className="flex-shrink-0 w-36 snap-start text-center group cursor-pointer">
       <div
         className="w-36 h-36 overflow-hidden mx-auto relative"
-        style={!artist.image ? { background: placeholderGradient(artist.name) } : undefined}
+        style={!src ? { background: placeholderGradient(artist.name) } : undefined}
       >
-        {artist.image ? (
+        {src ? (
           <img
-            src={artist.image}
+            src={src}
             alt={artist.name}
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
           />
@@ -83,6 +88,8 @@ function ArtistTile({ artist }: { artist: Artist }) {
 }
 
 function TrackRow({ track, rank }: { track: Track; rank?: number }) {
+  const resolvedImg = useImage('track', track.name, track.artist);
+  const src = track.image || resolvedImg;
   return (
     <div className="flex items-center gap-3 py-3 hover:bg-[#0e0e0e] transition-colors cursor-pointer group border-b border-[#111]">
       {rank !== undefined && (
@@ -90,10 +97,10 @@ function TrackRow({ track, rank }: { track: Track; rank?: number }) {
       )}
       <div
         className="w-10 h-10 flex-shrink-0 overflow-hidden"
-        style={!track.image ? { background: placeholderGradient(track.artist) } : undefined}
+        style={!src ? { background: placeholderGradient(track.artist) } : undefined}
       >
-        {track.image ? (
-          <img src={track.image} alt={track.name} className="w-full h-full object-cover" />
+        {src ? (
+          <img src={src} alt={track.name} className="w-full h-full object-cover" />
         ) : (
           <div className="w-full h-full flex items-center justify-center">
             <Music2 size={13} className="text-[#333]" />

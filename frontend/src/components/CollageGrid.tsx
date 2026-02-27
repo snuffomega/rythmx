@@ -1,5 +1,6 @@
 import { Users, Music2, Disc3 } from 'lucide-react';
 import type { Artist, Track, TopAlbum } from '../types';
+import { useImage } from '../hooks/useImage';
 
 export type ContentType = 'artists' | 'albums' | 'tracks';
 
@@ -102,6 +103,10 @@ interface CollageCardProps {
 }
 
 function CollageCard({ item, rank, contentType, overlays }: CollageCardProps) {
+  const entityType = contentType === 'artists' ? 'artist' : contentType === 'albums' ? 'album' : 'track';
+  const resolvedImage = useImage(entityType, item.name, item.artist ?? '');
+  const src = item.image || resolvedImage;
+
   const hasOverlay = (overlays.showArtist && item.artist) ||
     (overlays.showAlbum && contentType !== 'artists') ||
     overlays.showPlaycount;
@@ -112,9 +117,9 @@ function CollageCard({ item, rank, contentType, overlays }: CollageCardProps) {
 
   return (
     <div className="group relative aspect-square overflow-hidden bg-[#141414] cursor-pointer">
-      {item.image ? (
+      {src ? (
         <img
-          src={item.image}
+          src={src}
           alt={item.name}
           loading="lazy"
           className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
