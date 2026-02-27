@@ -49,7 +49,7 @@ function TrackRow({ track }: { track: PlaylistTrack }) {
       <span className={`text-xs truncate flex-1 ${track.is_owned ? 'text-text-primary' : 'text-[#3a3a3a] italic'}`}>
         {track.artist} — {track.name}
       </span>
-      {!track.is_owned && <Clock size={10} className="text-[#2a2a2a] flex-shrink-0" title="Pending acquisition" />}
+      {!track.is_owned && <Clock size={10} className="text-[#2a2a2a] flex-shrink-0" aria-label="Pending acquisition" />}
     </div>
   );
 }
