@@ -26,10 +26,10 @@ interface CollageGridProps {
 }
 
 function FallbackIcon({ type }: { type: ContentType }) {
-  const cls = 'text-[#2a2a2a]';
+  const cls = 'text-white/20';
   if (type === 'artists') return <Users size={28} className={cls} />;
   if (type === 'albums') return <Disc3 size={28} className={cls} />;
-  return <Music2 size={28} className={cls} />;
+  return <Disc3 size={28} className={cls} />;
 }
 
 export function normalizeItems(

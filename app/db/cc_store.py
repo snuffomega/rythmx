@@ -169,13 +169,17 @@ def init_db():
 # --- Image Cache ---
 
 def get_image_cache(entity_type: str, entity_key: str) -> str | None:
-    """Return cached image URL or None if not cached. Updates last_accessed on hit."""
+    """Return cached image URL or None if not cached / empty.
+
+    Empty strings are treated as misses so stale 'not found' entries from
+    failed fetches are retried rather than permanently suppressed.
+    """
     with _connect() as conn:
         row = conn.execute(
             "SELECT image_url FROM image_cache WHERE entity_type=? AND entity_key=?",
             (entity_type, entity_key)
         ).fetchone()
-        if row is None:
+        if row is None or not row["image_url"]:
             return None
         conn.execute(
             "UPDATE image_cache SET last_accessed=datetime('now') WHERE entity_type=? AND entity_key=?",

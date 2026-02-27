@@ -30,6 +30,10 @@ _img_last_call = 0.0
 
 _executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="img-worker")
 
+# Tracks keys currently queued/running in the executor — prevents duplicate submissions
+_in_flight: set[str] = set()
+_in_flight_lock = threading.Lock()
+
 _session = requests.Session()
 _session.headers["Accept"] = "application/json"
 _session.headers["User-Agent"] = "Rythmx/1.0 (music discovery tool)"
@@ -88,50 +92,50 @@ def _entity_key(entity_type: str, name: str, artist: str) -> str:
 def _fetch_and_cache(entity_type: str, name: str, artist: str) -> None:
     """Background worker: fetch image from iTunes and write to cache."""
     key = _entity_key(entity_type, name, artist)
+    try:
+        url = ""
 
-    # Guard: another worker may have already resolved this while we were queued
-    if cc_store.get_image_cache(entity_type, key) is not None:
-        return
+        if entity_type == "artist":
+            cached_artist = cc_store.get_cached_artist(name)
+            itunes_id = (cached_artist or {}).get("itunes_artist_id")
 
-    url = ""
+            if not itunes_id:
+                itunes_id = _search_artist_itunes(name)
+                if itunes_id:
+                    cc_store.cache_artist(name, itunes_artist_id=itunes_id)
 
-    if entity_type == "artist":
-        cached_artist = cc_store.get_cached_artist(name)
-        itunes_id = (cached_artist or {}).get("itunes_artist_id")
-
-        if not itunes_id:
-            itunes_id = _search_artist_itunes(name)
             if itunes_id:
-                cc_store.cache_artist(name, itunes_artist_id=itunes_id)
+                data = _itunes_img_get("/lookup", {
+                    "id": itunes_id,
+                    "entity": "album",
+                    "limit": 5,
+                })
+                url = _extract_art(data)
 
-        if itunes_id:
-            data = _itunes_img_get("/lookup", {
-                "id": itunes_id,
+        elif entity_type == "album":
+            data = _itunes_img_get("/search", {
+                "term": f"{artist} {name}",
                 "entity": "album",
-                "limit": 5,
+                "media": "music",
+                "limit": 3,
             })
             url = _extract_art(data)
 
-    elif entity_type == "album":
-        data = _itunes_img_get("/search", {
-            "term": f"{artist} {name}",
-            "entity": "album",
-            "media": "music",
-            "limit": 3,
-        })
-        url = _extract_art(data)
+        elif entity_type == "track":
+            data = _itunes_img_get("/search", {
+                "term": f"{artist} {name}",
+                "entity": "song",
+                "media": "music",
+                "limit": 3,
+            })
+            url = _extract_art(data)
 
-    elif entity_type == "track":
-        data = _itunes_img_get("/search", {
-            "term": f"{artist} {name}",
-            "entity": "song",
-            "media": "music",
-            "limit": 3,
-        })
-        url = _extract_art(data)
-
-    cc_store.set_image_cache(entity_type, key, url)
-    logger.debug("Image cached: [%s] %s — %s", entity_type, name, url[:60] if url else "(none)")
+        if url:
+            cc_store.set_image_cache(entity_type, key, url)
+        logger.debug("Image cached: [%s] %s — %s", entity_type, name, url[:60] if url else "(none)")
+    finally:
+        with _in_flight_lock:
+            _in_flight.discard(key)
 
 
 def resolve_image(entity_type: str, name: str, artist: str = "") -> tuple[str, bool]:
@@ -150,6 +154,11 @@ def resolve_image(entity_type: str, name: str, artist: str = "") -> tuple[str, b
     cached = cc_store.get_image_cache(entity_type, key)
     if cached is not None:
         return cached, False
+
+    with _in_flight_lock:
+        if key in _in_flight:
+            return "", True  # Already queued — caller retries
+        _in_flight.add(key)
 
     _executor.submit(_fetch_and_cache, entity_type, name, artist)
     return "", True
