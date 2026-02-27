@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, RefreshCw, Loader2, Trash2, ChevronDown, ChevronUp, Upload, Download, X, ListMusic } from 'lucide-react';
+import { Plus, RefreshCw, Loader2, Trash2, ChevronDown, ChevronUp, Upload, Download, X, ListMusic, Clock } from 'lucide-react';
 import { useApi } from '../hooks/useApi';
 import { playlistsApi } from '../services/api';
 import { ConfirmDialog } from '../components/ConfirmDialog';
@@ -47,6 +47,7 @@ function TrackRow({ track }: { track: PlaylistTrack }) {
       <span className={`text-xs truncate flex-1 ${track.is_owned ? 'text-text-primary' : 'text-[#3a3a3a] italic'}`}>
         {track.artist} — {track.name}
       </span>
+      {!track.is_owned && <Clock size={10} className="text-[#2a2a2a] flex-shrink-0" title="Pending acquisition" />}
     </div>
   );
 }
