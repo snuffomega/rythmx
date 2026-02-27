@@ -101,6 +101,7 @@ export function SettingsPage({ toast }: SettingsPageProps) {
   const [syncing, setSyncing] = useState(false);
   const [switchingBackend, setSwitchingBackend] = useState(false);
   const [confirmClearHistory, setConfirmClearHistory] = useState(false);
+  const [confirmClearImageCache, setConfirmClearImageCache] = useState(false);
   const [confirmResetDb, setConfirmResetDb] = useState(false);
   const [dangerOpen, setDangerOpen] = useState(false);
 
@@ -139,6 +140,16 @@ export function SettingsPage({ toast }: SettingsPageProps) {
       toast.error('Failed to clear history');
     }
     setConfirmClearHistory(false);
+  };
+
+  const handleClearImageCache = async () => {
+    try {
+      await settingsApi.clearImageCache();
+      toast.success('Image cache cleared');
+    } catch {
+      toast.error('Failed to clear image cache');
+    }
+    setConfirmClearImageCache(false);
   };
 
   const handleResetDb = async () => {
@@ -245,6 +256,15 @@ export function SettingsPage({ toast }: SettingsPageProps) {
             </div>
             <div className="flex items-center justify-between gap-4 pt-4 border-t border-danger/10">
               <div>
+                <p className="text-text-primary text-sm font-semibold">Clear Image Cache</p>
+                <p className="text-[#444] text-xs mt-0.5">Force all artwork to re-fetch from iTunes on next load</p>
+              </div>
+              <button onClick={() => setConfirmClearImageCache(true)} className="btn-danger text-sm flex-shrink-0">
+                Clear Cache
+              </button>
+            </div>
+            <div className="flex items-center justify-between gap-4 pt-4 border-t border-danger/10">
+              <div>
                 <p className="text-text-primary text-sm font-semibold">Reset Database</p>
                 <p className="text-[#444] text-xs mt-0.5">Wipe all app data. This cannot be undone.</p>
               </div>
@@ -264,6 +284,16 @@ export function SettingsPage({ toast }: SettingsPageProps) {
         danger
         onConfirm={handleClearHistory}
         onCancel={() => setConfirmClearHistory(false)}
+      />
+
+      <ConfirmDialog
+        open={confirmClearImageCache}
+        title="Clear Image Cache?"
+        description="All cached artwork URLs will be removed. Images will re-fetch from iTunes on next page load."
+        confirmLabel="Clear Cache"
+        danger
+        onConfirm={handleClearImageCache}
+        onCancel={() => setConfirmClearImageCache(false)}
       />
 
       <ConfirmDialog

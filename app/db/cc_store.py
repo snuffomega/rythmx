@@ -201,6 +201,12 @@ def set_image_cache(entity_type: str, entity_key: str, image_url: str):
         )
 
 
+def clear_image_cache():
+    """Delete all rows from image_cache."""
+    with _connect() as conn:
+        conn.execute("DELETE FROM image_cache")
+
+
 # --- Settings ---
 
 def get_setting(key: str, default=None):

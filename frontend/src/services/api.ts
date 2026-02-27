@@ -174,6 +174,8 @@ export const settingsApi = {
     request<{ status: string }>('/settings/clear-history', { method: 'POST' }),
   resetDb: () =>
     request<{ status: string }>('/settings/reset-db', { method: 'POST' }),
+  clearImageCache: () =>
+    request<{ status: string }>('/settings/clear-image-cache', { method: 'POST' }),
 };
 
 export const libraryApi = {

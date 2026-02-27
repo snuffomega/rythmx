@@ -802,6 +802,11 @@ def create_app() -> Flask:
         cc_store.reset_db()
         return jsonify({"status": "ok"})
 
+    @app.route("/api/settings/clear-image-cache", methods=["POST"])
+    def settings_clear_image_cache():
+        cc_store.clear_image_cache()
+        return jsonify({"status": "ok", "message": "Image cache cleared"})
+
     # -------------------------------------------------------------------------
     # Stats — loved artists count
     # -------------------------------------------------------------------------
