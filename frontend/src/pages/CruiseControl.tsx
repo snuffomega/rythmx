@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Zap, Play, Save, ChevronDown, ChevronUp, RotateCcw, CheckCircle, AlertCircle, Loader2, Clock, Circle, Sparkles } from 'lucide-react';
+import { Zap, Save, ChevronDown, ChevronUp, RotateCcw, CheckCircle, AlertCircle, Loader2, Circle, Sparkles } from 'lucide-react';
 import { useApi } from '../hooks/useApi';
 import { cruiseControlApi, releaseCacheApi } from '../services/api';
 import { StatusBadge } from '../components/StatusBadge';
@@ -33,99 +33,6 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
     >
       <span className={`inline-block w-4 h-4 rounded-full bg-white shadow transition-transform duration-200 ${on ? 'translate-x-5' : 'translate-x-0.5'}`} />
     </button>
-  );
-}
-
-function StatusBanner({ onRun, onData }: { onRun: () => void; onData?: (d: import('../types').CruiseControlStatus | null) => void }) {
-  const { data, loading, error, refetch } = useApi(() => cruiseControlApi.getStatus());
-
-  useEffect(() => {
-    onData?.(data ?? null);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data]);
-
-  useEffect(() => {
-    if (data?.state === 'running') {
-      const interval = setInterval(refetch, 2000);
-      return () => clearInterval(interval);
-    }
-  }, [data?.state, refetch]);
-
-  if (loading) {
-    return <div className="h-16 bg-[#1c1c1c] animate-pulse" />;
-  }
-
-  if (error || !data) {
-    return (
-      <div className="flex items-center gap-3 p-4 border-l-2 border-danger bg-danger/5">
-        <AlertCircle size={16} className="text-danger flex-shrink-0" />
-        <span className="text-text-secondary text-sm">Unable to fetch status</span>
-      </div>
-    );
-  }
-
-  const borderColor =
-    data.state === 'running' ? 'border-l-accent' :
-    data.state === 'error' ? 'border-l-danger' :
-    data.state === 'completed' ? 'border-l-success' : 'border-l-[#333]';
-
-  return (
-    <div className={`flex items-center justify-between gap-4 p-4 border-l-2 bg-[#111111] ${borderColor}`}>
-      <div className="flex items-center gap-3 flex-1 min-w-0">
-        {data.state === 'running' && <Loader2 size={16} className="text-accent animate-spin flex-shrink-0" />}
-        {data.state === 'idle' && <Clock size={16} className="text-text-muted flex-shrink-0" />}
-        {data.state === 'completed' && <CheckCircle size={16} className="text-success flex-shrink-0" />}
-        {data.state === 'error' && <AlertCircle size={16} className="text-danger flex-shrink-0" />}
-
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-text-primary font-semibold text-sm capitalize">{data.state === 'idle' ? 'Ready' : data.state}</span>
-            {data.state === 'running' && data.stage && data.total_stages && (
-              <span className="text-text-muted text-xs">Stage {data.stage}/{data.total_stages}</span>
-            )}
-          </div>
-          {data.state === 'running' && data.stage_label && (
-            <p className="text-text-muted text-xs mt-0.5">{data.stage_label}</p>
-          )}
-          {data.state === 'running' && data.stage && data.total_stages && (
-            <div className="w-40 h-0.5 bg-[#222] mt-2">
-              <div
-                className="h-0.5 bg-accent transition-all duration-500"
-                style={{ width: `${(data.stage / data.total_stages) * 100}%` }}
-              />
-            </div>
-          )}
-          {(data.state === 'completed' || data.state === 'idle') && data.last_run && (
-            <p className="text-text-muted text-xs">Last run: {new Date(data.last_run).toLocaleString()}</p>
-          )}
-          {data.state === 'error' && data.error && (
-            <p className="text-danger text-xs mt-0.5 truncate">{data.error}</p>
-          )}
-        </div>
-      </div>
-
-      {data.state === 'completed' && data.summary && (
-        <div className="hidden sm:flex items-center gap-4 flex-shrink-0">
-          {[
-            { label: 'Checked', value: data.summary.artists_checked },
-            { label: 'New', value: data.summary.new_releases },
-            { label: 'Owned', value: data.summary.owned },
-            { label: 'Queued', value: data.summary.queued },
-          ].map(chip => (
-            <div key={chip.label} className="text-center">
-              <div className="text-text-primary font-bold text-base">{chip.value}</div>
-              <div className="text-text-muted text-xs">{chip.label}</div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {data.state !== 'running' && (
-        <button onClick={onRun} className="btn-primary flex items-center gap-2 text-sm flex-shrink-0">
-          <Play size={13} /> Run Now
-        </button>
-      )}
-    </div>
   );
 }
 
@@ -253,19 +160,25 @@ interface CruiseControlProps {
 export function CruiseControl({ toast }: CruiseControlProps) {
   const { data: config, loading: configLoading } = useApi(() => cruiseControlApi.getConfig());
   const { data: history, loading: historyLoading } = useApi(() => cruiseControlApi.getHistory());
+  const { data: statusData, refetch: refetchStatus } = useApi(() => cruiseControlApi.getStatus());
 
   const [tab, setTab] = useState<CCTab>('new-music');
   const [form, setForm] = useState<Partial<CruiseControlConfig>>({});
   const [advanced, setAdvanced] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [running, setRunning] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
-  const [refreshTick, setRefreshTick] = useState(0);
-  const [statusData, setStatusData] = useState<import('../types').CruiseControlStatus | null>(null);
 
   useEffect(() => {
     if (config) setForm(config);
   }, [config]);
+
+  // Poll status every 2s while a run is active
+  useEffect(() => {
+    if (statusData?.state === 'running') {
+      const interval = setInterval(refetchStatus, 2000);
+      return () => clearInterval(interval);
+    }
+  }, [statusData?.state, refetchStatus]);
 
   const update = (key: keyof CruiseControlConfig, value: unknown) =>
     setForm(f => ({ ...f, [key]: value }));
@@ -282,26 +195,14 @@ export function CruiseControl({ toast }: CruiseControlProps) {
     }
   };
 
-  const handleRun = async () => {
-    setRunning(true);
-    try {
-      await cruiseControlApi.runNow();
-      toast.success('Cruise Control started');
-      setRefreshTick(t => t + 1);
-    } catch {
-      toast.error('Failed to start run');
-    } finally {
-      setRunning(false);
-    }
-  };
-
   const handleSaveAndRun = async () => {
     setSaving(true);
     try {
       await cruiseControlApi.saveConfig(form);
-      await cruiseControlApi.runNow();
+      const runMode = form.cc_dry_run ? 'dry' : (form.cc_run_mode ?? 'playlist');
+      await cruiseControlApi.runNow(runMode);
       toast.success('Config saved and run started');
-      setRefreshTick(t => t + 1);
+      refetchStatus();
     } catch {
       toast.error('Failed to save and run');
     } finally {
@@ -318,8 +219,6 @@ export function CruiseControl({ toast }: CruiseControlProps) {
     }
     setConfirmClear(false);
   };
-
-  const _ = refreshTick;
 
   return (
     <div className="py-8 space-y-8">
@@ -360,10 +259,6 @@ export function CruiseControl({ toast }: CruiseControlProps) {
       )}
 
       {tab === 'new-music' && <>
-
-      <StatusBanner onRun={handleRun} onData={setStatusData} />
-
-      {statusData && <LastRunResults data={statusData} />}
 
       {configLoading ? (
         <div className="space-y-3">
@@ -595,10 +490,10 @@ export function CruiseControl({ toast }: CruiseControlProps) {
           <div className="flex gap-3 pt-2 border-t border-[#1a1a1a]">
             <button
               onClick={handleSaveAndRun}
-              disabled={saving || running}
+              disabled={saving || statusData?.state === 'running'}
               className="btn-primary flex items-center gap-2 text-sm"
             >
-              {(saving || running) ? <Loader2 size={13} className="animate-spin" /> : <Zap size={13} />}
+              {(saving || statusData?.state === 'running') ? <Loader2 size={13} className="animate-spin" /> : <Zap size={13} />}
               Save & Run
             </button>
             <button onClick={handleSave} disabled={saving} className="btn-secondary flex items-center gap-2 text-sm">
@@ -606,6 +501,9 @@ export function CruiseControl({ toast }: CruiseControlProps) {
               Save Config
             </button>
           </div>
+
+          {statusData && <LastRunResults data={statusData} />}
+
         </div>
       )}
 

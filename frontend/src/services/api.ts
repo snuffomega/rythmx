@@ -46,8 +46,11 @@ export const cruiseControlApi = {
       method: 'POST',
       body: JSON.stringify(config),
     }),
-  runNow: () =>
-    request<{ status: string }>('/cruise-control/run-now', { method: 'POST' }),
+  runNow: (runMode?: string) =>
+    request<{ status: string }>('/cruise-control/run-now', {
+      method: 'POST',
+      body: runMode ? JSON.stringify({ run_mode: runMode }) : undefined,
+    }),
   getHistory: () =>
     request<{ status: string; history: HistoryItem[] }>('/cruise-control/history')
       .then(r => r.history),

@@ -21,13 +21,13 @@ const SOURCE_COLORS: Record<PlaylistSource, string> = {
   taste: 'text-accent',
   lastfm: 'text-danger',
   spotify: 'text-success',
-  deezer: 'text-blue-400',
+  deezer: 'text-purple-400',
   empty: 'text-text-muted',
 };
 
 function OwnedBar({ owned, total }: { owned: number; total: number }) {
   const pct = total > 0 ? Math.round((owned / total) * 100) : 0;
-  const color = pct === 100 ? 'bg-success' : pct > 50 ? 'bg-success' : pct > 20 ? 'bg-warning' : 'bg-danger';
+  const color = pct > 20 ? 'bg-accent' : 'bg-danger';
   return (
     <div className="flex items-center gap-3">
       <span className="text-text-muted text-xs whitespace-nowrap">
@@ -43,7 +43,7 @@ function OwnedBar({ owned, total }: { owned: number; total: number }) {
 function TrackRow({ track }: { track: PlaylistTrack }) {
   return (
     <div className="flex items-center gap-2 py-1.5 border-b border-[#111] last:border-0">
-      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${track.is_owned ? 'bg-success' : 'bg-[#333]'}`} />
+      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${track.is_owned ? 'bg-accent' : 'bg-[#333]'}`} />
       <span className="text-text-primary text-xs truncate flex-1">
         {track.artist} — {track.name}
       </span>
