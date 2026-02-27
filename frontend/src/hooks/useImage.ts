@@ -9,14 +9,17 @@ export function useImage(
   name: string,
   artist = ''
 ): string | null {
-  const cacheKey = `${type}:${name.toLowerCase()}:${artist.toLowerCase()}`;
+  // Guard against undefined/null passed during stale renders (e.g. content-type switches)
+  const safeName = name ?? '';
+  const safeArtist = artist ?? '';
+  const cacheKey = `${type}:${safeName.toLowerCase()}:${safeArtist.toLowerCase()}`;
 
   const [imageUrl, setImageUrl] = useState<string | null>(
     () => _resolved.get(cacheKey) ?? null
   );
 
   useEffect(() => {
-    if (!name) return;
+    if (!safeName) return;
     if (_resolved.has(cacheKey)) return; // Already resolved this session — no fetch needed
 
     let cancelled = false;
@@ -26,7 +29,7 @@ export function useImage(
       fetch('/api/images/resolve', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type, name, artist }),
+        body: JSON.stringify({ type, name: safeName, artist: safeArtist }),
       })
         .then(r => r.json())
         .then(data => {

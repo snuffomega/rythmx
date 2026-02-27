@@ -93,6 +93,7 @@ export function Stats() {
   };
 
   const handleContentTypeChange = (ct: ContentType) => {
+    setData(null);  // Clear stale data in the same batch to avoid type mismatch on next render
     setContentType(ct);
   };
 
