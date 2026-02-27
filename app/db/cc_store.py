@@ -501,13 +501,19 @@ def reset_db():
 def create_playlist_meta(name: str, source: str = "manual", source_url: str = None,
                          auto_sync: bool = False, mode: str = "library_only",
                          max_tracks: int = 50):
-    """Create a playlist metadata entry. No-op if the name already exists."""
+    """Create a playlist metadata entry. Updates source/mode if called with source='cc'."""
     with _connect() as conn:
         conn.execute(
             """INSERT OR IGNORE INTO playlists (name, source, source_url, auto_sync, mode, max_tracks)
                VALUES (?, ?, ?, ?, ?, ?)""",
             (name, source, source_url, 1 if auto_sync else 0, mode, max_tracks)
         )
+        # CC-generated playlists always refresh their source/mode so stale values don't persist
+        if source == "cc":
+            conn.execute(
+                "UPDATE playlists SET source=?, mode=? WHERE name=?",
+                (source, mode, name)
+            )
 
 
 def get_playlist_meta(name: str) -> dict | None:
