@@ -118,6 +118,7 @@ export interface HistoryItem {
   artist: string;
   album: string;
   status: 'owned' | 'queued' | 'skipped';
+  reason?: string;
   date: string;
 }
 

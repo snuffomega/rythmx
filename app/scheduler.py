@@ -376,14 +376,16 @@ def _execute_cycle(run_mode: str = "cruise", force_refresh: bool = False) -> dic
         for r in unowned:
             if (r.artist, r.title) in queued_keys:
                 # Newly queued this run
-                entry_status = "queued"
+                entry_status, entry_reason = "queued", ""
             elif run_mode == "cruise" and cc_store.is_in_queue(r.artist, r.title):
                 # Already pending/submitted in queue from a prior cruise run
-                entry_status = "queued"
+                entry_status, entry_reason = "queued", "already_queued"
             else:
                 entry_status = "skipped"
+                entry_reason = "playlist_mode" if run_mode == "playlist" else ""
             cc_store.add_history_entry(
-                {"artist_name": r.artist, "album_name": r.title}, status=entry_status
+                {"artist_name": r.artist, "album_name": r.title},
+                status=entry_status, reason=entry_reason
             )
 
     queue_stats = cc_store.get_queue_stats()
@@ -515,28 +517,59 @@ def _should_weekly_refresh(settings: dict) -> bool:
     return last_cleared != now.date().isoformat()
 
 
+def _should_run_cc(settings: dict) -> bool:
+    """
+    Return True if it's time to run a CC cycle.
+    If cc_schedule_weekday and cc_schedule_hour are both set (≥ 0), use day/time scheduling.
+    Otherwise falls back to cc_cycle_hours interval.
+    """
+    now = datetime.now()
+    weekday = int(settings.get("cc_schedule_weekday") or -1)
+    hour = int(settings.get("cc_schedule_hour") or -1)
+    last_run_iso = settings.get("cc_last_run")
+
+    if weekday >= 0 and hour >= 0:
+        # Day/time mode: run if it's the right weekday and hour
+        if now.weekday() != weekday or now.hour != hour:
+            return False
+        # Avoid running more than once in the same hour
+        if last_run_iso:
+            last = datetime.fromisoformat(last_run_iso)
+            if last.date() == now.date() and last.hour == now.hour:
+                return False
+        return True
+
+    # Interval mode (default)
+    cycle_hours = int(settings.get("cc_cycle_hours") or config.CC_CYCLE_HOURS)
+    if not last_run_iso:
+        return True
+    last = datetime.fromisoformat(last_run_iso)
+    return (now - last).total_seconds() >= cycle_hours * 3600
+
+
 def _loop():
-    """Background loop — runs a cycle every CC_CYCLE_HOURS hours."""
-    interval_secs = config.CC_CYCLE_HOURS * 3600
+    """Background loop — checks every hour whether a CC cycle should run."""
     while not _stop_event.is_set():
         if config.CC_ENABLED:
             settings = cc_store.get_all_settings()
-            mode = settings.get("cc_run_mode", "cruise")
-            force = _should_weekly_refresh(settings)
-            if force:
-                cc_store.set_setting("release_cache_last_cleared_weekday",
-                                     datetime.utcnow().date().isoformat())
-                logger.info("Weekly release cache refresh triggered (weekday=%s, hour=%s)",
-                            settings.get("release_cache_refresh_weekday", "3"),
-                            settings.get("release_cache_refresh_hour", "5"))
-            run_cycle(run_mode=mode, force_refresh=force)
-        # Run acquisition worker after each CC cycle (or on its own schedule)
+            if _should_run_cc(settings):
+                mode = settings.get("cc_run_mode", "cruise")
+                force = _should_weekly_refresh(settings)
+                if force:
+                    cc_store.set_setting("release_cache_last_cleared_weekday",
+                                         datetime.utcnow().date().isoformat())
+                    logger.info("Weekly release cache refresh triggered (weekday=%s, hour=%s)",
+                                settings.get("release_cache_refresh_weekday", "3"),
+                                settings.get("release_cache_refresh_hour", "5"))
+                run_cycle(run_mode=mode, force_refresh=force)
+                cc_store.set_setting("cc_last_run", datetime.now().isoformat())
+        # Run acquisition worker every loop regardless of whether CC ran
         try:
             from app import acquisition
             acquisition.check_queue()
         except Exception as e:
             logger.warning("Acquisition worker error (non-fatal): %s", e)
-        _stop_event.wait(timeout=interval_secs)
+        _stop_event.wait(timeout=3600)  # Check every hour
 
 
 def start():

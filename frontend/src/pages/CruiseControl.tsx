@@ -1,8 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Zap, Save, ChevronDown, ChevronUp, RotateCcw, CheckCircle, AlertCircle, Loader2, Circle, Sparkles } from 'lucide-react';
 import { useApi } from '../hooks/useApi';
 import { cruiseControlApi, releaseCacheApi } from '../services/api';
-import { StatusBadge } from '../components/StatusBadge';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { RowSkeleton } from '../components/Skeleton';
 import { PersonalDiscovery } from './PersonalDiscovery';
@@ -153,6 +152,19 @@ function LastRunResults({ data }: { data: import('../types').CruiseControlStatus
   );
 }
 
+function HistoryBadge({ status, reason }: { status: string; reason?: string }) {
+  const key = reason ? `${status}:${reason}` : status;
+  const cfg: Record<string, { label: string; cls: string }> = {
+    owned:                   { label: 'Owned',         cls: 'badge-success' },
+    queued:                  { label: 'Queued',        cls: 'badge-accent'  },
+    'queued:already_queued': { label: 'Already queued',cls: 'badge-muted'   },
+    'skipped:playlist_mode': { label: 'Not owned',     cls: 'badge-muted'   },
+    skipped:                 { label: 'Skipped',       cls: 'badge-muted'   },
+  };
+  const c = cfg[key] ?? cfg[status] ?? { label: status, cls: 'badge-muted' };
+  return <span className={c.cls}>{c.label}</span>;
+}
+
 interface CruiseControlProps {
   toast: { success: (m: string) => void; error: (m: string) => void };
 }
@@ -179,6 +191,16 @@ export function CruiseControl({ toast }: CruiseControlProps) {
       return () => clearInterval(interval);
     }
   }, [statusData?.state, refetchStatus]);
+
+  // Toast on run completion
+  const prevStateRef = useRef<string | undefined>();
+  useEffect(() => {
+    if (prevStateRef.current === 'running' && statusData?.state === 'completed') {
+      const s = statusData.summary;
+      toast.success(`Run complete — ${s?.owned ?? 0} owned · ${s?.queued ?? 0} queued`);
+    }
+    prevStateRef.current = statusData?.state;
+  }, [statusData?.state]);
 
   const update = (key: keyof CruiseControlConfig, value: unknown) =>
     setForm(f => ({ ...f, [key]: value }));
@@ -533,7 +555,7 @@ export function CruiseControl({ toast }: CruiseControlProps) {
                   <tr key={i} className="border-b border-[#1a1a1a] hover:bg-[#141414] transition-colors">
                     <td className="px-0 py-3 text-text-primary font-medium">{item.artist}</td>
                     <td className="px-4 py-3 text-text-secondary">{item.album}</td>
-                    <td className="px-4 py-3"><StatusBadge status={item.status} /></td>
+                    <td className="px-4 py-3"><HistoryBadge status={item.status} reason={item.reason} /></td>
                     <td className="px-4 py-3 text-[#444] hidden sm:table-cell">
                       {new Date(item.date).toLocaleDateString()}
                     </td>

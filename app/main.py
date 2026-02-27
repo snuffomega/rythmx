@@ -303,6 +303,7 @@ def create_app() -> Flask:
                 "artist": r.get("artist_name", ""),
                 "album": r.get("album_name", ""),
                 "status": r.get("acquisition_status", "skipped"),
+                "reason": r.get("reason", ""),
                 "date": r.get("cycle_date", ""),
             }
             for r in rows
