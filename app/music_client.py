@@ -310,6 +310,7 @@ def _deezer_get_releases(deezer_id: str, cutoff: datetime,
             kind = album.get("record_type", "album").lower()
             if kind not in allowed_kinds:
                 continue
+            cover = album.get("cover_xl") or album.get("cover_medium") or ""
             releases.append(Release(
                 artist=album.get("artist", {}).get("name", ""),
                 title=title,
@@ -318,6 +319,7 @@ def _deezer_get_releases(deezer_id: str, cutoff: datetime,
                 source="deezer",
                 source_url=album.get("link", ""),
                 deezer_album_id=str(album.get("id", "")),
+                artwork_url=cover,
                 is_upcoming=is_upcoming,
             ))
         if data.get("next"):
