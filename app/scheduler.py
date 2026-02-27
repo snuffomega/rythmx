@@ -13,6 +13,7 @@ Cruise Control pipeline (7 stages):
   6. Queue downloads — SoulSync API (or dry-run)
   7. Save history — cc.db; playlist from owned candidates
 """
+import re
 import threading
 import logging
 from datetime import datetime
@@ -97,7 +98,9 @@ def _execute_cycle(run_mode: str = "cruise", force_refresh: bool = False) -> dic
     auto_push = settings.get("cc_auto_push_playlist", "false") == "true"
     ignore_kw_raw = settings.get("nr_ignore_keywords", "") or config.CC_IGNORE_KEYWORDS
     ignore_keywords = [k.strip() for k in ignore_kw_raw.split(",") if k.strip()]
-    ignore_artists = {a.strip().lower() for a in settings.get("nr_ignore_artists", "").split(",") if a.strip()}
+    # Normalize: lowercase + strip punctuation so "Ballyhoo!" matches "ballyhoo"
+    _strip_punct = lambda s: re.sub(r"[^\w\s]", "", s).strip()
+    ignore_artists = {_strip_punct(a.strip().lower()) for a in settings.get("nr_ignore_artists", "").split(",") if a.strip()}
 
     # -------------------------------------------------------------------------
     # Stage 1 — Last.fm top artists filtered by min_listens
@@ -189,7 +192,7 @@ def _execute_cycle(run_mode: str = "cruise", force_refresh: bool = False) -> dic
     seen = set()
     unique_releases = []
     for r in all_releases:
-        if ignore_artists and r.artist.lower() in ignore_artists:
+        if ignore_artists and _strip_punct(r.artist.lower()) in ignore_artists:
             logger.debug("Ignoring artist: %s", r.artist)
             continue
         if ignore_keywords and any(kw in r.title.lower() for kw in ignore_keywords):
@@ -371,7 +374,14 @@ def _execute_cycle(run_mode: str = "cruise", force_refresh: bool = False) -> dic
                 {"artist_name": r.artist, "album_name": r.title}, status="owned"
             )
         for r in unowned:
-            entry_status = "queued" if (r.artist, r.title) in queued_keys else "skipped"
+            if (r.artist, r.title) in queued_keys:
+                # Newly queued this run
+                entry_status = "queued"
+            elif run_mode == "cruise" and cc_store.is_in_queue(r.artist, r.title):
+                # Already pending/submitted in queue from a prior cruise run
+                entry_status = "queued"
+            else:
+                entry_status = "skipped"
             cc_store.add_history_entry(
                 {"artist_name": r.artist, "album_name": r.title}, status=entry_status
             )

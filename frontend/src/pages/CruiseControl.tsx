@@ -446,7 +446,7 @@ export function CruiseControl({ toast }: CruiseControlProps) {
                     className="input"
                     value={form.nr_ignore_artists ?? ''}
                     onChange={e => update('nr_ignore_artists', e.target.value)}
-                    placeholder="Artist One, Artist Two"
+                    placeholder="dmx, i voted for kodos, funkmaster flex"
                   />
                   <p className="text-[#444] text-xs mt-1">Comma-separated — these artists will be skipped entirely</p>
                 </div>
