@@ -43,8 +43,8 @@ function OwnedBar({ owned, total }: { owned: number; total: number }) {
 function TrackRow({ track }: { track: PlaylistTrack }) {
   return (
     <div className="flex items-center gap-2 py-1.5 border-b border-[#111] last:border-0">
-      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${track.is_owned ? 'bg-accent' : 'bg-[#333]'}`} />
-      <span className="text-text-primary text-xs truncate flex-1">
+      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${track.is_owned ? 'bg-accent' : 'bg-[#2a2a2a]'}`} />
+      <span className={`text-xs truncate flex-1 ${track.is_owned ? 'text-text-primary' : 'text-[#3a3a3a] italic'}`}>
         {track.artist} — {track.name}
       </span>
     </div>
