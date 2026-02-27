@@ -703,12 +703,17 @@ def create_app() -> Flask:
 
     @app.route("/api/settings/test-soulsync", methods=["POST"])
     def settings_test_soulsync():
-        from app.db import get_library_reader
-        lr = get_library_reader()
-        db_available = lr.is_db_accessible()
+        from app.db import soulsync_reader as _ss_reader
+        db_available = _ss_reader.is_db_accessible()
         api_status = soulsync_api.test_connection()
-        ok = db_available or api_status.get("status") == "ok"
-        msg = "DB accessible" if db_available else (api_status.get("message") or "Not accessible")
+        api_ok = api_status.get("status") == "ok"
+        ok = db_available or api_ok
+        if db_available:
+            msg = "DB accessible"
+        elif api_ok:
+            msg = "API reachable (DB not mounted)"
+        else:
+            msg = api_status.get("message") or "Not accessible"
         return jsonify({"connected": ok, "message": msg})
 
     @app.route("/api/settings/test-spotify", methods=["POST"])
