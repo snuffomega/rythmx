@@ -163,6 +163,7 @@ export function SettingsPage({ toast }: SettingsPageProps) {
             onTest={settingsApi.testPlex}
           />
           <ServiceCard
+            key={`soulsync-${backend}`}
             name="SoulSync"
             icon={<Database size={16} className="text-accent" />}
             onTest={settingsApi.testSoulsync}
@@ -201,31 +202,9 @@ export function SettingsPage({ toast }: SettingsPageProps) {
             </div>
           </div>
 
-          {libraryLoading ? (
-            <div className="space-y-2">
-              <div className="h-4 animate-pulse bg-[#141414] rounded-sm w-32" />
-              <div className="h-3 animate-pulse bg-[#141414] rounded-sm w-24" />
-            </div>
-          ) : libraryStatus ? (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-sm py-1.5 border-b border-[#1a1a1a]">
-                <span className="text-[#444]">Backend</span>
-                <span className="text-text-primary font-medium capitalize">{libraryStatus.backend}</span>
-              </div>
-              {libraryStatus.track_count !== undefined && (
-                <div className="flex items-center justify-between text-sm py-1.5 border-b border-[#1a1a1a]">
-                  <span className="text-[#444]">Track Count</span>
-                  <span className="text-text-primary font-medium">{libraryStatus.track_count.toLocaleString()}</span>
-                </div>
-              )}
-              {libraryStatus.last_synced && (
-                <div className="flex items-center justify-between text-sm py-1.5 border-b border-[#1a1a1a]">
-                  <span className="text-[#444]">Last Synced</span>
-                  <span className="text-text-primary font-medium">{new Date(libraryStatus.last_synced).toLocaleString()}</span>
-                </div>
-              )}
-            </div>
-          ) : null}
+          {libraryStatus?.track_count !== undefined && (
+            <p className="text-[#444] text-xs mt-1">{libraryStatus.track_count.toLocaleString()} tracks indexed</p>
+          )}
 
           <button
             onClick={handleSync}
