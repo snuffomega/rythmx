@@ -124,8 +124,32 @@ def create_app() -> Flask:
 
     @app.route("/api/cruise-control/config", methods=["GET"])
     def cc_config_get():
-        settings = cc_store.get_all_settings()
-        return jsonify({"status": "ok", "config": settings})
+        raw = cc_store.get_all_settings()
+        # Coerce stored strings to correct types for the React UI
+        bool_keys = {"cc_enabled", "cc_auto_push_playlist", "cc_dry_run"}
+        int_keys = {
+            "cc_min_listens", "cc_lookback_days", "cc_max_per_cycle", "cc_cycle_hours",
+            "cc_schedule_weekday", "cc_schedule_hour",
+            "release_cache_refresh_weekday", "release_cache_refresh_hour",
+        }
+        config_keys = bool_keys | int_keys | {
+            "cc_run_mode", "cc_playlist_prefix", "cc_period",
+            "nr_ignore_keywords", "nr_ignore_artists",
+        }
+        coerced = {}
+        for k, v in raw.items():
+            if k not in config_keys or v is None:
+                continue
+            if k in bool_keys:
+                coerced[k] = str(v).lower() == "true"
+            elif k in int_keys:
+                try:
+                    coerced[k] = int(v)
+                except (ValueError, TypeError):
+                    pass
+            else:
+                coerced[k] = v
+        return jsonify({"status": "ok", "config": coerced})
 
     @app.route("/api/cruise-control/config", methods=["POST"])
     def cc_config_save():
@@ -134,6 +158,8 @@ def create_app() -> Flask:
             "cc_enabled", "cc_max_per_cycle", "cc_cycle_hours",
             "cc_min_listens", "cc_period", "cc_lookback_days",
             "cc_auto_push_playlist", "cc_run_mode", "cc_playlist_prefix",
+            "cc_schedule_weekday", "cc_schedule_hour",
+            "cc_dry_run", "nr_ignore_keywords", "nr_ignore_artists",
             "release_cache_refresh_weekday", "release_cache_refresh_hour",
         }
         for key, value in data.items():
@@ -174,7 +200,21 @@ def create_app() -> Flask:
     def acquisition_queue_get():
         status = request.args.get("status")
         playlist = request.args.get("playlist")
-        items = cc_store.get_queue(status=status, playlist_name=playlist)
+        rows = cc_store.get_queue(status=status, playlist_name=playlist)
+        # Remap DB column names to match QueueItem type in the UI
+        items = [
+            {
+                "id": r.get("id"),
+                "artist": r.get("artist_name", ""),
+                "album": r.get("album_title", ""),
+                "kind": r.get("kind", "album"),
+                "status": r.get("status", "pending"),
+                "requested_by": r.get("requested_by"),
+                "requested_at": r.get("created_at"),
+                "release_date": r.get("release_date"),
+            }
+            for r in rows
+        ]
         return jsonify({"status": "ok", "items": items})
 
     @app.route("/api/acquisition/queue", methods=["POST"])
@@ -213,7 +253,17 @@ def create_app() -> Flask:
     @app.route("/api/cruise-control/history")
     def cc_history():
         limit = min(int(request.args.get("limit", 100)), 500)
-        history = cc_store.get_history(limit=limit)
+        rows = cc_store.get_history(limit=limit)
+        # Remap DB column names to match HistoryItem type in the UI
+        history = [
+            {
+                "artist": r.get("artist_name", ""),
+                "album": r.get("album_name", ""),
+                "status": r.get("acquisition_status", "skipped"),
+                "date": r.get("cycle_date", ""),
+            }
+            for r in rows
+        ]
         return jsonify({"status": "ok", "history": history})
 
     # -------------------------------------------------------------------------
@@ -367,6 +417,23 @@ def create_app() -> Flask:
         tracks = cc_store.get_playlist(playlist_name=name)
         return jsonify({"status": "ok", "tracks": tracks})
 
+    @app.route("/api/playlists/<path:name>", methods=["PATCH"])
+    def playlists_update(name):
+        """Update playlist metadata (auto_sync, mode, max_tracks, source_url)."""
+        data = request.get_json(silent=True) or {}
+        auto_sync = data.get("auto_sync")
+        mode = data.get("mode")
+        max_tracks = data.get("max_tracks")
+        source_url = data.get("source_url")
+        cc_store.update_playlist_meta(
+            name,
+            auto_sync=bool(auto_sync) if auto_sync is not None else None,
+            mode=mode,
+            max_tracks=int(max_tracks) if max_tracks is not None else None,
+            source_url=source_url,
+        )
+        return jsonify({"status": "ok"})
+
     @app.route("/api/playlists/<path:name>/build", methods=["POST"])
     def playlists_build(name):
         meta = cc_store.get_playlist_meta(name)
@@ -381,8 +448,59 @@ def create_app() -> Flask:
             logger.error("Playlist build failed for '%s': %s", name, e)
             return jsonify({"status": "error", "message": str(e)}), 500
 
+    @app.route("/api/playlists/<path:name>/rebuild", methods=["POST"])
+    def playlists_rebuild(name):
+        """Alias for /build — rebuild a taste-based playlist."""
+        meta = cc_store.get_playlist_meta(name)
+        if not meta:
+            cc_store.create_playlist_meta(name, source="taste")
+        try:
+            tracks = _build_taste_playlist_tracks(name)
+            return jsonify({"status": "ok", "track_count": len(tracks),
+                            "owned_count": sum(1 for t in tracks if t.get("plex_rating_key"))})
+        except Exception as e:
+            logger.error("Playlist rebuild failed for '%s': %s", name, e)
+            return jsonify({"status": "error", "message": str(e)}), 500
+
     @app.route("/api/playlists/<path:name>/import", methods=["POST"])
     def playlists_import(name):
+        meta = cc_store.get_playlist_meta(name) or {}
+        source = meta.get("source", "spotify")
+        source_url = meta.get("source_url")
+        if not source_url:
+            req_data = request.get_json(silent=True) or {}
+            source_url = req_data.get("source_url")
+        if not source_url:
+            return jsonify({"status": "error", "message": "No source_url for this playlist"}), 400
+        from app import playlist_importer
+        if source == "lastfm":
+            result = playlist_importer.import_from_lastfm(source_url)
+        elif source == "deezer":
+            result = playlist_importer.import_from_deezer(source_url)
+        else:
+            result = playlist_importer.import_from_spotify(source_url)
+        if result["status"] != "ok":
+            return jsonify(result), 400
+        to_save = [
+            {
+                "plex_rating_key": t["plex_rating_key"],
+                "spotify_track_id": t.get("spotify_track_id", ""),
+                "track_name": t["track_name"],
+                "artist_name": t["artist_name"],
+                "album_name": t["album_name"],
+                "album_cover_url": "",
+                "score": None,
+            }
+            for t in result["tracks"]
+        ]
+        cc_store.save_playlist(to_save, playlist_name=name)
+        cc_store.mark_playlist_synced(name)
+        return jsonify({"status": "ok", "track_count": result["track_count"],
+                        "owned_count": result["owned_count"]})
+
+    @app.route("/api/playlists/<path:name>/sync", methods=["POST"])
+    def playlists_sync(name):
+        """Alias for /import — re-import playlist from external source."""
         meta = cc_store.get_playlist_meta(name) or {}
         source = meta.get("source", "spotify")
         source_url = meta.get("source_url")
@@ -466,15 +584,24 @@ def create_app() -> Flask:
         period = request.args.get("period", "6month")
         limit = min(int(request.args.get("limit", 50)), 200)
         artists = last_fm_client.get_top_artists(period=period, limit=limit)
-        ranked = [{"artist": k, "playcount": v} for k, v in
+        # Use 'name' key to match Artist type in the UI
+        ranked = [{"name": k, "playcount": v} for k, v in
                   sorted(artists.items(), key=lambda x: x[1], reverse=True)]
         return jsonify({"status": "ok", "artists": ranked, "period": period})
 
     @app.route("/api/stats/top-tracks")
     def stats_top_tracks():
         period = request.args.get("period", "6month")
-        tracks = last_fm_client.get_top_tracks(period=period)
+        limit = min(int(request.args.get("limit", 50)), 200)
+        tracks = last_fm_client.get_top_tracks(period=period, limit=limit)
         return jsonify({"status": "ok", "tracks": tracks, "period": period})
+
+    @app.route("/api/stats/top-albums")
+    def stats_top_albums():
+        period = request.args.get("period", "6month")
+        limit = min(int(request.args.get("limit", 50)), 200)
+        albums = last_fm_client.get_top_albums(period=period, limit=limit)
+        return jsonify({"status": "ok", "albums": albums, "period": period})
 
     @app.route("/api/stats/summary")
     def stats_summary():
@@ -509,29 +636,31 @@ def create_app() -> Flask:
 
     @app.route("/api/settings/test-lastfm", methods=["POST"])
     def settings_test_lastfm():
-        return jsonify(last_fm_client.test_connection())
+        result = last_fm_client.test_connection()
+        ok = result.get("status") == "ok"
+        msg = result.get("username") if ok else result.get("message", "Connection failed")
+        return jsonify({"connected": ok, "message": msg})
 
     @app.route("/api/settings/test-plex", methods=["POST"])
     def settings_test_plex():
-        return jsonify(plex_push.test_connection())
+        result = plex_push.test_connection()
+        ok = result.get("status") == "ok"
+        return jsonify({"connected": ok, "message": result.get("message") if not ok else None})
 
     @app.route("/api/settings/test-soulsync", methods=["POST"])
     def settings_test_soulsync():
         from app.db import get_library_reader
         lr = get_library_reader()
         db_available = lr.is_db_accessible()
-        api_status   = soulsync_api.test_connection()
-        ok = db_available or api_status["status"] == "ok"
-        return jsonify({
-            "status":     "ok" if ok else "error",
-            "db_available": db_available,
-            "api_status": api_status,
-        })
+        api_status = soulsync_api.test_connection()
+        ok = db_available or api_status.get("status") == "ok"
+        msg = "DB accessible" if db_available else (api_status.get("message") or "Not accessible")
+        return jsonify({"connected": ok, "message": msg})
 
     @app.route("/api/settings/test-spotify", methods=["POST"])
     def settings_test_spotify():
         if not config.SPOTIFY_CLIENT_ID or not config.SPOTIFY_CLIENT_SECRET:
-            return jsonify({"status": "error", "message": "SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET not set"})
+            return jsonify({"connected": False, "message": "SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET not set"})
         try:
             import spotipy
             from spotipy.oauth2 import SpotifyClientCredentials
@@ -540,9 +669,9 @@ def create_app() -> Flask:
                 client_secret=config.SPOTIFY_CLIENT_SECRET,
             ))
             sp.search(q="test", type="artist", limit=1)
-            return jsonify({"status": "ok"})
+            return jsonify({"connected": True})
         except Exception as e:
-            return jsonify({"status": "error", "message": str(e)})
+            return jsonify({"connected": False, "message": str(e)})
 
     # -------------------------------------------------------------------------
     # Library backend
@@ -605,7 +734,27 @@ def create_app() -> Flask:
     @app.route("/api/stats/loved-artists")
     def stats_loved_artists():
         loved = last_fm_client.get_loved_artist_names()
-        return jsonify({"status": "ok", "count": len(loved)})
+        # Return Artist[] so the Discovery page can render artist tiles
+        artists = [{"name": name} for name in sorted(loved)]
+        return jsonify({"status": "ok", "artists": artists})
+
+    # -------------------------------------------------------------------------
+    # Personal Discovery (stub — engine not yet implemented)
+    # -------------------------------------------------------------------------
+
+    @app.route("/api/personal-discovery/run", methods=["POST"])
+    def personal_discovery_run():
+        """Stub endpoint — Personal Discovery engine not yet implemented."""
+        return jsonify([])
+
+    # -------------------------------------------------------------------------
+    # SPA catch-all — React Router client-side navigation
+    # -------------------------------------------------------------------------
+
+    @app.route("/<path:path>")
+    def spa_catch_all(path):
+        """Serve index.html for all non-API routes so React Router handles navigation."""
+        return send_from_directory(app.static_folder, "index.html")
 
     # -------------------------------------------------------------------------
     # Startup

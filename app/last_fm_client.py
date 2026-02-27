@@ -99,6 +99,34 @@ def get_top_tracks(period: str = "6month", limit: int = 200) -> list[dict]:
     return tracks
 
 
+def get_top_albums(period: str = "6month", limit: int = 200) -> list[dict]:
+    """
+    Returns a list of top albums: [{artist, title, playcount}, ...]
+    period: one of overall / 12month / 6month / 3month / 1month / 7day
+    """
+    if period not in VALID_PERIODS:
+        period = "6month"
+
+    data = _get("user.getTopAlbums", {
+        "user": config.LASTFM_USERNAME,
+        "period": period,
+        "limit": limit,
+    })
+    if not data:
+        return []
+
+    albums = []
+    for a in data.get("topalbums", {}).get("album", []):
+        albums.append({
+            "artist": a.get("artist", {}).get("name", ""),
+            "title": a.get("name", ""),
+            "playcount": int(a.get("playcount", 0)),
+        })
+
+    logger.debug("Last.fm top albums fetched: %d (period=%s)", len(albums), period)
+    return albums
+
+
 def get_loved_tracks(limit: int = 500) -> list[dict]:
     """
     Returns a list of loved tracks: [{name, artist}, ...]
