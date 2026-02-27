@@ -5,6 +5,13 @@ import { settingsApi, libraryApi } from '../services/api';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import type { LibraryBackend } from '../types';
 
+const BACKEND_LABELS: Record<string, string> = {
+  soulsync: 'SoulSync',
+  plex: 'Plex Library',
+  jellyfin: 'Jellyfin',
+  navidrome: 'Navidrome',
+};
+
 interface ServiceRowProps {
   name: string;
   icon: React.ReactNode;
@@ -102,8 +109,7 @@ export function SettingsPage({ toast }: SettingsPageProps) {
     setSwitchingBackend(true);
     try {
       await settingsApi.setLibraryBackend(b);
-      const labels: Record<LibraryBackend, string> = { soulsync: 'SoulSync', plex: 'Plex', jellyfin: 'Jellyfin', navidrome: 'Navidrome' };
-      toast.success(`Switched to ${labels[b]}`);
+      toast.success(`Switched to ${BACKEND_LABELS[b] ?? b}`);
       refetchLibrary();
     } catch {
       toast.error('Failed to switch backend');
@@ -163,8 +169,8 @@ export function SettingsPage({ toast }: SettingsPageProps) {
             onTest={settingsApi.testPlex}
           />
           <ServiceCard
-            key={`soulsync-${backend}`}
-            name="SoulSync"
+            key={`library-${backend}`}
+            name={BACKEND_LABELS[backend] ?? 'Library DB'}
             icon={<Database size={16} className="text-accent" />}
             onTest={settingsApi.testSoulsync}
           />

@@ -703,6 +703,24 @@ def create_app() -> Flask:
 
     @app.route("/api/settings/test-soulsync", methods=["POST"])
     def settings_test_soulsync():
+        active_backend = cc_store.get_setting("library_backend") or "soulsync"
+
+        if active_backend == "navidrome":
+            return jsonify({"connected": False, "message": "Navidrome not yet implemented"})
+        if active_backend == "jellyfin":
+            return jsonify({"connected": False, "message": "Jellyfin not yet implemented"})
+        if active_backend == "plex":
+            import os as _os, sqlite3 as _sq
+            db_path = config.LIBRARY_DB
+            if not _os.path.exists(db_path):
+                return jsonify({"connected": False, "message": "Library DB not synced yet — click Sync Library"})
+            try:
+                with _sq.connect(db_path) as _c:
+                    count = _c.execute("SELECT COUNT(*) FROM tracks").fetchone()[0]
+                return jsonify({"connected": True, "message": f"{count:,} tracks indexed"})
+            except Exception as e:
+                return jsonify({"connected": False, "message": str(e)})
+        # soulsync (default)
         from app.db import soulsync_reader as _ss_reader
         db_available = _ss_reader.is_db_accessible()
         api_status = soulsync_api.test_connection()

@@ -27,6 +27,11 @@ const SOURCE_COLORS: Record<PlaylistSource, string> = {
   cc: 'text-accent',
 };
 
+const MODE_LABELS: Record<string, string> = {
+  cc_new_music: 'New Music',
+  personal_discovery: 'Personal Discovery',
+};
+
 function OwnedBar({ owned, total }: { owned: number; total: number }) {
   const pct = total > 0 ? Math.round((owned / total) * 100) : 0;
   const color = pct > 20 ? 'bg-accent' : 'bg-danger';
@@ -98,6 +103,11 @@ function PlaylistCard({
               {source !== 'empty' && (
                 <span className={`text-[10px] font-medium border border-current/30 px-1.5 py-0.5 ${SOURCE_COLORS[source as PlaylistSource] ?? 'text-text-muted'}`}>
                   {SOURCE_LABELS[source as PlaylistSource] ?? source}
+                </span>
+              )}
+              {source === 'cc' && playlist.mode && MODE_LABELS[playlist.mode] && (
+                <span className="text-[10px] font-medium border border-current/30 px-1.5 py-0.5 text-text-muted">
+                  {MODE_LABELS[playlist.mode]}
                 </span>
               )}
               {playlist.auto_sync && (
