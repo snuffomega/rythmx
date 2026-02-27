@@ -236,6 +236,14 @@ def _execute_cycle(run_mode: str = "cruise", force_refresh: bool = False) -> dic
 
     logger.info("Stage 4: %d owned, %d unowned", owned_count, len(unowned))
 
+    # Seed image cache with artwork iTunes already returned during release discovery.
+    # This means Discovery new-releases shelf shows art instantly on next page load
+    # instead of triggering a second iTunes lookup per album.
+    for r in owned_releases + unowned:
+        if r.artwork_url:
+            _img_key = f"{r.artist.lower()}|||{r.title.lower()}"
+            cc_store.set_image_cache("album", _img_key, r.artwork_url)
+
     # Compute playlist name now so both Stage 6 and Stage 7 share the same value.
     playlist_prefix = settings.get("cc_playlist_prefix", "New Music")
     playlist_name_date = (f"{playlist_prefix}_{_date.today().isoformat()}"
