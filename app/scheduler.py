@@ -93,7 +93,7 @@ def _execute_cycle(run_mode: str = "cruise", force_refresh: bool = False) -> dic
     min_listens = int(settings.get("cc_min_listens", config.CC_MIN_LISTENS))
     lookback_days = int(settings.get("cc_lookback_days", config.CC_LOOKBACK_DAYS))
     max_per_cycle = int(settings.get("cc_max_per_cycle", config.CC_MAX_PER_CYCLE))
-    period = settings.get("cc_period", "6month")
+    period = settings.get("cc_period", "1month")
     auto_push = settings.get("cc_auto_push_playlist", "false") == "true"
     ignore_keywords = [k.strip() for k in config.CC_IGNORE_KEYWORDS.split(",") if k.strip()]
 

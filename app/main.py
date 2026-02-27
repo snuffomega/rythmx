@@ -149,7 +149,27 @@ def create_app() -> Flask:
                     pass
             else:
                 coerced[k] = v
-        return jsonify({"status": "ok", "config": coerced})
+        # Return defaults for any keys not yet saved so the form is fully populated
+        # on first load and values persist correctly on the first Save.
+        defaults = {
+            "cc_enabled": False,
+            "cc_run_mode": "playlist",
+            "cc_period": "1month",
+            "cc_min_listens": config.CC_MIN_LISTENS,
+            "cc_lookback_days": config.CC_LOOKBACK_DAYS,
+            "cc_max_per_cycle": config.CC_MAX_PER_CYCLE,
+            "cc_cycle_hours": 168,
+            "cc_auto_push_playlist": False,
+            "cc_playlist_prefix": "New Music",
+            "cc_schedule_weekday": 1,
+            "cc_schedule_hour": 8,
+            "cc_dry_run": False,
+            "nr_ignore_keywords": "",
+            "nr_ignore_artists": "",
+            "release_cache_refresh_weekday": 4,
+            "release_cache_refresh_hour": 6,
+        }
+        return jsonify({"status": "ok", "config": {**defaults, **coerced}})
 
     @app.route("/api/cruise-control/config", methods=["POST"])
     def cc_config_save():
