@@ -354,7 +354,7 @@ export function CruiseControl({ toast }: CruiseControlProps) {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
                 <div>
                   <label className="label">Scrobbling Period</label>
                   <select className="select" value={form.cc_period ?? '1month'} onChange={e => update('cc_period', e.target.value)}>
@@ -389,6 +389,17 @@ export function CruiseControl({ toast }: CruiseControlProps) {
                     value={form.cc_max_per_cycle ?? ''}
                     onChange={e => update('cc_max_per_cycle', Number(e.target.value))}
                     min={1}
+                  />
+                </div>
+                <div>
+                  <label className="label">Max Playlist Tracks</label>
+                  <input
+                    type="number"
+                    className="input"
+                    value={form.cc_max_playlist_tracks ?? ''}
+                    onChange={e => update('cc_max_playlist_tracks', Number(e.target.value))}
+                    min={10}
+                    max={500}
                   />
                 </div>
               </div>

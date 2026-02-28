@@ -73,12 +73,14 @@ export interface PlaylistItem {
 }
 
 export interface PlaylistTrack {
+  row_id?: number;
   name: string;
   artist: string;
   album?: string;
   image?: string;
   is_owned: boolean;
   score?: number;
+  acquisition_status?: AcquisitionStatus | null;
 }
 
 export interface CruiseControlStatus {
@@ -103,6 +105,7 @@ export interface CruiseControlConfig {
   cc_period: Period;
   cc_lookback_days: number;
   cc_max_per_cycle: number;
+  cc_max_playlist_tracks: number;
   cc_auto_push_playlist: boolean;
   cc_schedule_weekday: number;
   cc_schedule_hour: number;

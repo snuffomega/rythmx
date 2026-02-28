@@ -102,6 +102,15 @@ export const playlistsApi = {
       method: 'PATCH',
       body: JSON.stringify(data),
     }),
+  rename: (name: string, newName: string) =>
+    request<{ status: string; name: string }>(`/playlists/${encodeURIComponent(name)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ new_name: newName }),
+    }),
+  removeTrack: (playlistName: string, rowId: number) =>
+    request<{ status: string }>(`/playlists/${encodeURIComponent(playlistName)}/tracks/${rowId}`, {
+      method: 'DELETE',
+    }),
   delete: (name: string) =>
     request<{ status: string }>(`/playlists/${encodeURIComponent(name)}`, {
       method: 'DELETE',

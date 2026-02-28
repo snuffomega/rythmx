@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { Plus, RefreshCw, Loader2, Trash2, ChevronDown, ChevronUp, Upload, Download, X, ListMusic, Clock } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Plus, RefreshCw, Loader2, Trash2, ChevronDown, ChevronUp, Upload, Download, X, ListMusic, Clock, CheckCircle, Minus, Pencil } from 'lucide-react';
 import { useApi } from '../hooks/useApi';
 import { playlistsApi } from '../services/api';
 import { ConfirmDialog } from '../components/ConfirmDialog';
@@ -47,14 +47,49 @@ function OwnedBar({ owned, total }: { owned: number; total: number }) {
   );
 }
 
-function TrackRow({ track }: { track: PlaylistTrack }) {
+function AcqIcon({ status }: { status?: string | null }) {
+  if (status === 'submitted') return <Loader2 size={10} className="text-accent animate-spin flex-shrink-0" aria-label="Downloading" />;
+  if (status === 'found')     return <CheckCircle size={10} className="text-success flex-shrink-0" aria-label="Found" />;
+  if (status === 'failed')    return <X size={10} className="text-danger flex-shrink-0" aria-label="Failed" />;
+  if (status === 'skipped')   return <Minus size={10} className="text-text-muted flex-shrink-0" aria-label="Skipped" />;
+  if (status === 'pending')   return <Clock size={10} className="text-text-muted flex-shrink-0" aria-label="Queued" />;
+  // unowned, not in queue yet
+  return <Clock size={10} className="text-[#2a2a2a] flex-shrink-0" aria-label="Not queued" />;
+}
+
+function TrackRow({ track, playlistName, onRemoved }: {
+  track: PlaylistTrack;
+  playlistName: string;
+  onRemoved: () => void;
+}) {
+  const [removing, setRemoving] = useState(false);
+
+  const handleRemove = async () => {
+    if (track.row_id == null) return;
+    setRemoving(true);
+    try {
+      await playlistsApi.removeTrack(playlistName, track.row_id);
+      onRemoved();
+    } catch {
+      setRemoving(false);
+    }
+  };
+
   return (
-    <div className="flex items-center gap-2 py-1.5 border-b border-[#111] last:border-0">
+    <div className="group flex items-center gap-2 py-1.5 border-b border-[#111] last:border-0">
       <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${track.is_owned ? 'bg-accent' : 'bg-[#2a2a2a]'}`} />
       <span className={`text-xs truncate flex-1 ${track.is_owned ? 'text-text-primary' : 'text-[#3a3a3a] italic'}`}>
         {track.artist} — {track.name}
       </span>
-      {!track.is_owned && <Clock size={10} className="text-[#2a2a2a] flex-shrink-0" aria-label="Pending acquisition" />}
+      {!track.is_owned && <AcqIcon status={track.acquisition_status} />}
+      <button
+        onClick={handleRemove}
+        disabled={removing}
+        className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 text-[#333] hover:text-danger flex-shrink-0"
+        aria-label="Remove track"
+      >
+        {removing ? <Loader2 size={10} className="animate-spin" /> : <X size={10} />}
+      </button>
     </div>
   );
 }
@@ -63,15 +98,22 @@ function PlaylistCard({
   playlist,
   onAction,
   onDelete,
+  onRename,
+  onRefresh,
 }: {
   playlist: PlaylistItem;
   onAction: (name: string, action: 'rebuild' | 'sync' | 'push' | 'export') => Promise<void>;
   onDelete: (name: string) => void;
+  onRename: (name: string, newName: string) => Promise<void>;
+  onRefresh: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [tracks, setTracks] = useState<PlaylistTrack[] | null>(null);
   const [tracksLoading, setTracksLoading] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [renameVal, setRenameVal] = useState('');
+  const renameInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!expanded || tracks !== null) return;
@@ -82,9 +124,30 @@ function PlaylistCard({
       .finally(() => setTracksLoading(false));
   }, [expanded, playlist.name, tracks]);
 
+  useEffect(() => {
+    if (renaming) renameInputRef.current?.focus();
+  }, [renaming]);
+
   const handle = async (action: 'rebuild' | 'sync' | 'push' | 'export') => {
     setBusy(action);
     await onAction(playlist.name, action).finally(() => setBusy(null));
+  };
+
+  const startRename = () => {
+    setRenameVal(playlist.name);
+    setRenaming(true);
+  };
+
+  const submitRename = async () => {
+    const trimmed = renameVal.trim();
+    setRenaming(false);
+    if (!trimmed || trimmed === playlist.name) return;
+    await onRename(playlist.name, trimmed);
+  };
+
+  const handleTrackRemoved = () => {
+    setTracks(null); // force track list reload
+    onRefresh();     // update track_count / owned_count in header
   };
 
   const owned = playlist.owned_count ?? 0;
@@ -99,7 +162,25 @@ function PlaylistCard({
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 flex-wrap mb-1">
-              <p className="text-text-primary font-semibold text-sm">{playlist.name}</p>
+              {renaming ? (
+                <input
+                  ref={renameInputRef}
+                  className="text-text-primary font-semibold text-sm bg-transparent border-b border-accent outline-none w-40"
+                  value={renameVal}
+                  onChange={e => setRenameVal(e.target.value)}
+                  onBlur={submitRename}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.currentTarget.blur(); } else if (e.key === 'Escape') { setRenaming(false); } }}
+                />
+              ) : (
+                <button
+                  onClick={startRename}
+                  className="group/name flex items-center gap-1.5 text-left"
+                  aria-label="Rename playlist"
+                >
+                  <p className="text-text-primary font-semibold text-sm">{playlist.name}</p>
+                  <Pencil size={10} className="text-[#2a2a2a] group-hover/name:text-text-muted transition-colors flex-shrink-0" />
+                </button>
+              )}
               {source !== 'empty' && (
                 <span className={`text-[10px] font-medium border border-current/30 px-1.5 py-0.5 ${SOURCE_COLORS[source as PlaylistSource] ?? 'text-text-muted'}`}>
                   {SOURCE_LABELS[source as PlaylistSource] ?? source}
@@ -148,7 +229,9 @@ function PlaylistCard({
                 ))}
               </div>
             ) : tracks && tracks.length > 0 ? (
-              (tracks as PlaylistTrack[]).map((t, i) => <TrackRow key={i} track={t} />)
+              (tracks as PlaylistTrack[]).map((t, i) => (
+                <TrackRow key={t.row_id ?? i} track={t} playlistName={playlist.name} onRemoved={handleTrackRemoved} />
+              ))
             ) : (
               <p className="text-[#333] text-xs py-2">No tracks</p>
             )}
@@ -366,6 +449,16 @@ export function Playlists({ toast }: PlaylistsProps) {
     setConfirmDelete(null);
   };
 
+  const handleRename = async (name: string, newName: string) => {
+    try {
+      await playlistsApi.rename(name, newName);
+      toast.success(`Renamed to "${newName}"`);
+      refetch();
+    } catch {
+      toast.error('Failed to rename playlist');
+    }
+  };
+
   return (
     <div className="py-8 space-y-6">
       <div>
@@ -407,6 +500,8 @@ export function Playlists({ toast }: PlaylistsProps) {
               playlist={p}
               onAction={handleAction}
               onDelete={name => setConfirmDelete(name)}
+              onRename={handleRename}
+              onRefresh={refetch}
             />
           ))}
         </div>
