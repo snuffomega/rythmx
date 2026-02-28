@@ -463,9 +463,9 @@ def create_app() -> Flask:
             {
                 "row_id":             r["id"],
                 "track_id":           r.get("track_id"),
-                "track_name":         r.get("track_name", ""),
-                "artist_name":        r.get("artist_name", ""),
-                "album_name":         r.get("album_name", ""),
+                "name":               r.get("track_name", ""),
+                "artist":             r.get("artist_name", ""),
+                "album":              r.get("album_name", ""),
                 "image":              r.get("album_cover_url"),
                 "is_owned":           bool(r.get("is_owned", 0)),
                 "score":              r.get("score"),
