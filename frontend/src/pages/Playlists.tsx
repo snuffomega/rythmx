@@ -178,7 +178,7 @@ function PlaylistCard({
                   aria-label="Rename playlist"
                 >
                   <p className="text-text-primary font-semibold text-sm">{playlist.name}</p>
-                  <Pencil size={10} className="text-[#2a2a2a] group-hover/name:text-text-muted transition-colors flex-shrink-0" />
+                  <Pencil size={10} className="text-accent flex-shrink-0" />
                 </button>
               )}
               {source !== 'empty' && (
