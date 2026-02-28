@@ -77,19 +77,24 @@ function TrackRow({ track, playlistName, onRemoved }: {
 
   return (
     <div className="group flex items-center gap-2 py-1.5 border-b border-[#111] last:border-0">
-      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${track.is_owned ? 'bg-accent' : 'bg-[#2a2a2a]'}`} />
+      <button
+        onClick={handleRemove}
+        disabled={removing}
+        className="flex-shrink-0 w-3 h-3 flex items-center justify-center"
+        aria-label="Remove track"
+      >
+        {removing && <Loader2 size={10} className="animate-spin text-text-muted" />}
+        {!removing && (
+          <span className="w-3 h-3 flex items-center justify-center">
+            <span className={`group-hover:hidden w-1.5 h-1.5 rounded-full ${track.is_owned ? 'bg-accent' : 'bg-[#2a2a2a]'}`} />
+            <X size={12} className="hidden group-hover:block text-[#555] hover:text-danger" />
+          </span>
+        )}
+      </button>
       <span className={`text-xs truncate flex-1 ${track.is_owned ? 'text-text-primary' : 'text-[#3a3a3a] italic'}`}>
         {track.artist} — {track.name}
       </span>
       {!track.is_owned && <AcqIcon status={track.acquisition_status} />}
-      <button
-        onClick={handleRemove}
-        disabled={removing}
-        className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 text-[#333] hover:text-danger flex-shrink-0"
-        aria-label="Remove track"
-      >
-        {removing ? <Loader2 size={10} className="animate-spin" /> : <X size={10} />}
-      </button>
     </div>
   );
 }
