@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { Music2, RefreshCw, Loader2, Plus } from 'lucide-react';
+import { Music2, RefreshCw } from 'lucide-react';
 import { useApi } from '../hooks/useApi';
 import { acquisitionApi } from '../services/api';
 import { StatusBadge } from '../components/StatusBadge';
+import { Spinner, EmptyState } from '../components/common';
 import type { QueueItem, AcquisitionStatus } from '../types';
 
 interface ActivityPageProps {
@@ -49,7 +50,7 @@ export function ActivityPage({ toast }: ActivityPageProps) {
           disabled={checking}
           className="btn-secondary flex items-center gap-2 text-sm"
         >
-          {checking ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+          {checking ? <Spinner size={14} /> : <RefreshCw size={14} />}
           Check Now
         </button>
       </div>
@@ -101,13 +102,11 @@ export function ActivityPage({ toast }: ActivityPageProps) {
           ))}
         </div>
       ) : !queue || queue.length === 0 ? (
-        <div className="text-center py-16">
-          <Music2 size={32} className="text-[#222] mx-auto mb-3" />
-          <p className="text-[#444] text-sm">No items in queue</p>
-          <p className="text-[#333] text-xs mt-1">
-            {filter === 'all' ? 'Run Cruise Control to populate the queue' : `No ${filter} items`}
-          </p>
-        </div>
+        <EmptyState
+          icon={<Music2 size={32} />}
+          message="No items in queue"
+          sub={filter === 'all' ? 'Run Cruise Control to populate the queue' : `No ${filter} items`}
+        />
       ) : (
         <div className="space-y-0">
           {queue.map((item: QueueItem) => (
