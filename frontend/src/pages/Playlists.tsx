@@ -104,13 +104,11 @@ function PlaylistCard({
   onAction,
   onDelete,
   onRename,
-  onRefresh,
 }: {
   playlist: PlaylistItem;
   onAction: (name: string, action: 'rebuild' | 'sync' | 'push' | 'export') => Promise<void>;
   onDelete: (name: string) => void;
   onRename: (name: string, newName: string) => Promise<void>;
-  onRefresh: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -151,8 +149,7 @@ function PlaylistCard({
   };
 
   const handleTrackRemoved = () => {
-    setTracks(null); // force track list reload
-    onRefresh();     // update track_count / owned_count in header
+    setTracks(null); // force track list reload (count in header stays until next full refresh)
   };
 
   const owned = playlist.owned_count ?? 0;
@@ -506,7 +503,6 @@ export function Playlists({ toast }: PlaylistsProps) {
               onAction={handleAction}
               onDelete={name => setConfirmDelete(name)}
               onRename={handleRename}
-              onRefresh={refetch}
             />
           ))}
         </div>
