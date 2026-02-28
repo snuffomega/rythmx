@@ -479,10 +479,10 @@ def find_track_by_name(artist_name: str, track_title: str) -> str | None:
             if not matched_artist_ids:
                 return None
 
+            # Dynamic IN() placeholders — values are internal IDs, not user input.
             placeholders = ",".join("?" * len(matched_artist_ids))
             track_rows = conn.execute(
-                f"SELECT t.id, t.title FROM tracks t "
-                f"WHERE t.artist_id IN ({placeholders})",
+                "SELECT t.id, t.title FROM tracks t WHERE t.artist_id IN (" + placeholders + ")",
                 matched_artist_ids
             ).fetchall()
             for track_row in track_rows:
