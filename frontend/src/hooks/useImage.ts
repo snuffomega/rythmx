@@ -25,13 +25,18 @@ export function useImage(
     let cancelled = false;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
+    interface ResolveResponse {
+      image_url?: string;
+      pending?: boolean;
+    }
+
     const fetchImage = (attempt = 0) => {
       fetch('/api/images/resolve', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type, name: safeName, artist: safeArtist }),
       })
-        .then(r => r.json())
+        .then(r => r.json() as Promise<ResolveResponse>)
         .then(data => {
           if (cancelled) return;
           if (data.image_url) {

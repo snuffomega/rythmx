@@ -7,7 +7,9 @@ interface ApiState<T> {
   refetch: () => void;
 }
 
-export function useApi<T>(fetcher: () => Promise<T>): ApiState<T> {
+// key: optional caller-supplied value (e.g. a period string) that re-triggers the effect
+// when it changes. Existing callers with no key are unaffected.
+export function useApi<T>(fetcher: () => Promise<T>, key?: unknown): ApiState<T> {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -41,7 +43,7 @@ export function useApi<T>(fetcher: () => Promise<T>): ApiState<T> {
     return () => {
       cancelled = true;
     };
-  }, [tick]);
+  }, [tick, key]); // key re-triggers when caller's dependency changes (e.g. period filter)
 
   return { data, loading, error, refetch };
 }

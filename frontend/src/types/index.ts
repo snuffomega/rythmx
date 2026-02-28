@@ -1,3 +1,8 @@
+// All backend responses follow { status: 'ok', ...payload } or { status: 'error', error: string }.
+// The request() function in api.ts throws on status='error', so callers always receive the ok shape.
+export type ApiOkResponse = { status: 'ok' };
+export type ApiErrorResponse = { status: 'error'; error?: string; message?: string };
+
 export type Period = '7day' | '1month' | '3month' | '6month' | '12month' | 'overall';
 export type AcquisitionStatus = 'pending' | 'submitted' | 'found' | 'failed' | 'skipped';
 export type ReleaseKind = 'album' | 'ep' | 'single' | 'compilation';

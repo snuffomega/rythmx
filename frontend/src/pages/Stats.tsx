@@ -32,10 +32,26 @@ interface StatsPrefs {
   overlays: OverlayOptions;
 }
 
+const VALID_PERIODS: readonly Period[] = ['7day', '1month', '3month', '6month', '12month', 'overall'];
+const VALID_CONTENT_TYPES: readonly ContentType[] = ['artists', 'albums', 'tracks'];
+
+function isValidPrefs(v: unknown): v is StatsPrefs {
+  if (!v || typeof v !== 'object') return false;
+  const p = v as Record<string, unknown>;
+  return (
+    typeof p.period === 'string' && (VALID_PERIODS as readonly string[]).includes(p.period) &&
+    typeof p.contentType === 'string' && (VALID_CONTENT_TYPES as readonly string[]).includes(p.contentType) &&
+    p.overlays !== null && typeof p.overlays === 'object'
+  );
+}
+
 function loadPrefs(): StatsPrefs {
   try {
     const raw = localStorage.getItem(LS_KEY);
-    if (raw) return JSON.parse(raw) as StatsPrefs;
+    if (raw) {
+      const parsed: unknown = JSON.parse(raw);
+      if (isValidPrefs(parsed)) return parsed;
+    }
   } catch {}
   return {
     period: '1month',

@@ -22,6 +22,18 @@ import type {
 
 const BASE_URL = '/api';
 
+// Thrown when the backend returns { status: 'error', error/message: '...' }.
+// Catch blocks can use `instanceof ApiError` to distinguish API vs network errors.
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public readonly httpStatus = 0,
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     headers: { 'Content-Type': 'application/json', ...options?.headers },
@@ -29,9 +41,18 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const err = await res.text().catch(() => 'Request failed');
-    throw new Error(err || `HTTP ${res.status}`);
+    throw new ApiError(err || `HTTP ${res.status}`, res.status);
   }
-  return res.json() as Promise<T>;
+  const data: unknown = await res.json();
+  if (data && typeof data === 'object' && (data as Record<string, unknown>).status === 'error') {
+    const d = data as Record<string, unknown>;
+    throw new ApiError(
+      typeof d.error === 'string' ? d.error
+        : typeof d.message === 'string' ? d.message
+        : 'API error',
+    );
+  }
+  return data as T;
 }
 
 export const cruiseControlApi = {
