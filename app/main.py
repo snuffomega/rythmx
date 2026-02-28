@@ -461,12 +461,20 @@ def create_app() -> Flask:
         rows = cc_store.get_playlist(playlist_name=name)
         tracks = [
             {
-                "name": r.get("track_name") or r.get("name", ""),
-                "artist": r.get("artist_name") or r.get("artist", ""),
-                "album": r.get("album_name") or r.get("album"),
-                "image": r.get("album_cover_url"),
-                "is_owned": bool(r.get("is_owned", 0)),
-                "score": r.get("score"),
+                "row_id":             r["id"],
+                "track_id":           r.get("track_id"),
+                "track_name":         r.get("track_name", ""),
+                "artist_name":        r.get("artist_name", ""),
+                "album_name":         r.get("album_name", ""),
+                "image":              r.get("album_cover_url"),
+                "is_owned":           bool(r.get("is_owned", 0)),
+                "score":              r.get("score"),
+                "acquisition_status": (
+                    cc_store.get_queue_status(
+                        r.get("artist_name", ""), r.get("album_name", "")
+                    )
+                    if not r.get("is_owned", 0) else None
+                ),
             }
             for r in (rows or [])
         ]
@@ -474,8 +482,12 @@ def create_app() -> Flask:
 
     @app.route("/api/playlists/<path:name>", methods=["PATCH"])
     def playlists_update(name):
-        """Update playlist metadata (auto_sync, mode, max_tracks, source_url)."""
+        """Update playlist metadata (auto_sync, mode, max_tracks, source_url, new_name)."""
         data = request.get_json(silent=True) or {}
+        new_name = (data.get("new_name") or "").strip()
+        if new_name and new_name != name:
+            cc_store.rename_playlist(name, new_name)
+            return jsonify({"status": "ok", "name": new_name})
         auto_sync = data.get("auto_sync")
         mode = data.get("mode")
         max_tracks = data.get("max_tracks")
@@ -487,6 +499,12 @@ def create_app() -> Flask:
             max_tracks=int(max_tracks) if max_tracks is not None else None,
             source_url=source_url,
         )
+        return jsonify({"status": "ok"})
+
+    @app.route("/api/playlists/<path:name>/tracks/<int:row_id>", methods=["DELETE"])
+    def playlists_remove_track(name, row_id):
+        """Remove a single track row from a playlist by cc_playlist.id."""
+        cc_store.remove_playlist_row(row_id)
         return jsonify({"status": "ok"})
 
     @app.route("/api/playlists/<path:name>/build", methods=["POST"])

@@ -367,6 +367,18 @@ def get_queue_stats() -> dict:
         }
 
 
+def get_queue_status(artist_name: str, album_title: str) -> str | None:
+    """Return the most recent download_queue status for artist+album, or None if not queued."""
+    with _connect() as conn:
+        row = conn.execute(
+            """SELECT status FROM download_queue
+               WHERE lower(artist_name) = lower(?) AND lower(album_title) = lower(?)
+               ORDER BY created_at DESC LIMIT 1""",
+            (artist_name, album_title)
+        ).fetchone()
+        return row["status"] if row else None
+
+
 def get_history_summary() -> dict:
     with _connect() as conn:
         row = conn.execute("""
@@ -665,6 +677,22 @@ def delete_playlist(name: str):
     with _connect() as conn:
         conn.execute("DELETE FROM playlists WHERE name = ?", (name,))
         conn.execute("DELETE FROM cc_playlist WHERE playlist_name = ?", (name,))
+
+
+def rename_playlist(old_name: str, new_name: str):
+    """Rename a playlist in both the playlists metadata table and cc_playlist rows."""
+    with _connect() as conn:
+        conn.execute("UPDATE playlists SET name = ? WHERE name = ?", (new_name, old_name))
+        conn.execute(
+            "UPDATE cc_playlist SET playlist_name = ? WHERE playlist_name = ?",
+            (new_name, old_name)
+        )
+
+
+def remove_playlist_row(row_id: int):
+    """Remove a single track row from cc_playlist by its primary key id."""
+    with _connect() as conn:
+        conn.execute("DELETE FROM cc_playlist WHERE id = ?", (row_id,))
 
 
 # --- Release cache ---

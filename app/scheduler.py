@@ -337,8 +337,17 @@ def _execute_cycle(run_mode: str = "cruise", force_refresh: bool = False) -> dic
                     "release_date": r.release_date,
                 })
 
-            owned_track_count = sum(1 for t in playlist_tracks if t.get("is_owned", 1))
-            unowned_count = len(playlist_tracks) - owned_track_count
+            # Cap owned tracks at cc_max_playlist_tracks (unowned album cards are kept)
+            max_pl = int(settings.get("cc_max_playlist_tracks", 50))
+            owned_tracks  = [t for t in playlist_tracks if t.get("is_owned")]
+            unowned_cards = [t for t in playlist_tracks if not t.get("is_owned")]
+            if len(owned_tracks) > max_pl:
+                logger.info("Stage 7: capping owned tracks at %d (had %d)", max_pl, len(owned_tracks))
+                owned_tracks = owned_tracks[:max_pl]
+            playlist_tracks = owned_tracks + unowned_cards
+
+            owned_track_count = len(owned_tracks)
+            unowned_count = len(unowned_cards)
             cc_store.create_playlist_meta(playlist_name_date, source="cc", mode="cc_new_music")
             cc_store.save_playlist(playlist_tracks, playlist_name=playlist_name_date)
             cc_store.mark_playlist_synced(playlist_name_date)

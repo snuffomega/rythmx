@@ -377,6 +377,7 @@ function populateCCForm(cfg) {
     set('cc-period',           'cc_period',                     '6month');
     set('cc-lookback',         'cc_lookback_days',              '90');
     set('cc-max',              'cc_max_per_cycle',              '10');
+    set('cc-max-playlist',    'cc_max_playlist_tracks',        '50');
     set('cc-auto-push',        'cc_auto_push_playlist',         false);
     set('cc-cache-weekday',    'release_cache_refresh_weekday', '3');
     set('cc-cache-hour',       'release_cache_refresh_hour',    '5');
@@ -476,6 +477,7 @@ function _collectCCConfig() {
         cc_period:                     'cc-period',
         cc_lookback_days:              'cc-lookback',
         cc_max_per_cycle:              'cc-max',
+        cc_max_playlist_tracks:        'cc-max-playlist',
         cc_playlist_prefix:            'cc-playlist-prefix',
         release_cache_refresh_weekday: 'cc-cache-weekday',
         release_cache_refresh_hour:    'cc-cache-hour',
@@ -632,15 +634,20 @@ function buildPlaylistCard(pl) {
 
     card.innerHTML = `
         <div class="flex items-start justify-between mb-4">
-            <div>
-                <h3 class="font-display text-xl font-semibold text-text-primary">${escHtml(pl.name)}</h3>
+            <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2">
+                    <h3 class="pl-title font-display text-xl font-semibold text-text-primary truncate">${escHtml(pl.name)}</h3>
+                    <button class="btn-rename-pl shrink-0 text-text-muted hover:text-accent-primary transition-colors p-1" title="Rename playlist">
+                        <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
+                    </button>
+                </div>
                 <div class="flex items-center gap-3 mt-1">
                     <span class="text-xs font-medium ${sourceColor}">[${escHtml(pl.source)}]</span>
                     ${autoSyncBadge}
                     ${syncedLabel}
                 </div>
             </div>
-            <button class="btn-delete-pl text-text-muted hover:text-accent-danger transition-colors p-1"
+            <button class="btn-delete-pl text-text-muted hover:text-accent-danger transition-colors p-1 shrink-0"
                     data-name="${escHtml(pl.name)}" title="Delete playlist">
                 <i data-lucide="trash-2" class="w-4 h-4"></i>
             </button>
@@ -766,33 +773,113 @@ function buildPlaylistCard(pl) {
         }
     });
 
+    // Rename playlist
+    let _currentPlName = pl.name;
+    card.querySelector('.btn-rename-pl').addEventListener('click', () => {
+        const titleEl = card.querySelector('.pl-title');
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.value = _currentPlName;
+        input.className = 'font-display text-xl font-semibold bg-surface-highlight border border-accent-primary rounded px-2 py-0.5 text-text-primary focus:outline-none w-full';
+        titleEl.replaceWith(input);
+        input.focus();
+        input.select();
+
+        const doRename = async () => {
+            const newName = input.value.trim();
+            if (!newName || newName === _currentPlName) {
+                // Restore original title
+                const restored = document.createElement('h3');
+                restored.className = 'pl-title font-display text-xl font-semibold text-text-primary truncate';
+                restored.textContent = _currentPlName;
+                input.replaceWith(restored);
+                return;
+            }
+            try {
+                await api(`/playlists/${encodeURIComponent(_currentPlName)}`, {
+                    method: 'PATCH',
+                    body: JSON.stringify({ new_name: newName }),
+                });
+                _currentPlName = newName;
+                card.querySelectorAll('[data-name]').forEach(el => el.dataset.name = newName);
+                showToast(`Renamed to "${newName}"`, 'success');
+                loadPlaylists();
+            } catch (err) {
+                showToast(`Rename failed: ${err.message}`, 'error');
+                const restored = document.createElement('h3');
+                restored.className = 'pl-title font-display text-xl font-semibold text-text-primary truncate';
+                restored.textContent = _currentPlName;
+                input.replaceWith(restored);
+            }
+        };
+        input.addEventListener('blur', doRename);
+        input.addEventListener('keydown', e => {
+            if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+            if (e.key === 'Escape') { input.value = _currentPlName; input.blur(); }
+        });
+    });
+
     // Lazy-load track list when details is opened
     const details = card.querySelector('details');
     if (details) {
+        const loadTracks = async () => {
+            const container = card.querySelector('.playlist-tracks-container');
+            if (!container) return;
+            container.removeAttribute('data-loaded');
+            try {
+                const data = await api(`/playlists/${encodeURIComponent(_currentPlName)}/tracks`);
+                const tracks = data.tracks || [];
+                const aqIcons = {
+                    pending:   '<i data-lucide="clock"   class="w-3 h-3 text-text-muted shrink-0"></i>',
+                    submitted: '<i data-lucide="loader-2" class="w-3 h-3 text-accent-primary animate-spin shrink-0"></i>',
+                    found:     '<i data-lucide="check"   class="w-3 h-3 text-accent-success shrink-0"></i>',
+                    failed:    '<i data-lucide="x-circle" class="w-3 h-3 text-accent-danger shrink-0"></i>',
+                    skipped:   '<i data-lucide="minus"   class="w-3 h-3 text-text-muted shrink-0"></i>',
+                };
+                container.innerHTML = tracks.map(t => {
+                    const owned = t.is_owned;
+                    const badge = !owned
+                        ? (aqIcons[t.acquisition_status] || '<span class="shrink-0 px-1.5 rounded bg-surface-highlight text-text-muted" style="font-size:0.65rem">Missing</span>')
+                        : '';
+                    return `
+                    <div class="group flex items-center gap-2 py-1 text-xs ${owned ? '' : 'opacity-60'}">
+                        <span class="${owned ? 'text-accent-success' : 'text-text-muted'} shrink-0">${owned ? '●' : '○'}</span>
+                        <span class="${owned ? 'text-text-primary' : 'text-text-secondary'} truncate flex-1">
+                            ${escHtml(t.artist_name || '')} – ${escHtml(t.track_name || '')}
+                        </span>
+                        ${badge}
+                        <button class="btn-rm-track opacity-0 group-hover:opacity-100 p-0.5 text-text-muted hover:text-accent-danger shrink-0 transition-opacity"
+                                data-row-id="${t.row_id}" title="Remove from playlist">
+                            <i data-lucide="x" class="w-3 h-3"></i>
+                        </button>
+                    </div>`;
+                }).join('') || '<p class="text-text-muted text-xs py-2">No tracks</p>';
+                container.dataset.loaded = '1';
+                lucide.createIcons({ icons: lucide.icons, nameAttr: 'data-lucide' });
+
+                // Event delegation: track remove buttons
+                container.querySelectorAll('.btn-rm-track').forEach(btn => {
+                    btn.addEventListener('click', async (e) => {
+                        e.stopPropagation();
+                        const rowId = btn.dataset.rowId;
+                        try {
+                            await api(`/playlists/${encodeURIComponent(_currentPlName)}/tracks/${rowId}`, { method: 'DELETE' });
+                            await loadTracks();
+                        } catch (err) {
+                            showToast(`Remove failed: ${err.message}`, 'error');
+                        }
+                    });
+                });
+            } catch (_) {
+                container.innerHTML = '<p class="text-accent-danger text-xs py-2">Failed to load tracks</p>';
+            }
+        };
+
         details.addEventListener('toggle', async () => {
             if (!details.open) return;
             const container = card.querySelector('.playlist-tracks-container');
             if (!container || container.dataset.loaded) return;
-            try {
-                const data = await api(`/playlists/${encodeURIComponent(pl.name)}/tracks`);
-                const tracks = data.tracks || [];
-                container.innerHTML = tracks.map(t => {
-                    const owned = t.is_owned !== undefined ? t.is_owned : (t.track_id ? 1 : 0);
-                    return `
-                    <div class="flex items-center gap-2 py-1 text-xs ${owned ? '' : 'opacity-60'}">
-                        <span class="${owned ? 'text-accent-success' : 'text-text-muted'} shrink-0">
-                            ${owned ? '●' : '○'}
-                        </span>
-                        <span class="${owned ? 'text-text-primary' : 'text-text-secondary'} truncate flex-1">
-                            ${escHtml(t.artist_name || '')} – ${escHtml(t.track_name || '')}
-                        </span>
-                        ${!owned ? '<span class="shrink-0 px-1.5 rounded bg-surface-highlight text-text-muted" style="font-size:0.65rem">Missing</span>' : ''}
-                    </div>`;
-                }).join('') || '<p class="text-text-muted text-xs py-2">No tracks</p>';
-                container.dataset.loaded = '1';
-            } catch (_) {
-                container.innerHTML = '<p class="text-accent-danger text-xs py-2">Failed to load tracks</p>';
-            }
+            await loadTracks();
         });
     }
 
