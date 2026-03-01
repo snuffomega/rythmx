@@ -7,18 +7,18 @@ Guards against concurrent cycles with is_running flag.
 Cruise Control pipeline (7 stages):
   1. Poll Last.fm — top artists filtered by min-listens threshold
   2. Resolve artist identities — Last.fm name → Deezer/Spotify/MB IDs (cached)
-  3. Find new releases — within cc_lookback_days, via music_client provider chain
+  3. Find new releases — within lookback_days, via music_client provider chain
   4. Owned-check — SoulSync DB (case-insensitive artist + album name)
-  5. Build download queue — unowned releases, capped at cc_max_per_cycle
+  5. Build download queue — unowned releases, capped at max_per_cycle
   6. Queue downloads — SoulSync API (or dry-run)
-  7. Save history — cc.db; playlist from owned candidates
+  7. Save history — rythmx.db; playlist from owned candidates
 """
 import re
 import threading
 import logging
 from datetime import datetime
 from app import config
-from app.db import cc_store
+from app.db import rythmx_store
 
 logger = logging.getLogger(__name__)
 
@@ -86,17 +86,17 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
     logger.info("Cruise control cycle starting (run_mode=%s, force_refresh=%s)",
                 run_mode, force_refresh)
 
-    # Load settings from cc.db (user overrides via UI take precedence over config defaults)
-    settings = cc_store.get_all_settings()
+    # Load settings from rythmx.db (user overrides via UI take precedence over config defaults)
+    settings = rythmx_store.get_all_settings()
 
     if force_refresh:
-        cc_store.clear_release_cache()
+        rythmx_store.clear_release_cache()
         logger.info("Stage 2-3: release cache cleared (force_refresh=True)")
-    min_listens = int(settings.get("cc_min_listens", config.CC_MIN_LISTENS))
-    lookback_days = int(settings.get("cc_lookback_days", config.CC_LOOKBACK_DAYS))
-    max_per_cycle = int(settings.get("cc_max_per_cycle", config.CC_MAX_PER_CYCLE))
-    period = settings.get("cc_period", "1month")
-    auto_push = settings.get("cc_auto_push_playlist", "false") == "true"
+    min_listens = int(settings.get("min_listens", config.MIN_LISTENS))
+    lookback_days = int(settings.get("lookback_days", config.LOOKBACK_DAYS))
+    max_per_cycle = int(settings.get("max_per_cycle", config.MAX_PER_CYCLE))
+    period = settings.get("period", "1month")
+    auto_push = settings.get("auto_push_playlist", "false") == "true"
     ignore_kw_raw = settings.get("nr_ignore_keywords", "") or config.CC_IGNORE_KEYWORDS
     ignore_keywords = [k.strip() for k in ignore_kw_raw.split(",") if k.strip()]
     # Normalize: lowercase + strip punctuation so "Ballyhoo!" matches "ballyhoo"
@@ -124,7 +124,7 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
 
     for artist_name in qualified:
         # Start from cached IDs if available
-        cached = cc_store.get_cached_artist(artist_name) or {}
+        cached = rythmx_store.get_cached_artist(artist_name) or {}
 
         # --- Confidence-based identity resolution (Last.fm ↔ iTunes top-track overlap) ---
         # Returns cache hit immediately if confidence >= 85 and resolved < 30 days ago.
@@ -170,7 +170,7 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
         # Write resolved IDs back to cache so subsequent cycles skip API searches.
         # COALESCE upsert — only fills in missing values, never overwrites good IDs.
         if resolved_ids or ss_artist_id:
-            cc_store.cache_artist(
+            rythmx_store.cache_artist(
                 lastfm_name=artist_name,
                 deezer_artist_id=resolved_ids.get("deezer_artist_id"),
                 spotify_artist_id=resolved_ids.get("spotify_artist_id"),
@@ -216,7 +216,7 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
 
     for r in unique_releases:
         # Use cached SoulSync artist ID for Tier 0 PK join (most reliable)
-        cached_r = cc_store.get_cached_artist(r.artist) or {}
+        cached_r = rythmx_store.get_cached_artist(r.artist) or {}
         ss_id = cached_r.get("soulsync_artist_id") or soulsync_reader.get_soulsync_artist_id(r.artist)
         sp_id = soulsync_reader.get_spotify_artist_id(r.artist)
         it_id = cached_r.get("itunes_artist_id") or soulsync_reader.get_itunes_artist_id(r.artist)
@@ -243,10 +243,10 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
     for r in owned_releases + unowned:
         if r.artwork_url:
             _img_key = f"{r.artist.lower()}|||{r.title.lower()}"
-            cc_store.set_image_cache("album", _img_key, r.artwork_url)
+            rythmx_store.set_image_cache("album", _img_key, r.artwork_url)
 
     # Compute playlist name now so both Stage 6 and Stage 7 share the same value.
-    playlist_prefix = settings.get("cc_playlist_prefix", "New Music")
+    playlist_prefix = settings.get("playlist_prefix", "New Music")
     playlist_name_date = (f"{playlist_prefix}_{_date.today().isoformat()}"
                           if run_mode in ("build", "fetch") else None)
 
@@ -266,7 +266,7 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
         today_str = _date.today().isoformat()
         new_unowned = [
             r for r in unowned
-            if not cc_store.is_in_queue(r.artist, r.title)
+            if not rythmx_store.is_in_queue(r.artist, r.title)
             and (r.release_date or "9999") <= today_str
         ]
         skipped_count = len(unowned) - len(new_unowned)
@@ -277,7 +277,7 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
                     len(to_queue), max_per_cycle)
 
         for r in to_queue:
-            queue_id = cc_store.add_to_queue(
+            queue_id = rythmx_store.add_to_queue(
                 artist_name=r.artist, album_title=r.title,
                 release_date=r.release_date, kind=r.kind, source=r.source,
                 itunes_album_id=r.itunes_album_id or None,
@@ -296,7 +296,7 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
     #
     # Owned releases: expanded to individual tracks (have plex_rating_key).
     # Unowned releases: album-level placeholder cards (is_owned=0, no plex_rating_key).
-    # Saves to cc_playlist as "{prefix}_{YYYY-MM-DD}".
+    # Saves to playlist_tracks as "{prefix}_{YYYY-MM-DD}".
     # Dry mode skips playlist creation entirely.
     # -------------------------------------------------------------------------
     playlist_tracks = []
@@ -306,7 +306,7 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
         try:
             # Owned: expand each album to individual tracks
             for r in owned_releases:
-                cached_r = cc_store.get_cached_artist(r.artist) or {}
+                cached_r = rythmx_store.get_cached_artist(r.artist) or {}
                 ss_id = (cached_r.get("soulsync_artist_id")
                          or soulsync_reader.get_soulsync_artist_id(r.artist))
                 if ss_id:
@@ -338,8 +338,8 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
                     "release_date": r.release_date,
                 })
 
-            # Cap owned tracks at cc_max_playlist_tracks (unowned album cards are kept)
-            max_pl = int(settings.get("cc_max_playlist_tracks", 50))
+            # Cap owned tracks at max_playlist_tracks (unowned album cards are kept)
+            max_pl = int(settings.get("max_playlist_tracks", 50))
             owned_tracks  = [t for t in playlist_tracks if t.get("is_owned")]
             unowned_cards = [t for t in playlist_tracks if not t.get("is_owned")]
             if len(owned_tracks) > max_pl:
@@ -349,9 +349,9 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
 
             owned_track_count = len(owned_tracks)
             unowned_count = len(unowned_cards)
-            cc_store.create_playlist_meta(playlist_name_date, source="cc", mode="cc_new_music")
-            cc_store.save_playlist(playlist_tracks, playlist_name=playlist_name_date)
-            cc_store.mark_playlist_synced(playlist_name_date)
+            rythmx_store.create_playlist_meta(playlist_name_date, source="new_music", mode="new_music")
+            rythmx_store.save_playlist(playlist_tracks, playlist_name=playlist_name_date)
+            rythmx_store.mark_playlist_synced(playlist_name_date)
             logger.info("Stage 7: playlist '%s' saved — %d owned tracks, %d missing albums",
                         playlist_name_date, owned_track_count, unowned_count)
 
@@ -363,7 +363,7 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
                     plex_playlist_id = plex_push.create_or_update_playlist(
                         playlist_name_date, rating_keys)
                     if plex_playlist_id:
-                        cc_store.update_playlist_plex_id(playlist_name_date, plex_playlist_id)
+                        rythmx_store.update_playlist_plex_id(playlist_name_date, plex_playlist_id)
 
         except Exception as e:
             logger.warning("Stage 7 playlist build failed (non-fatal): %s", e)
@@ -377,7 +377,7 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
     # data already fetched this cycle (owned_releases, top_artists).
     # -------------------------------------------------------------------------
     if run_mode in ("build", "fetch"):
-        auto_playlists = [p for p in cc_store.list_playlists() if p.get("auto_sync")]
+        auto_playlists = [p for p in rythmx_store.list_playlists() if p.get("auto_sync")]
         logger.info("Stage 8: %d auto-sync playlist(s) to rebuild", len(auto_playlists))
         for pl in auto_playlists:
             _auto_sync_playlist(pl, owned_releases, top_artists, settings, soulsync_reader)
@@ -388,25 +388,25 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
     if run_mode != "preview":
         queued_keys = {(r.artist, r.title) for r in to_queue}
         for r in owned_releases:
-            cc_store.add_history_entry(
+            rythmx_store.add_history_entry(
                 {"artist_name": r.artist, "album_name": r.title}, status="owned"
             )
         for r in unowned:
             if (r.artist, r.title) in queued_keys:
                 # Newly queued this run
                 entry_status, entry_reason = "queued", ""
-            elif run_mode == "fetch" and cc_store.is_in_queue(r.artist, r.title):
+            elif run_mode == "fetch" and rythmx_store.is_in_queue(r.artist, r.title):
                 # Already pending/submitted in queue from a prior cruise run
                 entry_status, entry_reason = "queued", "already_queued"
             else:
                 entry_status = "skipped"
                 entry_reason = "build_mode" if run_mode == "build" else ""
-            cc_store.add_history_entry(
+            rythmx_store.add_history_entry(
                 {"artist_name": r.artist, "album_name": r.title},
                 status=entry_status, reason=entry_reason
             )
 
-    queue_stats = cc_store.get_queue_stats()
+    queue_stats = rythmx_store.get_queue_stats()
     return {
         "status": "ok",
         "run_mode": run_mode,
@@ -433,7 +433,6 @@ def _auto_sync_playlist(pl, owned_releases, top_artists, settings, soulsync_read
       taste  — rebuild using latest Last.fm top artists + current library
       deezer / spotify / lastfm — re-import from source_url
     """
-    from app.db import cc_store as _cc_store
     from app.clients import last_fm_client
     from app.services import engine
 
@@ -441,11 +440,11 @@ def _auto_sync_playlist(pl, owned_releases, top_artists, settings, soulsync_read
     source = pl.get("source", "")
 
     try:
-        if source == "cc":
+        if source == "new_music":
             # Re-expand owned releases to tracks (same logic as Stage 7, but in-place)
             playlist_tracks = []
             for r in owned_releases:
-                cached_r = _cc_store.get_cached_artist(r.artist) or {}
+                cached_r = rythmx_store.get_cached_artist(r.artist) or {}
                 ss_id = (cached_r.get("soulsync_artist_id")
                          or soulsync_reader.get_soulsync_artist_id(r.artist))
                 if ss_id:
@@ -459,20 +458,20 @@ def _auto_sync_playlist(pl, owned_releases, top_artists, settings, soulsync_read
                             "album_cover_url": t.get("album_thumb_url") or "",
                             "score": None,
                         })
-            _cc_store.save_playlist(playlist_tracks, playlist_name=name)
-            _cc_store.mark_playlist_synced(name)
-            logger.info("Stage 8: auto-synced cc playlist '%s' (%d tracks)", name, len(playlist_tracks))
+            rythmx_store.save_playlist(playlist_tracks, playlist_name=name)
+            rythmx_store.mark_playlist_synced(name)
+            logger.info("Stage 8: auto-synced new_music playlist '%s' (%d tracks)", name, len(playlist_tracks))
 
         elif source == "taste":
             # Rebuild taste playlist using top_artists already fetched in Stage 1
-            meta = _cc_store.get_playlist_meta(name) or {}
+            meta = rythmx_store.get_playlist_meta(name) or {}
             max_tracks = int(meta.get("max_tracks") or 50)
             max_per_artist = int(meta.get("max_per_artist") or 2)
             loved = last_fm_client.get_loved_artist_names()
 
             artist_tracks = {}
             for artist_name in top_artists:
-                cached = _cc_store.get_cached_artist(artist_name) or {}
+                cached = rythmx_store.get_cached_artist(artist_name) or {}
                 ss_id = cached.get("soulsync_artist_id") or soulsync_reader.get_soulsync_artist_id(artist_name)
                 if ss_id:
                     tracks = soulsync_reader.get_all_tracks_for_artist(ss_id)
@@ -495,8 +494,8 @@ def _auto_sync_playlist(pl, owned_releases, top_artists, settings, soulsync_read
                 }
                 for t in scored
             ]
-            _cc_store.save_playlist(to_save, playlist_name=name)
-            _cc_store.mark_playlist_synced(name)
+            rythmx_store.save_playlist(to_save, playlist_name=name)
+            rythmx_store.mark_playlist_synced(name)
             logger.info("Stage 8: auto-synced taste playlist '%s' (%d tracks)", name, len(to_save))
 
         elif source in ("spotify", "lastfm", "deezer"):
@@ -524,7 +523,7 @@ def _should_weekly_refresh(settings: dict) -> bool:
     """
     Return True if it's time for the weekly release cache refresh.
     Default: Thursday (weekday=3) at 05:00 UTC.
-    Checks cc_settings['release_cache_last_cleared_weekday'] to avoid multiple
+    Checks app_settings['release_cache_last_cleared_weekday'] to avoid multiple
     refreshes in the same day.
     """
     weekday = int(settings.get("release_cache_refresh_weekday", "3"))
@@ -532,20 +531,20 @@ def _should_weekly_refresh(settings: dict) -> bool:
     now = datetime.utcnow()
     if now.weekday() != weekday or now.hour < hour:
         return False
-    last_cleared = cc_store.get_setting("release_cache_last_cleared_weekday") or ""
+    last_cleared = rythmx_store.get_setting("release_cache_last_cleared_weekday") or ""
     return last_cleared != now.date().isoformat()
 
 
 def _should_run_cc(settings: dict) -> bool:
     """
     Return True if it's time to run a CC cycle.
-    If cc_schedule_weekday and cc_schedule_hour are both set (≥ 0), use day/time scheduling.
-    Otherwise falls back to cc_cycle_hours interval.
+    If schedule_weekday and schedule_hour are both set (≥ 0), use day/time scheduling.
+    Otherwise falls back to cycle_hours interval.
     """
     now = datetime.now()
-    weekday = int(settings.get("cc_schedule_weekday") or -1)
-    hour = int(settings.get("cc_schedule_hour") or -1)
-    last_run_iso = settings.get("cc_last_run")
+    weekday = int(settings.get("schedule_weekday") or -1)
+    hour = int(settings.get("schedule_hour") or -1)
+    last_run_iso = settings.get("last_run")
 
     if weekday >= 0 and hour >= 0:
         # Day/time mode: run if it's the right weekday and hour
@@ -559,7 +558,7 @@ def _should_run_cc(settings: dict) -> bool:
         return True
 
     # Interval mode (default)
-    cycle_hours = int(settings.get("cc_cycle_hours") or config.CC_CYCLE_HOURS)
+    cycle_hours = int(settings.get("cycle_hours") or config.CC_CYCLE_HOURS)
     if not last_run_iso:
         return True
     last = datetime.fromisoformat(last_run_iso)
@@ -571,18 +570,18 @@ def _loop():
     while not _stop_event.is_set():
         ran_cc = False
         if config.CC_ENABLED:
-            settings = cc_store.get_all_settings()
+            settings = rythmx_store.get_all_settings()
             if _should_run_cc(settings):
-                mode = settings.get("cc_run_mode", "fetch")
+                mode = settings.get("run_mode", "fetch")
                 force = _should_weekly_refresh(settings)
                 if force:
-                    cc_store.set_setting("release_cache_last_cleared_weekday",
+                    rythmx_store.set_setting("release_cache_last_cleared_weekday",
                                          datetime.utcnow().date().isoformat())
                     logger.info("Weekly release cache refresh triggered (weekday=%s, hour=%s)",
                                 settings.get("release_cache_refresh_weekday", "3"),
                                 settings.get("release_cache_refresh_hour", "5"))
                 run_cycle(run_mode=mode, force_refresh=force)
-                cc_store.set_setting("cc_last_run", datetime.now().isoformat())
+                rythmx_store.set_setting("last_run", datetime.now().isoformat())
                 ran_cc = True
         # Run acquisition worker every loop regardless of whether CC ran
         try:

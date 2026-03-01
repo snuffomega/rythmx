@@ -27,7 +27,7 @@ import requests
 from concurrent.futures import ThreadPoolExecutor
 
 from app import config
-from app.db import cc_store
+from app.db import rythmx_store
 
 logger = logging.getLogger(__name__)
 
@@ -311,39 +311,39 @@ def _fetch_and_cache(entity_type: str, name: str, artist: str) -> None:
         if entity_type == "artist":
             # --- Primary: Fanart.tv (real artist photo) ---
             if config.FANART_API_KEY:
-                cached_artist = cc_store.get_cached_artist(name)
+                cached_artist = rythmx_store.get_cached_artist(name)
                 mbid = (cached_artist or {}).get("mb_artist_id")
 
                 if not mbid:
                     mbid = _mb_lookup_mbid(name)
                     if mbid:
-                        cc_store.cache_artist(name, mb_artist_id=mbid)
+                        rythmx_store.cache_artist(name, mb_artist_id=mbid)
 
                 if mbid:
                     url = _fanart_get_artist(mbid)
 
             # --- Secondary: Deezer artist photo ---
             if not url:
-                cached_artist = cc_store.get_cached_artist(name)
+                cached_artist = rythmx_store.get_cached_artist(name)
                 deezer_id = (cached_artist or {}).get("deezer_artist_id")
 
                 if not deezer_id:
                     deezer_id = _deezer_search_artist_id(name)
                     if deezer_id:
-                        cc_store.cache_artist(name, deezer_artist_id=deezer_id)
+                        rythmx_store.cache_artist(name, deezer_artist_id=deezer_id)
 
                 if deezer_id:
                     url = _deezer_get_artist_photo(deezer_id)
 
             # --- Last resort: iTunes album art ---
             if not url:
-                cached_artist = cc_store.get_cached_artist(name)
+                cached_artist = rythmx_store.get_cached_artist(name)
                 itunes_id = (cached_artist or {}).get("itunes_artist_id")
 
                 if not itunes_id:
                     itunes_id = _search_artist_itunes(name)
                     if itunes_id:
-                        cc_store.cache_artist(name, itunes_artist_id=itunes_id)
+                        rythmx_store.cache_artist(name, itunes_artist_id=itunes_id)
 
                 if itunes_id:
                     data = _itunes_img_get("/lookup", {
@@ -358,7 +358,7 @@ def _fetch_and_cache(entity_type: str, name: str, artist: str) -> None:
             search_name = re.sub(r'\s*[-–]\s*(single|ep|extended play)\s*$', '', name, flags=re.IGNORECASE).strip()
 
             # Tier 0: Direct iTunes /lookup when itunes_album_id is known in release_cache
-            itunes_album_id = cc_store.get_release_itunes_album_id(artist, name)
+            itunes_album_id = rythmx_store.get_release_itunes_album_id(artist, name)
             if itunes_album_id:
                 data = _itunes_img_get("/lookup", {
                     "id": itunes_album_id,
@@ -403,7 +403,7 @@ def _fetch_and_cache(entity_type: str, name: str, artist: str) -> None:
             url = _extract_art(data)
 
         if url:
-            cc_store.set_image_cache(entity_type, key, url)
+            rythmx_store.set_image_cache(entity_type, key, url)
         logger.debug("Image cached: [%s] %s — %s", entity_type, name, url[:60] if url else "(none)")
     finally:
         with _in_flight_lock:
@@ -422,8 +422,8 @@ def warm_image_cache(max_items: int = 40) -> int:
     Returns the number of new background fetches submitted (0 = nothing to do).
     Non-blocking — all work runs inside the existing _executor thread pool.
     """
-    from app.db import cc_store as _cc_store
-    missing = _cc_store.get_missing_image_entities(limit=max_items)
+    from app.db import rythmx_store as _cc_store
+    missing = _rythmx_store.get_missing_image_entities(limit=max_items)
     submitted = 0
     for entity_type, name, artist in missing:
         _, pending = resolve_image(entity_type, name, artist)
@@ -449,7 +449,7 @@ def resolve_image(entity_type: str, name: str, artist: str = "") -> tuple[str, b
     """
     key = _entity_key(entity_type, name, artist)
 
-    cached = cc_store.get_image_cache(entity_type, key)
+    cached = rythmx_store.get_image_cache(entity_type, key)
     if cached is not None:
         return cached, False
 

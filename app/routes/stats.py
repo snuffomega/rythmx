@@ -1,6 +1,6 @@
 import logging
 from flask import Blueprint, jsonify, request
-from app.db import cc_store
+from app.db import rythmx_store
 from app.clients import last_fm_client
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ def stats_top_albums():
 
 @stats_bp.route("/api/stats/summary")
 def stats_summary():
-    summary = cc_store.get_history_summary()
+    summary = rythmx_store.get_history_summary()
     return jsonify({"status": "ok", "summary": summary})
 
 

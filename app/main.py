@@ -10,7 +10,7 @@ from flask import Flask, jsonify, send_from_directory
 from flask_talisman import Talisman
 from app import config
 from app.runners import scheduler
-from app.db import cc_store
+from app.db import rythmx_store
 
 logging.basicConfig(
     level=getattr(logging, config.LOG_LEVEL, logging.INFO),
@@ -38,7 +38,7 @@ def create_app() -> Flask:
     )
 
     # --- Init DB ---
-    cc_store.init_db()
+    rythmx_store.init_db()
 
     # --- Log config summary (redacted) ---
     config.log_config_summary()
@@ -64,7 +64,7 @@ def create_app() -> Flask:
     @app.route("/health")
     def health():
         try:
-            from app.db.cc_store import _connect
+            from app.db.rythmx_store import _connect
             with _connect() as conn:
                 wal = conn.execute("PRAGMA journal_mode").fetchone()[0]
             return jsonify({"status": "ok", "db": "connected", "wal": wal == "wal"})

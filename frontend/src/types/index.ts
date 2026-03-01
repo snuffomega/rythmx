@@ -62,7 +62,7 @@ export interface AcquisitionStats {
   total: number;
 }
 
-export type PlaylistSource = 'taste' | 'lastfm' | 'spotify' | 'deezer' | 'empty' | 'cc';
+export type PlaylistSource = 'taste' | 'lastfm' | 'spotify' | 'deezer' | 'empty' | 'new_music';
 
 export interface PlaylistItem {
   name: string;
@@ -104,18 +104,18 @@ export interface CruiseControlStatus {
 }
 
 export interface CruiseControlConfig {
-  cc_run_mode: 'build' | 'fetch';
-  cc_playlist_prefix: string;
-  cc_min_listens: number;
-  cc_period: Period;
-  cc_lookback_days: number;
-  cc_max_per_cycle: number;
-  cc_max_playlist_tracks: number;
-  cc_auto_push_playlist: boolean;
-  cc_schedule_weekday: number;
-  cc_schedule_hour: number;
-  cc_enabled: boolean;
-  cc_dry_run: boolean;
+  run_mode: 'build' | 'fetch';
+  playlist_prefix: string;
+  min_listens: number;
+  period: Period;
+  lookback_days: number;
+  max_per_cycle: number;
+  max_playlist_tracks: number;
+  auto_push_playlist: boolean;
+  schedule_weekday: number;
+  schedule_hour: number;
+  enabled: boolean;
+  dry_run: boolean;
   release_cache_refresh_weekday: number;
   release_cache_refresh_hour: number;
   nr_ignore_keywords: string;

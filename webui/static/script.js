@@ -372,20 +372,20 @@ function populateCCForm(cfg) {
         if (el.type === 'checkbox') el.checked = cfg[key] === 'true';
         else el.value = cfg[key] ?? fallback;
     };
-    set('cc-enabled',          'cc_enabled',                    false);
-    set('cc-min-listens',      'cc_min_listens',                '10');
-    set('cc-period',           'cc_period',                     '6month');
-    set('cc-lookback',         'cc_lookback_days',              '90');
-    set('cc-max',              'cc_max_per_cycle',              '10');
-    set('cc-max-playlist',    'cc_max_playlist_tracks',        '50');
-    set('cc-auto-push',        'cc_auto_push_playlist',         false);
+    set('cc-enabled',          'enabled',                       false);
+    set('cc-min-listens',      'min_listens',                   '10');
+    set('cc-period',           'period',                        '6month');
+    set('cc-lookback',         'lookback_days',                 '90');
+    set('cc-max',              'max_per_cycle',                 '10');
+    set('cc-max-playlist',    'max_playlist_tracks',           '50');
+    set('cc-auto-push',        'auto_push_playlist',            false);
     set('cc-cache-weekday',    'release_cache_refresh_weekday', '3');
     set('cc-cache-hour',       'release_cache_refresh_hour',    '5');
-    set('cc-schedule-weekday', 'cc_schedule_weekday',           '3');
-    set('cc-schedule-hour',    'cc_schedule_hour',              '5');
-    setRunMode(cfg['cc_run_mode'] || 'build');
+    set('cc-schedule-weekday', 'schedule_weekday',              '3');
+    set('cc-schedule-hour',    'schedule_hour',                 '5');
+    setRunMode(cfg['run_mode'] || 'build');
     const prefixEl = document.getElementById('cc-playlist-prefix');
-    if (prefixEl) prefixEl.value = cfg['cc_playlist_prefix'] || 'New Music';
+    if (prefixEl) prefixEl.value = cfg['playlist_prefix'] || 'New Music';
 }
 
 function updateCCStatus() {
@@ -473,23 +473,23 @@ function renderCCHistory(history) {
 function _collectCCConfig() {
     const payload = {};
     const fieldMap = {
-        cc_min_listens:                'cc-min-listens',
-        cc_period:                     'cc-period',
-        cc_lookback_days:              'cc-lookback',
-        cc_max_per_cycle:              'cc-max',
-        cc_max_playlist_tracks:        'cc-max-playlist',
-        cc_playlist_prefix:            'cc-playlist-prefix',
+        min_listens:                   'cc-min-listens',
+        period:                        'cc-period',
+        lookback_days:                 'cc-lookback',
+        max_per_cycle:                 'cc-max',
+        max_playlist_tracks:           'cc-max-playlist',
+        playlist_prefix:               'cc-playlist-prefix',
         release_cache_refresh_weekday: 'cc-cache-weekday',
         release_cache_refresh_hour:    'cc-cache-hour',
-        cc_run_mode:                   'cc-run-mode',
-        cc_schedule_weekday:           'cc-schedule-weekday',
-        cc_schedule_hour:              'cc-schedule-hour',
+        run_mode:                      'cc-run-mode',
+        schedule_weekday:              'cc-schedule-weekday',
+        schedule_hour:                 'cc-schedule-hour',
     };
     for (const [key, id] of Object.entries(fieldMap)) {
         const el = document.getElementById(id);
         if (el) payload[key] = el.value;
     }
-    ['cc_enabled', 'cc_auto_push_playlist'].forEach(k => {
+    ['enabled', 'auto_push_playlist'].forEach(k => {
         const el = document.querySelector(`[name="${k}"]`);
         payload[k] = el?.checked ? 'true' : 'false';
     });

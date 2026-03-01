@@ -7,7 +7,7 @@ services:
     volumes:
       # SoulSync DB — READ ONLY. Direct bind mount to SoulSync's data folder on the host.
       - /mnt/user/appdata/soulsync/data:/data/soulsync:ro
-      # rythmx's own data (cc.db)
+      # rythmx's own data (rythmx.db)
       - ./data:/data/cc
     env_file:
       - .env

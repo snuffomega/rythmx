@@ -24,7 +24,9 @@ def _optional(key: str, default: str = "") -> str:
 
 # --- Paths ---
 SOULSYNC_DB = _optional("SOULSYNC_DB", "/data/soulsync/music_library.db")
-CC_DB = _optional("CC_DB", "/data/cc/cc.db")
+# RYTHMX_DB: reads new env var, falls back to legacy CC_DB, then to new default path
+RYTHMX_DB = _optional("RYTHMX_DB", _optional("CC_DB", "/data/cc/rythmx.db"))
+CC_DB = RYTHMX_DB  # Deprecated alias — use RYTHMX_DB. Remove in Phase 10.
 
 # --- SoulSync API ---
 SOULSYNC_URL = _optional("SOULSYNC_URL", "http://soulsync:8008")
@@ -39,9 +41,6 @@ PLEX_URL = _optional("PLEX_URL")
 PLEX_TOKEN = _optional("PLEX_TOKEN")
 PLEX_MUSIC_SECTION = _optional("PLEX_MUSIC_SECTION", "Music")
 
-# --- Library DB (plex_reader local cache) ---
-LIBRARY_DB = _optional("LIBRARY_DB", "/data/cc/library.db")
-
 # --- Spotify ---
 SPOTIFY_CLIENT_ID = _optional("SPOTIFY_CLIENT_ID")
 SPOTIFY_CLIENT_SECRET = _optional("SPOTIFY_CLIENT_SECRET")
@@ -52,14 +51,20 @@ FLASK_PORT = int(_optional("FLASK_PORT", "8009"))
 FLASK_DEBUG = _optional("FLASK_DEBUG", "false").lower() == "true"
 LOG_LEVEL = _optional("LOG_LEVEL", "DEBUG" if FLASK_DEBUG else "INFO").upper()
 
-# --- Cruise Control defaults ---
+# --- Cruise Control / app defaults ---
+# New names read first; old CC_ env vars are the fallback so existing deployments keep working.
 CC_ENABLED = _optional("CC_ENABLED", "false").lower() == "true"
-CC_CYCLE_HOURS = int(_optional("CC_CYCLE_HOURS", "24"))
-CC_MAX_PER_CYCLE = int(_optional("CC_MAX_PER_CYCLE", "10"))
-CC_MIN_LISTENS = int(_optional("CC_MIN_LISTENS", "5"))
-CC_LOOKBACK_DAYS = int(_optional("CC_LOOKBACK_DAYS", "90"))
+CYCLE_HOURS = int(_optional("CYCLE_HOURS", _optional("CC_CYCLE_HOURS", "24")))
+MAX_PER_CYCLE = int(_optional("MAX_PER_CYCLE", _optional("CC_MAX_PER_CYCLE", "10")))
+MIN_LISTENS = int(_optional("MIN_LISTENS", _optional("CC_MIN_LISTENS", "5")))
+LOOKBACK_DAYS = int(_optional("LOOKBACK_DAYS", _optional("CC_LOOKBACK_DAYS", "90")))
 CC_IGNORE_KEYWORDS = _optional("CC_IGNORE_KEYWORDS", "remix,remaster,live,karaoke,instrumental")
 CC_RELEASE_KINDS = _optional("CC_RELEASE_KINDS", "album,single,ep")
+# Deprecated aliases — keep so existing callers that reference config.CC_* still work
+CC_CYCLE_HOURS = CYCLE_HOURS
+CC_MAX_PER_CYCLE = MAX_PER_CYCLE
+CC_MIN_LISTENS = MIN_LISTENS
+CC_LOOKBACK_DAYS = LOOKBACK_DAYS
 
 # --- Music catalog API ---
 # auto = Spotify if credentials set, otherwise Deezer, MusicBrainz as fallback
@@ -92,7 +97,7 @@ def log_config_summary():
     """Log a redacted config summary on startup (never log secret values)."""
     logger.info("Rythmx config loaded:")
     logger.info("  SOULSYNC_DB: %s", SOULSYNC_DB)
-    logger.info("  CC_DB: %s", CC_DB)
+    logger.info("  RYTHMX_DB: %s", RYTHMX_DB)
     logger.info("  SOULSYNC_URL: %s", SOULSYNC_URL)
     logger.info("  LASTFM_USERNAME: %s", LASTFM_USERNAME or "(not set)")
     logger.info("  LASTFM_API_KEY: %s", "set" if LASTFM_API_KEY else "NOT SET")
@@ -102,4 +107,3 @@ def log_config_summary():
     logger.info("  FANART_API_KEY: %s", "set" if FANART_API_KEY else "NOT SET (artist images fall back to iTunes)")
     logger.info("  CC_ENABLED: %s", CC_ENABLED)
     logger.info("  LIBRARY_BACKEND: %s", LIBRARY_BACKEND)
-    logger.info("  LIBRARY_DB: %s", LIBRARY_DB)

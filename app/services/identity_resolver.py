@@ -86,7 +86,7 @@ def resolve_artist(lastfm_name: str, force: bool = False) -> dict:
 
     force=True bypasses the cache and forces a fresh resolution.
     """
-    from app.db import cc_store
+    from app.db import rythmx_store
     from app.clients import last_fm_client
     from app.clients.music_client import norm, search_artist_candidates_itunes, get_artist_top_tracks_itunes
 
@@ -111,7 +111,7 @@ def resolve_artist(lastfm_name: str, force: bool = False) -> dict:
     # Cache check
     # ------------------------------------------------------------------
     if not force:
-        cached = cc_store.get_cached_artist(lastfm_name)
+        cached = rythmx_store.get_cached_artist(lastfm_name)
         if cached and cached.get("itunes_artist_id"):
             age = int(time.time()) - int(cached.get("last_resolved_ts") or 0)
             cached_conf = int(cached.get("confidence") or 0)
@@ -250,8 +250,8 @@ def resolve_artist(lastfm_name: str, force: bool = False) -> dict:
 def _write_cache(lastfm_name: str, result: dict, resolution_method: str = None):
     """Persist resolution result to cc.db artist_identity_cache (additive COALESCE upsert)."""
     try:
-        from app.db import cc_store
-        cc_store.cache_artist(
+        from app.db import rythmx_store
+        rythmx_store.cache_artist(
             lastfm_name,
             itunes_artist_id=result.get("itunes_artist_id"),
             confidence=result.get("confidence", 80),

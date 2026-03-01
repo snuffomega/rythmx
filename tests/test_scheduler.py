@@ -9,7 +9,7 @@ Mocked boundaries:
   - app.clients.last_fm_client      (Last.fm API)
   - app.clients.music_client        (iTunes / Deezer catalog)
   - app.services.identity_resolver
-  - app.runners.scheduler.cc_store  (rythmx's own cc.db — patch where used, not defined)
+  - app.runners.scheduler.rythmx_store  (rythmx's own rythmx.db — patch where used, not defined)
   - app.db.get_library_reader       (SoulSync / Plex reader)
 
 Run with: pytest tests/test_scheduler.py -v
@@ -35,15 +35,15 @@ def _release(artist="Soulive", title="Flowers", release_date="2026-03-01",
 
 def _default_settings(**overrides):
     base = {
-        "cc_min_listens": "5",
-        "cc_lookback_days": "30",
-        "cc_max_per_cycle": "10",
-        "cc_period": "1month",
-        "cc_auto_push_playlist": "false",
+        "min_listens": "5",
+        "lookback_days": "30",
+        "max_per_cycle": "10",
+        "period": "1month",
+        "auto_push_playlist": "false",
         "nr_ignore_keywords": "",
         "nr_ignore_artists": "",
-        "cc_playlist_prefix": "New Music",
-        "cc_max_playlist_tracks": "50",
+        "playlist_prefix": "New Music",
+        "max_playlist_tracks": "50",
     }
     base.update(overrides)
     return base
@@ -67,7 +67,7 @@ def _run_cycle(run_mode="fetch", top_artists=None, releases=None,
                owned_rating_key=None, settings=None, force_refresh=False):
     """
     Call _execute_cycle() with all external boundaries mocked.
-    Returns (result_dict, mock_cc_store).
+    Returns (result_dict, mock_rythmx_store).
     """
     if top_artists is None:
         top_artists = {"Soulive": 10}
@@ -85,7 +85,7 @@ def _run_cycle(run_mode="fetch", top_artists=None, releases=None,
     mock_store.list_playlists.return_value = []
 
     with (
-        patch("app.runners.scheduler.cc_store", mock_store),
+        patch("app.runners.scheduler.rythmx_store", mock_store),
         patch("app.db.get_library_reader", return_value=_mock_reader(owned_rating_key)),
         patch("app.clients.last_fm_client.get_top_artists", return_value=top_artists),
         patch("app.clients.music_client.get_new_releases_for_artist", return_value=(releases, {})),
@@ -107,7 +107,7 @@ class TestStage1:
         """Artists with plays < min_listens must not reach release discovery."""
         top_artists = {"Soulive": 10, "Low Play Band": 2}  # threshold = 5
         with patch("app.clients.music_client.get_new_releases_for_artist") as mock_releases, \
-             patch("app.runners.scheduler.cc_store") as mock_store, \
+             patch("app.runners.scheduler.rythmx_store") as mock_store, \
              patch("app.db.get_library_reader", return_value=_mock_reader()), \
              patch("app.clients.last_fm_client.get_top_artists", return_value=top_artists), \
              patch("app.clients.music_client.get_active_provider", return_value="itunes"), \
@@ -135,7 +135,7 @@ class TestStage1:
         """When no artists meet the threshold, pipeline returns early."""
         result, _ = _run_cycle(
             top_artists={"Nobody": 1},
-            settings=_default_settings(cc_min_listens="10"),
+            settings=_default_settings(min_listens="10"),
         )
         assert result["status"] == "ok"
         assert result.get("message") == "no_qualified_artists"
@@ -222,7 +222,7 @@ class TestStage4:
         reader.check_album_owned.side_effect = ["rk001", None]  # first owned, second not
 
         with (
-            patch("app.runners.scheduler.cc_store") as mock_store,
+            patch("app.runners.scheduler.rythmx_store") as mock_store,
             patch("app.db.get_library_reader", return_value=reader),
             patch("app.clients.last_fm_client.get_top_artists", return_value={"Soulive": 10}),
             patch("app.clients.music_client.get_new_releases_for_artist", return_value=(releases, {})),
@@ -300,7 +300,7 @@ class TestStage5And6:
             releases=releases,
             owned_rating_key=None,
             run_mode="fetch",
-            settings=_default_settings(cc_max_per_cycle="3"),
+            settings=_default_settings(max_per_cycle="3"),
         )
         assert result["queued"] == 3
         assert mock_store.add_to_queue.call_count == 3
@@ -341,7 +341,7 @@ class TestStage7:
             releases=[_release()],
             owned_rating_key="rk001",
             run_mode="build",
-            settings=_default_settings(cc_playlist_prefix="Weekend Picks"),
+            settings=_default_settings(playlist_prefix="Weekend Picks"),
         )
         assert result["playlist_name"].startswith("Weekend Picks_")
 

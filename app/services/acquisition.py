@@ -1,7 +1,7 @@
 """
 acquisition.py — Provider-agnostic acquisition worker.
 
-Drains the download_queue table in cc.db. Submission is stubbed until a
+Drains the download_queue table in rythmx.db. Submission is stubbed until a
 downloader (SoulSync watchlist, Lidarr, Slskd, etc.) is wired in.
 
 To add a downloader later:
@@ -16,7 +16,7 @@ POST /api/acquisition/check-now route).
 """
 import logging
 from datetime import datetime, timedelta
-from app.db import cc_store
+from app.db import rythmx_store
 
 logger = logging.getLogger(__name__)
 
@@ -31,18 +31,18 @@ def check_queue():
       2. Re-check 'submitted' items against SoulSync library; mark 'found' if present
       3. Mark 'submitted' items older than timeout_days as 'failed'
     """
-    settings = cc_store.get_all_settings()
-    timeout_days = int(settings.get("cc_acquisition_timeout_days", _TIMEOUT_DAYS_DEFAULT))
+    settings = rythmx_store.get_all_settings()
+    timeout_days = int(settings.get("acquisition_timeout_days", _TIMEOUT_DAYS_DEFAULT))
 
     # --- Step 1: pending items (stub) ---
-    pending = cc_store.get_queue(status="pending")
+    pending = rythmx_store.get_queue(status="pending")
     if pending:
         logger.info("Acquisition: %d item(s) pending (downloader not yet wired)", len(pending))
         for item in pending:
             _submit_item(item)
 
     # --- Step 2: re-check submitted items ---
-    submitted = cc_store.get_queue(status="submitted")
+    submitted = rythmx_store.get_queue(status="submitted")
     if submitted:
         _recheck_submitted(submitted)
 
@@ -55,7 +55,7 @@ def check_queue():
         except (ValueError, TypeError):
             continue
         if created_dt < cutoff:
-            cc_store.update_queue_status(item["id"], "failed",
+            rythmx_store.update_queue_status(item["id"], "failed",
                                          provider_response="timeout")
             logger.info("Acquisition: timed out '%s — %s' after %d days",
                         item["artist_name"], item["album_title"], timeout_days)
@@ -64,7 +64,7 @@ def check_queue():
 def _submit_item(queue_row: dict):
     """
     Stub submission. When a downloader is wired, POST to its API here and
-    call cc_store.update_queue_status(queue_row['id'], 'submitted').
+    call rythmx_store.update_queue_status(queue_row['id'], 'submitted').
 
     Current behaviour: log only; leave status as 'pending'.
     """
@@ -75,7 +75,7 @@ def _submit_item(queue_row: dict):
     )
     # Future:
     # response = downloader_api.request(queue_row)
-    # cc_store.update_queue_status(queue_row['id'], 'submitted', provider_response=str(response))
+    # rythmx_store.update_queue_status(queue_row['id'], 'submitted', provider_response=str(response))
 
 
 def _recheck_submitted(items: list[dict]):
@@ -94,7 +94,7 @@ def _recheck_submitted(items: list[dict]):
         artist = item["artist_name"]
         album = item["album_title"]
         try:
-            cached = cc_store.get_cached_artist(artist) or {}
+            cached = rythmx_store.get_cached_artist(artist) or {}
             ss_id = cached.get("soulsync_artist_id") or reader.get_soulsync_artist_id(artist)
             rating_key = reader.check_album_owned(
                 artist, album,
@@ -104,7 +104,7 @@ def _recheck_submitted(items: list[dict]):
                 spotify_album_id=item.get("spotify_album_id"),
             )
             if rating_key:
-                cc_store.update_queue_status(item["id"], "found",
+                rythmx_store.update_queue_status(item["id"], "found",
                                              provider_response=f"rating_key={rating_key}")
                 logger.info("Acquisition: found '%s \u2014 %s' in library (rating_key=%s)",
                             artist, album, rating_key)

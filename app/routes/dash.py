@@ -1,6 +1,6 @@
 import logging
 from flask import Blueprint, jsonify, request
-from app.db import cc_store
+from app.db import rythmx_store
 from app.clients import last_fm_client, plex_push, soulsync_api
 
 logger = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ def discovery_candidates():
 
 @dash_bp.route("/api/discovery/playlist", methods=["GET"])
 def discovery_playlist():
-    tracks = cc_store.get_playlist()
+    tracks = rythmx_store.get_playlist()
     return jsonify({"status": "ok", "playlist": tracks})
 
 
@@ -35,13 +35,13 @@ def discovery_playlist_add():
     data = request.get_json(silent=True) or {}
     if not data.get("track_id") and not data.get("spotify_track_id"):
         return jsonify({"status": "error", "message": "track_id or spotify_track_id required"}), 400
-    cc_store.add_to_playlist(data)
+    rythmx_store.add_to_playlist(data)
     return jsonify({"status": "ok"})
 
 
 @dash_bp.route("/api/discovery/playlist/<path:track_id>", methods=["DELETE"])
 def discovery_playlist_remove(track_id):
-    cc_store.remove_from_playlist(track_id)
+    rythmx_store.remove_from_playlist(track_id)
     return jsonify({"status": "ok"})
 
 
@@ -62,21 +62,21 @@ def discovery_download():
 
 @dash_bp.route("/api/discovery/publish", methods=["POST"])
 def discovery_publish():
-    tracks = cc_store.get_playlist()
+    tracks = rythmx_store.get_playlist()
     rating_keys = [t["track_id"] for t in tracks if t.get("track_id")]
     if not rating_keys:
         return jsonify({"status": "error", "message": "No owned tracks in playlist to push"}), 400
-    cc_store.create_playlist_meta("For You", source="cc", mode="library_only")
+    rythmx_store.create_playlist_meta("For You", source="new_music", mode="library_only")
     playlist_id = plex_push.create_or_update_playlist("For You", rating_keys)
     if playlist_id:
-        cc_store.update_playlist_plex_id("For You", playlist_id)
+        rythmx_store.update_playlist_plex_id("For You", playlist_id)
         return jsonify({"status": "ok", "plex_playlist_id": playlist_id})
     return jsonify({"status": "error", "message": "Plex push failed — check logs"}), 500
 
 
 @dash_bp.route("/api/discovery/export", methods=["POST"])
 def discovery_export():
-    tracks = cc_store.get_playlist()
+    tracks = rythmx_store.get_playlist()
     if not tracks:
         return jsonify({"status": "error", "message": "Playlist is empty"}), 400
     lines = ["#EXTM3U"]

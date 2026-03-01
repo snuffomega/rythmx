@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime
 from flask import Blueprint, jsonify, request
-from app.db import cc_store
+from app.db import rythmx_store
 from app import config
 from app.clients import last_fm_client, plex_push, soulsync_api
 
@@ -24,10 +24,10 @@ def settings_get():
         "soulsync_url": config.SOULSYNC_URL,
         "soulsync_db": config.SOULSYNC_DB,
         "soulsync_db_accessible": accessible,
-        "library_backend": cc_store.get_setting("library_backend") or config.LIBRARY_BACKEND,
+        "library_backend": rythmx_store.get_setting("library_backend") or config.LIBRARY_BACKEND,
         "library_accessible": accessible,
         "library_track_count": lr.get_track_count() if accessible else 0,
-        "library_last_synced": cc_store.get_setting("library_last_synced"),
+        "library_last_synced": rythmx_store.get_setting("library_last_synced"),
     })
 
 
@@ -48,7 +48,7 @@ def settings_test_plex():
 
 @settings_bp.route("/api/settings/test-soulsync", methods=["POST"])
 def settings_test_soulsync():
-    active_backend = cc_store.get_setting("library_backend") or "soulsync"
+    active_backend = rythmx_store.get_setting("library_backend") or "soulsync"
 
     if active_backend == "navidrome":
         return jsonify({"connected": False, "message": "Navidrome not yet implemented"})
@@ -56,7 +56,7 @@ def settings_test_soulsync():
         return jsonify({"connected": False, "message": "Jellyfin not yet implemented"})
     if active_backend == "plex":
         import os as _os, sqlite3 as _sq
-        db_path = config.LIBRARY_DB
+        db_path = config.RYTHMX_DB
         if not _os.path.exists(db_path):
             return jsonify({"connected": False,
                             "message": "Library DB not synced yet — click Sync Library"})
@@ -124,13 +124,13 @@ def library_status():
     from app.db import get_library_reader
     lr = get_library_reader()
     accessible = lr.is_db_accessible()
-    backend = cc_store.get_setting("library_backend") or config.LIBRARY_BACKEND
+    backend = rythmx_store.get_setting("library_backend") or config.LIBRARY_BACKEND
     return jsonify({
         "status": "ok",
         "backend": backend,
         "accessible": accessible,
         "track_count": lr.get_track_count() if accessible else 0,
-        "last_synced": cc_store.get_setting("library_last_synced"),
+        "last_synced": rythmx_store.get_setting("library_last_synced"),
     })
 
 
@@ -140,7 +140,7 @@ def library_sync():
     try:
         lr = get_library_reader()
         result = lr.sync_library()
-        cc_store.set_setting(
+        rythmx_store.set_setting(
             "library_last_synced",
             datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
         )
@@ -158,23 +158,23 @@ def settings_set_library_backend():
     backend = data.get("backend", "").lower()
     if backend not in {"soulsync", "plex", "navidrome", "jellyfin"}:
         return jsonify({"status": "error", "message": f"Invalid backend: {backend}"}), 400
-    cc_store.set_setting("library_backend", backend)
+    rythmx_store.set_setting("library_backend", backend)
     return jsonify({"status": "ok", "backend": backend})
 
 
 @settings_bp.route("/api/settings/clear-history", methods=["POST"])
 def settings_clear_history():
-    cc_store.clear_history()
+    rythmx_store.clear_history()
     return jsonify({"status": "ok"})
 
 
 @settings_bp.route("/api/settings/reset-db", methods=["POST"])
 def settings_reset_db():
-    cc_store.reset_db()
+    rythmx_store.reset_db()
     return jsonify({"status": "ok"})
 
 
 @settings_bp.route("/api/settings/clear-image-cache", methods=["POST"])
 def settings_clear_image_cache():
-    cc_store.clear_image_cache()
+    rythmx_store.clear_image_cache()
     return jsonify({"status": "ok", "message": "Image cache cleared"})

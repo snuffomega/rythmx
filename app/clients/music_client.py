@@ -13,7 +13,7 @@ MusicBrainz is NOT in the auto chain — it requires 1 req/sec and connection-re
 from Docker networking. Set MUSIC_API_PROVIDER=musicbrainz to use it explicitly.
 
 Used by Cruise Control pipeline for artist resolution and new release discovery.
-No DB access — pure API calls. Caller is responsible for caching via cc_store.
+No DB access — pure API calls. Caller is responsible for caching via rythmx_store.
 """
 import unicodedata
 import re
@@ -537,13 +537,13 @@ def get_new_releases_for_artist(
     caller — they're filtered here and available for a future "Upcoming" UI feature.
 
     artist_name       — Last.fm artist name
-    days_ago          — how far back to look (cc_lookback_days)
+    days_ago          — how far back to look (lookback_days)
     ignore_keywords   — release title substrings to skip (e.g. remix, remaster)
-    cached_ids        — dict from cc_store.get_cached_artist() with cached provider IDs
+    cached_ids        — dict from rythmx_store.get_cached_artist() with cached provider IDs
     spotify_artist_id — Spotify artist ID from SoulSync DB (skips name-based search)
     force_refresh     — bypass the 7-day cache and re-fetch from provider
     """
-    from app.db import cc_store as _cc_store
+    from app.db import rythmx_store as _cc_store
 
     cutoff = datetime.utcnow() - timedelta(days=days_ago)
     cutoff_str = cutoff.strftime("%Y-%m-%d")
@@ -553,7 +553,7 @@ def get_new_releases_for_artist(
 
     # --- Release cache check (7-day TTL) ---
     if not force_refresh:
-        cached = _cc_store.get_cached_releases(artist_name, max_age_days=7)
+        cached = _rythmx_store.get_cached_releases(artist_name, max_age_days=7)
         if cached is not None:
             releases = [
                 r for r in cached
@@ -572,7 +572,7 @@ def get_new_releases_for_artist(
         """Save all fetched releases (including upcoming) to cache; return non-upcoming.
         Always saves — even an empty list writes a sentinel so quiet artists are not
         re-fetched from the API on every run within the cache TTL window."""
-        _cc_store.save_releases_to_cache(artist_name, releases_list)
+        _rythmx_store.save_releases_to_cache(artist_name, releases_list)
         return [r for r in releases_list if not r.is_upcoming], resolved_ids
 
     # --- Spotify ---

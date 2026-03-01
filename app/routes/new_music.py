@@ -1,7 +1,7 @@
 import logging
 import threading
 from flask import Blueprint, jsonify, request
-from app.db import cc_store
+from app.db import rythmx_store
 from app import config
 from app.runners import scheduler
 
@@ -45,15 +45,15 @@ def cc_status():
 
 @new_music_bp.route("/api/cruise-control/config", methods=["GET"])
 def get_new_music_config():
-    raw = cc_store.get_all_settings()
-    bool_keys = {"cc_enabled", "cc_auto_push_playlist", "cc_dry_run"}
+    raw = rythmx_store.get_all_settings()
+    bool_keys = {"enabled", "auto_push_playlist", "dry_run"}
     int_keys = {
-        "cc_min_listens", "cc_lookback_days", "cc_max_per_cycle", "cc_cycle_hours",
-        "cc_schedule_weekday", "cc_schedule_hour",
+        "min_listens", "lookback_days", "max_per_cycle", "cycle_hours",
+        "max_playlist_tracks", "schedule_weekday", "schedule_hour",
         "release_cache_refresh_weekday", "release_cache_refresh_hour",
     }
     config_keys = bool_keys | int_keys | {
-        "cc_run_mode", "cc_playlist_prefix", "cc_period",
+        "run_mode", "playlist_prefix", "period",
         "nr_ignore_keywords", "nr_ignore_artists",
     }
     coerced = {}
@@ -70,18 +70,19 @@ def get_new_music_config():
         else:
             coerced[k] = v
     defaults = {
-        "cc_enabled": False,
-        "cc_run_mode": "build",
-        "cc_period": "1month",
-        "cc_min_listens": config.CC_MIN_LISTENS,
-        "cc_lookback_days": config.CC_LOOKBACK_DAYS,
-        "cc_max_per_cycle": config.CC_MAX_PER_CYCLE,
-        "cc_cycle_hours": 168,
-        "cc_auto_push_playlist": False,
-        "cc_playlist_prefix": "New Music",
-        "cc_schedule_weekday": 1,
-        "cc_schedule_hour": 8,
-        "cc_dry_run": False,
+        "enabled": False,
+        "run_mode": "build",
+        "period": "1month",
+        "min_listens": config.MIN_LISTENS,
+        "lookback_days": config.LOOKBACK_DAYS,
+        "max_per_cycle": config.MAX_PER_CYCLE,
+        "cycle_hours": 168,
+        "max_playlist_tracks": 50,
+        "auto_push_playlist": False,
+        "playlist_prefix": "New Music",
+        "schedule_weekday": 1,
+        "schedule_hour": 8,
+        "dry_run": False,
         "nr_ignore_keywords": "",
         "nr_ignore_artists": "",
         "release_cache_refresh_weekday": 4,
@@ -99,16 +100,16 @@ def cc_config_get():
 def save_new_music_config():
     data = request.get_json(silent=True) or {}
     allowed_keys = {
-        "cc_enabled", "cc_max_per_cycle", "cc_cycle_hours",
-        "cc_min_listens", "cc_period", "cc_lookback_days",
-        "cc_auto_push_playlist", "cc_run_mode", "cc_playlist_prefix",
-        "cc_schedule_weekday", "cc_schedule_hour",
-        "cc_dry_run", "nr_ignore_keywords", "nr_ignore_artists",
+        "enabled", "max_per_cycle", "cycle_hours",
+        "min_listens", "period", "lookback_days",
+        "auto_push_playlist", "run_mode", "playlist_prefix",
+        "max_playlist_tracks", "schedule_weekday", "schedule_hour",
+        "dry_run", "nr_ignore_keywords", "nr_ignore_artists",
         "release_cache_refresh_weekday", "release_cache_refresh_hour",
     }
     for key, value in data.items():
         if key in allowed_keys:
-            cc_store.set_setting(key, str(value))
+            rythmx_store.set_setting(key, str(value))
     return jsonify({"status": "ok"})
 
 
@@ -145,7 +146,7 @@ def cc_run_now():
 @new_music_bp.route("/api/cruise-control/history")
 def get_cycle_history():
     limit = min(int(request.args.get("limit", 100)), 500)
-    rows = cc_store.get_history(limit=limit)
+    rows = rythmx_store.get_history(limit=limit)
     history = [
         {
             "artist": r.get("artist_name", ""),
@@ -166,5 +167,5 @@ def cc_history():
 
 @new_music_bp.route("/api/release-cache/clear", methods=["POST"])
 def release_cache_clear():
-    cc_store.clear_release_cache()
+    rythmx_store.clear_release_cache()
     return jsonify({"status": "ok", "message": "release cache cleared"})

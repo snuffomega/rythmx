@@ -13,8 +13,8 @@ Functions not applicable to this backend return safe empty values:
   get_similar_artists_map()  → {}    (SoulSync-specific)
   get_soulsync_artist_id()   → None  (not applicable)
 
-library.db lives alongside cc.db in the LIBRARY_DB path (/data/cc/library.db).
-It is a derived cache — safe to delete and re-sync at any time.
+The plex library tables live inside rythmx.db (RYTHMX_DB path).
+The tables are a derived cache — safe to delete and re-sync at any time.
 """
 import sqlite3
 import time
@@ -29,8 +29,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def _connect():
-    """Return a WAL-mode connection to library.db (read/write, rythmx-owned)."""
-    conn = sqlite3.connect(config.LIBRARY_DB)
+    """Return a WAL-mode connection to rythmx.db (read/write, rythmx-owned)."""
+    conn = sqlite3.connect(config.RYTHMX_DB)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     return conn

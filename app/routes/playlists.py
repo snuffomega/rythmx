@@ -1,6 +1,6 @@
 import logging
 from flask import Blueprint, jsonify, request
-from app.db import cc_store
+from app.db import rythmx_store
 from app.clients import last_fm_client, plex_push
 
 logger = logging.getLogger(__name__)
@@ -14,7 +14,7 @@ def _build_taste_playlist_tracks(playlist_name: str) -> list[dict]:
     from app.db import get_library_reader
     sr = get_library_reader()
 
-    meta = cc_store.get_playlist_meta(playlist_name) or {}
+    meta = rythmx_store.get_playlist_meta(playlist_name) or {}
     max_tracks = int(meta.get("max_tracks") or 50)
     max_per_artist = int(meta.get("max_per_artist") or 2)
 
@@ -29,7 +29,7 @@ def _build_taste_playlist_tracks(playlist_name: str) -> list[dict]:
     artist_tracks = {}
     resolved_count = 0
     for artist_name in top_artists:
-        cached = cc_store.get_cached_artist(artist_name) or {}
+        cached = rythmx_store.get_cached_artist(artist_name) or {}
         ss_id = cached.get("soulsync_artist_id") or sr.get_soulsync_artist_id(artist_name)
         if ss_id:
             tracks = sr.get_all_tracks_for_artist(ss_id)
@@ -64,8 +64,8 @@ def _build_taste_playlist_tracks(playlist_name: str) -> list[dict]:
         }
         for t in scored
     ]
-    cc_store.save_playlist(to_save, playlist_name=playlist_name)
-    cc_store.mark_playlist_synced(playlist_name)
+    rythmx_store.save_playlist(to_save, playlist_name=playlist_name)
+    rythmx_store.mark_playlist_synced(playlist_name)
     return to_save
 
 
@@ -96,7 +96,7 @@ def _shape_imported_tracks(result: dict) -> list[dict]:
 
 @playlists_bp.route("/api/playlists", methods=["GET"])
 def playlists_list():
-    playlists = cc_store.list_playlists()
+    playlists = rythmx_store.list_playlists()
     return jsonify({"status": "ok", "playlists": playlists})
 
 
@@ -106,7 +106,7 @@ def playlists_create():
     name = (data.get("name") or "").strip()
     if not name:
         return jsonify({"status": "error", "message": "name is required"}), 400
-    if cc_store.get_playlist_meta(name):
+    if rythmx_store.get_playlist_meta(name):
         return jsonify({"status": "error", "message": f"Playlist '{name}' already exists"}), 409
 
     source = data.get("source", "manual")
@@ -119,7 +119,7 @@ def playlists_create():
         return jsonify({"status": "error",
                         "message": "source must be taste, spotify, lastfm, deezer, or manual"}), 400
 
-    cc_store.create_playlist_meta(name, source=source, source_url=source_url,
+    rythmx_store.create_playlist_meta(name, source=source, source_url=source_url,
                                   auto_sync=auto_sync, mode=mode, max_tracks=max_tracks)
 
     track_count = 0
@@ -141,8 +141,8 @@ def playlists_create():
         result = _import_external_playlist(source, source_url)
         if result["status"] != "ok":
             return jsonify(result), 400
-        cc_store.save_playlist(_shape_imported_tracks(result), playlist_name=name)
-        cc_store.mark_playlist_synced(name)
+        rythmx_store.save_playlist(_shape_imported_tracks(result), playlist_name=name)
+        rythmx_store.mark_playlist_synced(name)
         track_count = result["track_count"]
         owned_count = result["owned_count"]
 
@@ -152,13 +152,13 @@ def playlists_create():
 
 @playlists_bp.route("/api/playlists/<path:name>", methods=["DELETE"])
 def playlists_delete(name):
-    cc_store.delete_playlist(name)
+    rythmx_store.delete_playlist(name)
     return jsonify({"status": "ok"})
 
 
 @playlists_bp.route("/api/playlists/<path:name>/tracks", methods=["GET"])
 def playlists_tracks(name):
-    rows = cc_store.get_playlist(playlist_name=name)
+    rows = rythmx_store.get_playlist(playlist_name=name)
     tracks = [
         {
             "row_id":             r["id"],
@@ -170,7 +170,7 @@ def playlists_tracks(name):
             "is_owned":           bool(r.get("is_owned", 0)),
             "score":              r.get("score"),
             "acquisition_status": (
-                cc_store.get_queue_status(
+                rythmx_store.get_queue_status(
                     r.get("artist_name", ""), r.get("album_name", "")
                 )
                 if not r.get("is_owned", 0) else None
@@ -187,9 +187,9 @@ def playlists_update(name):
     data = request.get_json(silent=True) or {}
     new_name = (data.get("new_name") or "").strip()
     if new_name and new_name != name:
-        cc_store.rename_playlist(name, new_name)
+        rythmx_store.rename_playlist(name, new_name)
         return jsonify({"status": "ok", "name": new_name})
-    cc_store.update_playlist_meta(
+    rythmx_store.update_playlist_meta(
         name,
         auto_sync=bool(data["auto_sync"]) if data.get("auto_sync") is not None else None,
         mode=data.get("mode"),
@@ -202,14 +202,14 @@ def playlists_update(name):
 @playlists_bp.route("/api/playlists/<path:name>/tracks/<int:row_id>", methods=["DELETE"])
 def playlists_remove_track(name, row_id):
     """Remove a single track row from a playlist by cc_playlist.id."""
-    cc_store.remove_playlist_row(row_id)
+    rythmx_store.remove_playlist_row(row_id)
     return jsonify({"status": "ok"})
 
 
 @playlists_bp.route("/api/playlists/<path:name>/build", methods=["POST"])
 def playlists_build(name):
-    if not cc_store.get_playlist_meta(name):
-        cc_store.create_playlist_meta(name, source="taste")
+    if not rythmx_store.get_playlist_meta(name):
+        rythmx_store.create_playlist_meta(name, source="taste")
     try:
         tracks = _build_taste_playlist_tracks(name)
         return jsonify({"status": "ok", "track_count": len(tracks),
@@ -222,8 +222,8 @@ def playlists_build(name):
 @playlists_bp.route("/api/playlists/<path:name>/rebuild", methods=["POST"])
 def playlists_rebuild(name):
     """Alias for /build — rebuild a taste-based playlist."""
-    if not cc_store.get_playlist_meta(name):
-        cc_store.create_playlist_meta(name, source="taste")
+    if not rythmx_store.get_playlist_meta(name):
+        rythmx_store.create_playlist_meta(name, source="taste")
     try:
         tracks = _build_taste_playlist_tracks(name)
         return jsonify({"status": "ok", "track_count": len(tracks),
@@ -235,7 +235,7 @@ def playlists_rebuild(name):
 
 def _sync_external(name: str, req_data: dict) -> tuple:
     """Shared logic for /import and /sync endpoints."""
-    meta = cc_store.get_playlist_meta(name) or {}
+    meta = rythmx_store.get_playlist_meta(name) or {}
     source = meta.get("source", "spotify")
     source_url = meta.get("source_url") or req_data.get("source_url")
     if not source_url:
@@ -243,8 +243,8 @@ def _sync_external(name: str, req_data: dict) -> tuple:
     result = _import_external_playlist(source, source_url)
     if result["status"] != "ok":
         return None, jsonify(result), 400
-    cc_store.save_playlist(_shape_imported_tracks(result), playlist_name=name)
-    cc_store.mark_playlist_synced(name)
+    rythmx_store.save_playlist(_shape_imported_tracks(result), playlist_name=name)
+    rythmx_store.mark_playlist_synced(name)
     return result, None, None
 
 
@@ -269,20 +269,20 @@ def playlists_sync(name):
 
 @playlists_bp.route("/api/playlists/<path:name>/publish", methods=["POST"])
 def playlists_publish(name):
-    tracks = cc_store.get_playlist(playlist_name=name)
+    tracks = rythmx_store.get_playlist(playlist_name=name)
     rating_keys = [t["track_id"] for t in tracks if t.get("track_id") and t.get("is_owned", 1)]
     if not rating_keys:
         return jsonify({"status": "error", "message": "No owned tracks in playlist to push"}), 400
     playlist_id = plex_push.create_or_update_playlist(name, rating_keys)
     if playlist_id:
-        cc_store.update_playlist_plex_id(name, playlist_id)
+        rythmx_store.update_playlist_plex_id(name, playlist_id)
         return jsonify({"status": "ok", "plex_playlist_id": playlist_id})
     return jsonify({"status": "error", "message": "Plex push failed — check logs"}), 500
 
 
 @playlists_bp.route("/api/playlists/<path:name>/export", methods=["POST"])
 def playlists_export(name):
-    tracks = cc_store.get_playlist(playlist_name=name)
+    tracks = rythmx_store.get_playlist(playlist_name=name)
     if not tracks:
         return jsonify({"status": "error", "message": "Playlist is empty"}), 400
     lines = ["#EXTM3U"]
@@ -299,7 +299,7 @@ def playlists_export(name):
 def playlists_settings(name):
     """Update auto_sync / mode for a playlist."""
     data = request.get_json(silent=True) or {}
-    cc_store.update_playlist_meta(
+    rythmx_store.update_playlist_meta(
         name,
         auto_sync=bool(data["auto_sync"]) if data.get("auto_sync") is not None else None,
         mode=data.get("mode"),

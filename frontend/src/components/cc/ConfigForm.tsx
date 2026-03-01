@@ -75,11 +75,11 @@ export function CCConfigForm({
                 { value: 'build', label: 'Build' },
                 { value: 'fetch', label: 'Fetch' },
               ] as const).map(({ value, label }) => {
-                const active = (form.cc_run_mode ?? 'build') === value;
+                const active = (form.run_mode ?? 'build') === value;
                 return (
                   <button
                     key={value}
-                    onClick={() => update('cc_run_mode', value)}
+                    onClick={() => update('run_mode', value)}
                     className={`px-4 py-1.5 text-sm font-semibold transition-all duration-150 border-r border-[#2a2a2a] last:border-r-0 ${
                       active ? 'bg-[#1e1e1e] text-text-primary' : 'text-[#3a3a3a] hover:text-[#666]'
                     }`}
@@ -90,7 +90,7 @@ export function CCConfigForm({
               })}
             </div>
             <p className="text-[#555] text-xs leading-relaxed">
-              {(form.cc_run_mode ?? 'build') === 'build'
+              {(form.run_mode ?? 'build') === 'build'
                 ? 'Creates a curated playlist of new releases from artists in your library. Browse at your own pace.'
                 : 'Queues new releases directly into your acquisition pipeline for hands-off library growth.'}
             </p>
@@ -100,7 +100,7 @@ export function CCConfigForm({
             <div className="flex items-center justify-between mb-1.5">
               <label className="label mb-0">Scrobbling Period</label>
               <span className="text-accent text-xs font-semibold">
-                {PERIOD_LABELS.find(p => p.value === (form.cc_period ?? '1month'))?.label ?? ''}
+                {PERIOD_LABELS.find(p => p.value === (form.period ?? '1month'))?.label ?? ''}
               </span>
             </div>
             <div className="flex items-center gap-3 mb-1">
@@ -111,13 +111,13 @@ export function CCConfigForm({
                   min={0}
                   max={5}
                   step={1}
-                  value={PERIOD_LABELS.findIndex(p => p.value === (form.cc_period ?? '1month'))}
-                  onChange={e => update('cc_period', PERIOD_LABELS[Number(e.target.value)].value)}
+                  value={PERIOD_LABELS.findIndex(p => p.value === (form.period ?? '1month'))}
+                  onChange={e => update('period', PERIOD_LABELS[Number(e.target.value)].value)}
                   className="w-full accent-accent h-1.5"
                 />
                 <div className="flex justify-between text-[#2a2a2a] text-[10px] mt-0.5">
                   {PERIOD_LABELS.map(p => (
-                    <span key={p.value} className={`w-px text-center ${(form.cc_period ?? '1month') === p.value ? 'text-accent' : ''}`}>|</span>
+                    <span key={p.value} className={`w-px text-center ${(form.period ?? '1month') === p.value ? 'text-accent' : ''}`}>|</span>
                   ))}
                 </div>
               </div>
@@ -128,25 +128,25 @@ export function CCConfigForm({
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
             <div>
               <label className="label">Scrobbling Period</label>
-              <select className="select" value={form.cc_period ?? '1month'} onChange={e => update('cc_period', e.target.value)}>
+              <select className="select" value={form.period ?? '1month'} onChange={e => update('period', e.target.value)}>
                 {PERIOD_LABELS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
               </select>
             </div>
             <div>
               <label className="label">Min Artist Scrobbles</label>
-              <input type="number" className="input" value={form.cc_min_listens ?? ''} onChange={e => update('cc_min_listens', Number(e.target.value))} min={1} />
+              <input type="number" className="input" value={form.min_listens ?? ''} onChange={e => update('min_listens', Number(e.target.value))} min={1} />
             </div>
             <div>
               <label className="label">Lookback Days</label>
-              <input type="number" className="input" value={form.cc_lookback_days ?? ''} onChange={e => update('cc_lookback_days', Number(e.target.value))} min={1} />
+              <input type="number" className="input" value={form.lookback_days ?? ''} onChange={e => update('lookback_days', Number(e.target.value))} min={1} />
             </div>
             <div>
               <label className="label">Max Per Cycle</label>
-              <input type="number" className="input" value={form.cc_max_per_cycle ?? ''} onChange={e => update('cc_max_per_cycle', Number(e.target.value))} min={1} />
+              <input type="number" className="input" value={form.max_per_cycle ?? ''} onChange={e => update('max_per_cycle', Number(e.target.value))} min={1} />
             </div>
             <div>
               <label className="label">Max Playlist Tracks</label>
-              <input type="number" className="input" value={form.cc_max_playlist_tracks ?? ''} onChange={e => update('cc_max_playlist_tracks', Number(e.target.value))} min={10} max={500} />
+              <input type="number" className="input" value={form.max_playlist_tracks ?? ''} onChange={e => update('max_playlist_tracks', Number(e.target.value))} min={10} max={500} />
             </div>
           </div>
         </div>
@@ -156,14 +156,14 @@ export function CCConfigForm({
         stage={statusData?.stage}
         totalStages={statusData?.total_stages}
         state={statusData?.state ?? 'idle'}
-        runMode={form.cc_run_mode ?? 'build'}
+        runMode={form.run_mode ?? 'build'}
       />
 
       <section className="border-t border-[#1a1a1a] pt-6">
         <h2 className="text-text-muted text-xs font-semibold uppercase tracking-widest mb-5">Automation</h2>
         <div className="flex items-center gap-6 flex-wrap">
           <div className="flex items-center gap-3">
-            <Toggle on={!!form.cc_auto_push_playlist} onChange={v => update('cc_auto_push_playlist', v)} />
+            <Toggle on={!!form.auto_push_playlist} onChange={v => update('auto_push_playlist', v)} />
             <div>
               <p className="text-text-primary text-sm font-medium">Auto Publish</p>
               <p className="text-[#444] text-xs">Push to Plex after each run</p>
@@ -171,15 +171,15 @@ export function CCConfigForm({
           </div>
           <div className="w-px h-8 bg-[#1a1a1a] self-center" />
           <div className="flex items-center gap-3">
-            <Toggle on={!!form.cc_enabled} onChange={v => update('cc_enabled', v)} />
+            <Toggle on={!!form.enabled} onChange={v => update('enabled', v)} />
             <div>
               <p className="text-text-primary text-sm font-medium">Weekly Schedule</p>
               <p className="text-[#444] text-xs">Run on a set day and time</p>
             </div>
-            <select className="select !w-auto ml-2" value={form.cc_schedule_weekday ?? 1} onChange={e => update('cc_schedule_weekday', Number(e.target.value))}>
+            <select className="select !w-auto ml-2" value={form.schedule_weekday ?? 1} onChange={e => update('schedule_weekday', Number(e.target.value))}>
               {WEEKDAYS.map((d, i) => <option key={i} value={i}>{d}</option>)}
             </select>
-            <select className="select !w-auto" value={form.cc_schedule_hour ?? 8} onChange={e => update('cc_schedule_hour', Number(e.target.value))}>
+            <select className="select !w-auto" value={form.schedule_hour ?? 8} onChange={e => update('schedule_hour', Number(e.target.value))}>
               {HOURS.map(h => <option key={h.value} value={h.value}>{h.label}</option>)}
             </select>
           </div>
@@ -196,7 +196,7 @@ export function CCConfigForm({
           <div className="mt-5 space-y-5">
             <div>
               <label className="label">Playlist Name</label>
-              <input className="input" value={form.cc_playlist_prefix ?? ''} onChange={e => update('cc_playlist_prefix', e.target.value)} placeholder="New Music" />
+              <input className="input" value={form.playlist_prefix ?? ''} onChange={e => update('playlist_prefix', e.target.value)} placeholder="New Music" />
               <p className="text-[#444] text-xs mt-1">CC appends the date — e.g. "New Music — Jan 2026"</p>
             </div>
             <div>
@@ -235,7 +235,7 @@ export function CCConfigForm({
             </div>
 
             <div className="border-t border-[#1a1a1a] pt-5 flex items-center gap-3">
-              <Toggle on={!!form.cc_dry_run} onChange={v => update('cc_dry_run', v)} />
+              <Toggle on={!!form.dry_run} onChange={v => update('dry_run', v)} />
               <div>
                 <p className="text-text-primary text-sm font-medium">Dry Run</p>
                 <p className="text-[#444] text-xs mt-0.5">Simulate a run without making any changes</p>

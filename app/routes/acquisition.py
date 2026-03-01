@@ -1,6 +1,6 @@
 import logging
 from flask import Blueprint, jsonify, request
-from app.db import cc_store
+from app.db import rythmx_store
 
 logger = logging.getLogger(__name__)
 
@@ -11,7 +11,7 @@ acquisition_bp = Blueprint("acquisition", __name__)
 def acquisition_queue_get():
     status = request.args.get("status")
     playlist = request.args.get("playlist")
-    rows = cc_store.get_queue(status=status, playlist_name=playlist)
+    rows = rythmx_store.get_queue(status=status, playlist_name=playlist)
     items = [
         {
             "id": r.get("id"),
@@ -35,7 +35,7 @@ def acquisition_queue_add():
     album = data.get("album_title", "").strip()
     if not artist or not album:
         return jsonify({"status": "error", "message": "artist_name and album_title required"}), 400
-    queue_id = cc_store.add_to_queue(
+    queue_id = rythmx_store.add_to_queue(
         artist_name=artist, album_title=album,
         release_date=data.get("release_date"),
         kind=data.get("kind"),
@@ -47,7 +47,7 @@ def acquisition_queue_add():
 
 @acquisition_bp.route("/api/acquisition/stats", methods=["GET"])
 def acquisition_stats():
-    stats = cc_store.get_queue_stats()
+    stats = rythmx_store.get_queue_stats()
     return jsonify({"status": "ok", **stats})
 
 
@@ -57,7 +57,7 @@ def acquisition_check_now():
     try:
         from app.services import acquisition
         acquisition.check_queue()
-        stats = cc_store.get_queue_stats()
+        stats = rythmx_store.get_queue_stats()
         return jsonify({"status": "ok", "message": "Acquisition worker run complete", **stats})
     except Exception as e:
         logger.warning("acquisition check-now failed: %s", e)

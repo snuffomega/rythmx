@@ -181,7 +181,7 @@
                         <button type="button" data-mode="build"   class="cc-mode-btn flex-1 px-3 py-2 text-sm">Build</button>
                         <button type="button" data-mode="fetch"   class="cc-mode-btn flex-1 px-3 py-2 text-sm">Fetch</button>
                     </div>
-                    <input type="hidden" id="cc-run-mode" name="cc_run_mode" value="build">
+                    <input type="hidden" id="cc-run-mode" name="run_mode" value="build">
                 </div>
 
                 <!-- Playlist Name card -->
@@ -190,7 +190,7 @@
                         <i data-lucide="list-music" class="w-4 h-4 text-accent-primary"></i>Playlist Name
                     </h3>
                     <p class="text-xs text-text-muted mb-4">Date suffix added automatically (e.g. New Music_2026-02-25)</p>
-                    <input type="text" id="cc-playlist-prefix" name="cc_playlist_prefix"
+                    <input type="text" id="cc-playlist-prefix" name="playlist_prefix"
                            class="w-full bg-surface-highlight border border-border-default rounded-xl px-4 py-3 text-text-primary focus:outline-none focus:border-accent-primary transition-colors"
                            placeholder="New Music">
                 </div>
@@ -229,13 +229,13 @@
                         <div class="space-y-5">
                             <div>
                                 <label class="block text-sm text-text-secondary mb-2">Minimum Play Count</label>
-                                <input type="number" id="cc-min-listens" name="cc_min_listens" value="10" min="1" max="1000"
+                                <input type="number" id="cc-min-listens" name="min_listens" value="10" min="1" max="1000"
                                        class="w-full bg-surface-highlight border border-border-default rounded-xl px-4 py-3 text-text-primary focus:outline-none focus:border-accent-primary transition-colors">
                                 <p class="text-xs text-text-muted mt-1">Artists with at least X plays in the selected period</p>
                             </div>
                             <div>
                                 <label class="block text-sm text-text-secondary mb-2">Listening Period</label>
-                                <select id="cc-period" name="cc_period"
+                                <select id="cc-period" name="period"
                                         class="w-full bg-surface-highlight border border-border-default rounded-xl px-4 py-3 text-text-primary focus:outline-none focus:border-accent-primary transition-colors appearance-none cursor-pointer">
                                     <option value="7day">Last 7 days</option>
                                     <option value="1month">Last 30 days</option>
@@ -247,18 +247,18 @@
                             </div>
                             <div>
                                 <label class="block text-sm text-text-secondary mb-2">Release Lookback (days)</label>
-                                <input type="number" id="cc-lookback" name="cc_lookback_days" value="90" min="7" max="365"
+                                <input type="number" id="cc-lookback" name="lookback_days" value="90" min="7" max="365"
                                        class="w-full bg-surface-highlight border border-border-default rounded-xl px-4 py-3 text-text-primary focus:outline-none focus:border-accent-primary transition-colors">
                                 <p class="text-xs text-text-muted mt-1">Consider releases from the last X days</p>
                             </div>
                             <div>
                                 <label class="block text-sm text-text-secondary mb-2">Max Downloads per Cycle</label>
-                                <input type="number" id="cc-max" name="cc_max_per_cycle" value="10" min="1" max="500"
+                                <input type="number" id="cc-max" name="max_per_cycle" value="10" min="1" max="500"
                                        class="w-full bg-surface-highlight border border-border-default rounded-xl px-4 py-3 text-text-primary focus:outline-none focus:border-accent-primary transition-colors">
                             </div>
                             <div>
                                 <label class="block text-sm text-text-secondary mb-2">Max Playlist Tracks</label>
-                                <input type="number" id="cc-max-playlist" name="cc_max_playlist_tracks" value="50" min="10" max="500"
+                                <input type="number" id="cc-max-playlist" name="max_playlist_tracks" value="50" min="10" max="500"
                                        class="w-full bg-surface-highlight border border-border-default rounded-xl px-4 py-3 text-text-primary focus:outline-none focus:border-accent-primary transition-colors">
                                 <p class="text-xs text-text-muted mt-1">Max owned tracks saved to playlist per CC run</p>
                             </div>
@@ -278,7 +278,7 @@
                                     <p class="text-xs text-text-muted">Push playlist after each cycle</p>
                                 </div>
                                 <label class="relative inline-flex items-center cursor-pointer">
-                                    <input type="checkbox" id="cc-auto-push" name="cc_auto_push_playlist" class="sr-only peer">
+                                    <input type="checkbox" id="cc-auto-push" name="auto_push_playlist" class="sr-only peer">
                                     <div class="w-11 h-6 bg-surface-highlight rounded-full peer peer-checked:bg-accent-success transition-colors"></div>
                                     <div class="absolute left-1 top-1 w-4 h-4 bg-text-muted rounded-full peer-checked:translate-x-5 peer-checked:bg-white transition-all"></div>
                                 </label>
@@ -289,7 +289,7 @@
                                     <p class="text-xs text-text-muted">Run automatically on a set day and time</p>
                                 </div>
                                 <div class="flex items-center gap-2 shrink-0 flex-wrap justify-end">
-                                    <select id="cc-schedule-weekday" name="cc_schedule_weekday"
+                                    <select id="cc-schedule-weekday" name="schedule_weekday"
                                             class="bg-surface-highlight border border-border-default rounded-xl px-3 py-2 text-text-primary text-sm focus:outline-none focus:border-accent-primary transition-colors appearance-none cursor-pointer">
                                         <option value="0">Monday</option>
                                         <option value="1">Tuesday</option>
@@ -300,12 +300,12 @@
                                         <option value="6">Sunday</option>
                                     </select>
                                     <span class="text-text-secondary text-sm">at</span>
-                                    <input type="number" id="cc-schedule-hour" name="cc_schedule_hour"
+                                    <input type="number" id="cc-schedule-hour" name="schedule_hour"
                                            value="5" min="0" max="23"
                                            class="w-14 bg-surface-highlight border border-border-default rounded-xl px-2 py-2 text-text-primary text-sm text-center focus:outline-none focus:border-accent-primary transition-colors">
                                     <span class="text-text-secondary text-sm">UTC</span>
                                     <label class="relative inline-flex items-center cursor-pointer">
-                                        <input type="checkbox" id="cc-enabled" name="cc_enabled" class="sr-only peer">
+                                        <input type="checkbox" id="cc-enabled" name="enabled" class="sr-only peer">
                                         <div class="w-11 h-6 bg-surface-highlight rounded-full peer peer-checked:bg-accent-primary transition-colors"></div>
                                         <div class="absolute left-1 top-1 w-4 h-4 bg-text-muted rounded-full peer-checked:translate-x-5 peer-checked:bg-white transition-all"></div>
                                     </label>
