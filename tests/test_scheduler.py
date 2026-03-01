@@ -6,11 +6,11 @@ filesystem access. Tests verify stage behaviour at each boundary, not
 internal implementation details.
 
 Mocked boundaries:
-  - app.clients.last_fm_client   (Last.fm API)
-  - app.clients.music_client     (iTunes / Deezer catalog)
+  - app.clients.last_fm_client      (Last.fm API)
+  - app.clients.music_client        (iTunes / Deezer catalog)
   - app.services.identity_resolver
-  - app.db.cc_store              (rythmx's own cc.db)
-  - app.db.get_library_reader    (SoulSync / Plex reader)
+  - app.runners.scheduler.cc_store  (rythmx's own cc.db — patch where used, not defined)
+  - app.db.get_library_reader       (SoulSync / Plex reader)
 
 Run with: pytest tests/test_scheduler.py -v
 """
@@ -85,7 +85,7 @@ def _run_cycle(run_mode="fetch", top_artists=None, releases=None,
     mock_store.list_playlists.return_value = []
 
     with (
-        patch("app.db.cc_store", mock_store),
+        patch("app.runners.scheduler.cc_store", mock_store),
         patch("app.db.get_library_reader", return_value=_mock_reader(owned_rating_key)),
         patch("app.clients.last_fm_client.get_top_artists", return_value=top_artists),
         patch("app.clients.music_client.get_new_releases_for_artist", return_value=(releases, {})),
@@ -107,7 +107,7 @@ class TestStage1:
         """Artists with plays < min_listens must not reach release discovery."""
         top_artists = {"Soulive": 10, "Low Play Band": 2}  # threshold = 5
         with patch("app.clients.music_client.get_new_releases_for_artist") as mock_releases, \
-             patch("app.db.cc_store") as mock_store, \
+             patch("app.runners.scheduler.cc_store") as mock_store, \
              patch("app.db.get_library_reader", return_value=_mock_reader()), \
              patch("app.clients.last_fm_client.get_top_artists", return_value=top_artists), \
              patch("app.clients.music_client.get_active_provider", return_value="itunes"), \
@@ -222,7 +222,7 @@ class TestStage4:
         reader.check_album_owned.side_effect = ["rk001", None]  # first owned, second not
 
         with (
-            patch("app.db.cc_store") as mock_store,
+            patch("app.runners.scheduler.cc_store") as mock_store,
             patch("app.db.get_library_reader", return_value=reader),
             patch("app.clients.last_fm_client.get_top_artists", return_value={"Soulive": 10}),
             patch("app.clients.music_client.get_new_releases_for_artist", return_value=(releases, {})),
