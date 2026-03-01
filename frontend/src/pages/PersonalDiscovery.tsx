@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Play, Loader2, Users, Sparkles, ChevronDown, ChevronUp, Save, Circle } from 'lucide-react';
 import { personalDiscoveryApi } from '../services/api';
+import { getImageUrl } from '../utils/imageUrl';
 import type { PersonalDiscoveryConfig, PersonalDiscoveryResult } from '../types';
 
 const SEED_PERIODS: Array<{ value: PersonalDiscoveryConfig['seed_period']; label: string; short: string }> = [
@@ -90,7 +91,7 @@ function ArtistResultCard({ result }: { result: PersonalDiscoveryResult }) {
     <div className="group flex items-center gap-3 px-4 py-3 bg-[#0d0d0d] border border-[#1a1a1a] hover:border-[#2a2a2a] transition-colors cursor-pointer">
       <div className="w-12 h-12 flex-shrink-0 overflow-hidden">
         {result.image ? (
-          <img src={result.image} alt={result.artist} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+          <img src={getImageUrl(result.image)} alt={result.artist} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
         ) : (
           <div className="w-full h-full flex items-center justify-center" style={{ background: `hsl(${hue},30%,12%)` }}>
             <Users size={18} className="text-[#444]" />

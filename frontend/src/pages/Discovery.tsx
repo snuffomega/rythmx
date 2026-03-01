@@ -2,6 +2,7 @@ import { Music2, Users, ChevronRight, Disc3, Sparkles, Radio } from 'lucide-reac
 import { useApi } from '../hooks/useApi';
 import { useImage } from '../hooks/useImage';
 import { statsApi, cruiseControlApi, acquisitionApi } from '../services/api';
+import { getImageUrl } from '../utils/imageUrl';
 import type { Artist, Track, QueueItem } from '../types';
 
 interface DiscoveryProps {
@@ -39,7 +40,7 @@ function AlbumTile({
       >
         {src ? (
           <img
-            src={src}
+            src={getImageUrl(src)}
             alt={title}
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
           />
@@ -68,7 +69,7 @@ function ArtistTile({ artist }: { artist: Artist }) {
       >
         {src ? (
           <img
-            src={src}
+            src={getImageUrl(src)}
             alt={artist.name}
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
           />

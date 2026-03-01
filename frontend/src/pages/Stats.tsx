@@ -1,6 +1,7 @@
-import { Loader2 } from 'lucide-react';
+import { Loader2, X, ChevronRight } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
 import { statsApi } from '../services/api';
+import { getImageUrl } from '../utils/imageUrl';
 import type { Period, Artist, Track, TopAlbum } from '../types';
 import { CollageGrid, normalizeItems } from '../components/CollageGrid';
 import type { ContentType, OverlayOptions } from '../components/CollageGrid';
@@ -20,9 +21,8 @@ const CONTENT_TYPES: Array<{ key: ContentType; label: string }> = [
   { key: 'tracks', label: 'Tracks' },
 ];
 
-const INITIAL_LIMIT = 20;
-const LOAD_MORE_STEP = 15;
-const MAX_LIMIT = 50;
+const GRID_LIMIT = 20;
+const MODAL_LIMIT = 100;
 
 const LS_KEY = 'stats_prefs';
 
@@ -66,50 +66,145 @@ function savePrefs(prefs: StatsPrefs) {
   } catch {}
 }
 
+// ---------------------------------------------------------------------------
+// See More Modal
+// ---------------------------------------------------------------------------
+
+interface StatsModalProps {
+  open: boolean;
+  onClose: () => void;
+  contentType: ContentType;
+  period: Period;
+}
+
+function StatsModal({ open, onClose, contentType, period }: StatsModalProps) {
+  const [data, setData] = useState<Artist[] | Track[] | TopAlbum[] | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setLoading(true);
+    setData(null);
+    const fetch = async () => {
+      try {
+        let result: Artist[] | Track[] | TopAlbum[];
+        if (contentType === 'artists') result = await statsApi.getTopArtists(period, MODAL_LIMIT);
+        else if (contentType === 'albums') result = await statsApi.getTopAlbums(period, MODAL_LIMIT);
+        else result = await statsApi.getTopTracks(period, MODAL_LIMIT);
+        setData(result);
+      } catch {
+        setData([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetch();
+  }, [open, contentType, period]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  const items = data ? normalizeItems(data, contentType) : [];
+  const label = CONTENT_TYPES.find(c => c.key === contentType)?.label ?? '';
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative bg-[#0d0d0d] border border-[#1a1a1a] w-full max-w-lg mx-4 max-h-[85vh] flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[#1a1a1a] flex-shrink-0">
+          <span className="text-text-primary text-sm font-semibold">
+            Top {label}
+          </span>
+          <button onClick={onClose} className="text-text-muted hover:text-text-primary transition-colors">
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* List */}
+        <div className="overflow-y-auto flex-1">
+          {loading && (
+            <div className="flex items-center justify-center py-16">
+              <Loader2 size={20} className="animate-spin text-text-muted" />
+            </div>
+          )}
+          {!loading && items.length === 0 && (
+            <p className="text-center text-text-muted text-sm py-16">No data for this period.</p>
+          )}
+          {!loading && items.map((item, i) => (
+            <div key={`${item.name}:${item.artist ?? ''}`} className="flex items-center gap-3 px-4 py-2.5 border-b border-[#111] hover:bg-[#111] transition-colors">
+              <span className="text-[11px] font-black text-[#444] w-6 text-right flex-shrink-0">{i + 1}</span>
+              <div className="w-10 h-10 flex-shrink-0 overflow-hidden bg-[#1a1a1a]">
+                {item.image ? (
+                  <img src={getImageUrl(item.image)} alt={item.name} loading="lazy" className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full" style={{ background: `hsl(${item.name.charCodeAt(0) % 360},20%,12%)` }} />
+                )}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-text-primary text-sm font-medium truncate">{item.name}</p>
+                {item.artist && (
+                  <p className="text-text-muted text-xs truncate">{item.artist}</p>
+                )}
+              </div>
+              {item.playcount != null && (
+                <span className="text-accent text-xs font-medium flex-shrink-0 tabular-nums">
+                  {item.playcount.toLocaleString()}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Stats page
+// ---------------------------------------------------------------------------
+
 export function Stats() {
   const saved = loadPrefs();
   const [period, setPeriod] = useState<Period>(saved.period);
   const [contentType, setContentType] = useState<ContentType>(saved.contentType);
   const [overlays, setOverlays] = useState<OverlayOptions>(saved.overlays);
-  const [limit, setLimit] = useState(INITIAL_LIMIT);
   const [data, setData] = useState<Artist[] | Track[] | TopAlbum[] | null>(null);
   const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
+  const [seeMoreOpen, setSeeMoreOpen] = useState(false);
 
-  const fetchData = useCallback(async (p: Period, ct: ContentType, l: number, isLoadMore = false) => {
-    if (isLoadMore) setLoadingMore(true);
-    else setLoading(true);
-
+  const fetchData = useCallback(async (p: Period, ct: ContentType) => {
+    setLoading(true);
     try {
       let result: Artist[] | Track[] | TopAlbum[];
-      if (ct === 'artists') result = await statsApi.getTopArtists(p, l);
-      else if (ct === 'albums') result = await statsApi.getTopAlbums(p, l);
-      else result = await statsApi.getTopTracks(p, l);
+      if (ct === 'artists') result = await statsApi.getTopArtists(p, GRID_LIMIT);
+      else if (ct === 'albums') result = await statsApi.getTopAlbums(p, GRID_LIMIT);
+      else result = await statsApi.getTopTracks(p, GRID_LIMIT);
       setData(result);
     } catch {
       setData([]);
     } finally {
-      if (isLoadMore) setLoadingMore(false);
-      else setLoading(false);
+      setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    setLimit(INITIAL_LIMIT);
     setData(null);
-    fetchData(period, contentType, INITIAL_LIMIT);
+    fetchData(period, contentType);
   }, [period, contentType, fetchData]);
 
   useEffect(() => {
     savePrefs({ period, contentType, overlays });
   }, [period, contentType, overlays]);
 
-  const handlePeriodChange = (p: Period) => {
-    setPeriod(p);
-  };
-
   const handleContentTypeChange = (ct: ContentType) => {
-    setData(null);  // Clear stale data in the same batch to avoid type mismatch on next render
+    setData(null);
     setContentType(ct);
   };
 
@@ -117,14 +212,7 @@ export function Stats() {
     setOverlays(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
-  const handleLoadMore = async () => {
-    const newLimit = Math.min(limit + LOAD_MORE_STEP, MAX_LIMIT);
-    setLimit(newLimit);
-    await fetchData(period, contentType, newLimit, true);
-  };
-
   const items = data ? normalizeItems(data, contentType) : [];
-  const canLoadMore = !loading && data !== null && data.length >= limit && limit < MAX_LIMIT;
 
   return (
     <div className="py-8 space-y-6">
@@ -137,7 +225,7 @@ export function Stats() {
         {PERIODS.map(p => (
           <button
             key={p.key}
-            onClick={() => handlePeriodChange(p.key)}
+            onClick={() => setPeriod(p.key)}
             className={`flex-shrink-0 px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px ${
               period === p.key
                 ? 'border-accent text-accent'
@@ -194,31 +282,28 @@ export function Stats() {
         loading={loading}
         contentType={contentType}
         overlays={overlays}
-        skeletonCount={INITIAL_LIMIT}
+        skeletonCount={GRID_LIMIT}
+        featured
       />
 
-      {canLoadMore && (
+      {!loading && items.length > 0 && (
         <div className="flex justify-center pt-2 pb-4">
           <button
-            onClick={handleLoadMore}
-            disabled={loadingMore}
-            className="flex items-center gap-2 px-6 py-2 bg-[#141414] hover:bg-[#1a1a1a] border border-[#222] text-text-secondary hover:text-text-primary text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed rounded-sm"
+            onClick={() => setSeeMoreOpen(true)}
+            className="flex items-center gap-1.5 px-5 py-2 bg-[#141414] hover:bg-[#1a1a1a] border border-[#222] text-text-muted hover:text-text-primary text-sm font-medium transition-colors rounded-sm"
           >
-            {loadingMore ? (
-              <>
-                <Loader2 size={14} className="animate-spin" />
-                Loading...
-              </>
-            ) : (
-              `Load More (${Math.min(limit + LOAD_MORE_STEP, MAX_LIMIT) - limit} more)`
-            )}
+            See More
+            <ChevronRight size={14} />
           </button>
         </div>
       )}
 
-      {!canLoadMore && !loading && data !== null && data.length > 0 && limit >= MAX_LIMIT && (
-        <p className="text-center text-[#333] text-xs pb-4">Showing top {data.length}</p>
-      )}
+      <StatsModal
+        open={seeMoreOpen}
+        onClose={() => setSeeMoreOpen(false)}
+        contentType={contentType}
+        period={period}
+      />
     </div>
   );
 }

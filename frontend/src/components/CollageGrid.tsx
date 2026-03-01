@@ -1,6 +1,8 @@
-import { Users, Music2, Disc3 } from 'lucide-react';
+import { useRef, useState, useEffect } from 'react';
+import { Users, Disc3 } from 'lucide-react';
 import type { Artist, Track, TopAlbum } from '../types';
 import { useImage } from '../hooks/useImage';
+import { getImageUrl } from '../utils/imageUrl';
 
 export type ContentType = 'artists' | 'albums' | 'tracks';
 
@@ -23,12 +25,35 @@ interface CollageGridProps {
   contentType: ContentType;
   overlays: OverlayOptions;
   skeletonCount?: number;
+  featured?: boolean;
+}
+
+// Deterministic gradient from entity name — placeholder before image resolves
+function placeholderGradient(seed: string): string {
+  const hue = seed.split('').reduce((n, c) => n + c.charCodeAt(0), 0) % 360;
+  return `linear-gradient(135deg, hsl(${hue},25%,10%) 0%, hsl(${(hue + 40) % 360},20%,7%) 100%)`;
+}
+
+// Triggers when element enters viewport (or within rootMargin of it) — fires once then disconnects
+function useInView(rootMargin = '200px') {
+  const ref = useRef<HTMLDivElement>(null);
+  const [inView, setInView] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) { setInView(true); obs.disconnect(); } },
+      { rootMargin }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
+  return { ref, inView };
 }
 
 function FallbackIcon({ type }: { type: ContentType }) {
   const cls = 'text-white/20';
   if (type === 'artists') return <Users size={28} className={cls} />;
-  if (type === 'albums') return <Disc3 size={28} className={cls} />;
   return <Disc3 size={28} className={cls} />;
 }
 
@@ -59,8 +84,34 @@ export function normalizeItems(
   }));
 }
 
-export function CollageGrid({ items, loading, contentType, overlays, skeletonCount = 20 }: CollageGridProps) {
+export function CollageGrid({ items, loading, contentType, overlays, skeletonCount = 20, featured = false }: CollageGridProps) {
   if (loading) {
+    if (featured) {
+      return (
+        <>
+          {/* Hero skeleton — desktop */}
+          <div className="hidden lg:grid gap-1.5" style={{ gridTemplateColumns: '2fr 1fr 1fr', gridTemplateRows: 'auto auto' }}>
+            <div className="row-span-2 aspect-square bg-[#141414] animate-pulse" />
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="aspect-square bg-[#141414] animate-pulse" />
+            ))}
+          </div>
+          {Array.from({ length: Math.max(0, skeletonCount - 5) }).length > 0 && (
+            <div className="hidden lg:grid grid-cols-5 gap-1.5 mt-1.5">
+              {Array.from({ length: Math.max(0, skeletonCount - 5) }).map((_, i) => (
+                <div key={i} className="aspect-square bg-[#141414] animate-pulse" />
+              ))}
+            </div>
+          )}
+          {/* Mobile skeleton */}
+          <div className="lg:hidden grid grid-cols-2 gap-1.5">
+            {Array.from({ length: skeletonCount }).map((_, i) => (
+              <div key={i} className="aspect-square bg-[#141414] animate-pulse" />
+            ))}
+          </div>
+        </>
+      );
+    }
     return (
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-1.5">
         {Array.from({ length: skeletonCount }).map((_, i) => (
@@ -80,11 +131,64 @@ export function CollageGrid({ items, loading, contentType, overlays, skeletonCou
     );
   }
 
+  if (featured) {
+    const heroItems = items.slice(0, 5);
+    const restItems = items.slice(5);
+    return (
+      <>
+        {/* Featured hero — desktop: item 1 spans 2 rows, items 2–5 fill 2×2 right */}
+        <div
+          className="hidden lg:grid gap-1.5"
+          style={{ gridTemplateColumns: '2fr 1fr 1fr', gridTemplateRows: 'auto auto' }}
+        >
+          {heroItems.map((item, i) => (
+            <CollageCard
+              key={`${item.name}:${item.artist ?? ''}`}
+              item={item}
+              rank={i + 1}
+              contentType={contentType}
+              overlays={overlays}
+              className={i === 0 ? 'row-span-2' : ''}
+            />
+          ))}
+        </div>
+
+        {/* Items 6+ — standard 5-col (desktop only) */}
+        {restItems.length > 0 && (
+          <div className="hidden lg:grid grid-cols-5 gap-1.5 mt-1.5">
+            {restItems.map((item, i) => (
+              <CollageCard
+                key={`${item.name}:${item.artist ?? ''}`}
+                item={item}
+                rank={i + 6}
+                contentType={contentType}
+                overlays={overlays}
+              />
+            ))}
+          </div>
+        )}
+
+        {/* Mobile — pure 2-col, all items */}
+        <div className="lg:hidden grid grid-cols-2 gap-1.5">
+          {items.map((item, i) => (
+            <CollageCard
+              key={`${item.name}:${item.artist ?? ''}`}
+              item={item}
+              rank={i + 1}
+              contentType={contentType}
+              overlays={overlays}
+            />
+          ))}
+        </div>
+      </>
+    );
+  }
+
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-1.5">
       {items.map((item, i) => (
         <CollageCard
-          key={i}
+          key={`${item.name}:${item.artist ?? ''}`}
           item={item}
           rank={i + 1}
           contentType={contentType}
@@ -100,11 +204,13 @@ interface CollageCardProps {
   rank: number;
   contentType: ContentType;
   overlays: OverlayOptions;
+  className?: string;
 }
 
-function CollageCard({ item, rank, contentType, overlays }: CollageCardProps) {
+function CollageCard({ item, rank, contentType, overlays, className = '' }: CollageCardProps) {
+  const { ref, inView } = useInView();
   const entityType = contentType === 'artists' ? 'artist' : contentType === 'albums' ? 'album' : 'track';
-  const resolvedImage = useImage(entityType, item.name, item.artist ?? '');
+  const resolvedImage = useImage(entityType, item.name, item.artist ?? '', !inView);
   const src = item.image || resolvedImage;
 
   const hasOverlay = (overlays.showArtist && item.artist) ||
@@ -116,16 +222,19 @@ function CollageCard({ item, rank, contentType, overlays }: CollageCardProps) {
   const showPlaycountLine = overlays.showPlaycount && item.playcount != null;
 
   return (
-    <div className="group relative aspect-square overflow-hidden bg-[#141414] cursor-pointer">
+    <div ref={ref} className={`group relative aspect-square overflow-hidden cursor-pointer ${className}`}>
       {src ? (
         <img
-          src={src}
+          src={getImageUrl(src)}
           alt={item.name}
           loading="lazy"
           className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
         />
       ) : (
-        <div className="w-full h-full flex items-center justify-center">
+        <div
+          className="w-full h-full flex items-center justify-center"
+          style={{ background: placeholderGradient(item.name) }}
+        >
           <FallbackIcon type={contentType} />
         </div>
       )}

@@ -7,7 +7,8 @@ const _resolved = new Map<string, string>();
 export function useImage(
   type: 'artist' | 'album' | 'track',
   name: string,
-  artist = ''
+  artist = '',
+  skip = false
 ): string | null {
   // Guard against undefined/null passed during stale renders (e.g. content-type switches)
   const safeName = name ?? '';
@@ -15,12 +16,15 @@ export function useImage(
   const cacheKey = `${type}:${safeName.toLowerCase()}:${safeArtist.toLowerCase()}`;
 
   const [imageUrl, setImageUrl] = useState<string | null>(
-    () => _resolved.get(cacheKey) ?? null
+    () => (skip ? null : (_resolved.get(cacheKey) ?? null))
   );
 
   useEffect(() => {
-    if (!safeName) return;
-    if (_resolved.has(cacheKey)) return; // Already resolved this session — no fetch needed
+    if (skip || !safeName) return;
+    if (_resolved.has(cacheKey)) {
+      setImageUrl(_resolved.get(cacheKey) ?? null);
+      return;
+    }
 
     let cancelled = false;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -55,7 +59,7 @@ export function useImage(
       cancelled = true;
       if (retryTimer) clearTimeout(retryTimer);
     };
-  }, [cacheKey]);
+  }, [cacheKey, skip]);
 
   return imageUrl;
 }
