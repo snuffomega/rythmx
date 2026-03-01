@@ -197,9 +197,9 @@ function HScrollShelf({ children }: { children: React.ReactNode }) {
       {canLeft && (
         <button
           onClick={() => scroll('left')}
-          className="hidden lg:flex absolute -left-5 top-0 bottom-2 z-10 w-8 items-center justify-center"
+          className="hidden lg:flex absolute -left-3 top-0 bottom-2 z-10 w-10 items-center justify-center"
         >
-          <ChevronLeft size={22} className="text-white/60 hover:text-white/95 transition-colors" />
+          <ChevronLeft size={64} className="text-accent/70 hover:text-accent transition-colors" />
         </button>
       )}
       <div
@@ -211,9 +211,9 @@ function HScrollShelf({ children }: { children: React.ReactNode }) {
       {canRight && (
         <button
           onClick={() => scroll('right')}
-          className="hidden lg:flex absolute -right-5 top-0 bottom-2 z-10 w-8 items-center justify-center"
+          className="hidden lg:flex absolute -right-3 top-0 bottom-2 z-10 w-10 items-center justify-center"
         >
-          <ChevronRight size={22} className="text-white/60 hover:text-white/95 transition-colors" />
+          <ChevronRight size={64} className="text-accent/70 hover:text-accent transition-colors" />
         </button>
       )}
     </div>
