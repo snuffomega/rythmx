@@ -543,7 +543,7 @@ def get_new_releases_for_artist(
     spotify_artist_id — Spotify artist ID from SoulSync DB (skips name-based search)
     force_refresh     — bypass the 7-day cache and re-fetch from provider
     """
-    from app.db import rythmx_store as _cc_store
+    from app.db import rythmx_store
 
     cutoff = datetime.utcnow() - timedelta(days=days_ago)
     cutoff_str = cutoff.strftime("%Y-%m-%d")
@@ -553,7 +553,7 @@ def get_new_releases_for_artist(
 
     # --- Release cache check (7-day TTL) ---
     if not force_refresh:
-        cached = _rythmx_store.get_cached_releases(artist_name, max_age_days=7)
+        cached = rythmx_store.get_cached_releases(artist_name, max_age_days=7)
         if cached is not None:
             releases = [
                 r for r in cached
@@ -572,7 +572,7 @@ def get_new_releases_for_artist(
         """Save all fetched releases (including upcoming) to cache; return non-upcoming.
         Always saves — even an empty list writes a sentinel so quiet artists are not
         re-fetched from the API on every run within the cache TTL window."""
-        _rythmx_store.save_releases_to_cache(artist_name, releases_list)
+        rythmx_store.save_releases_to_cache(artist_name, releases_list)
         return [r for r in releases_list if not r.is_upcoming], resolved_ids
 
     # --- Spotify ---

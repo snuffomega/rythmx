@@ -422,8 +422,8 @@ def warm_image_cache(max_items: int = 40) -> int:
     Returns the number of new background fetches submitted (0 = nothing to do).
     Non-blocking — all work runs inside the existing _executor thread pool.
     """
-    from app.db import rythmx_store as _cc_store
-    missing = _rythmx_store.get_missing_image_entities(limit=max_items)
+    from app.db import rythmx_store
+    missing = rythmx_store.get_missing_image_entities(limit=max_items)
     submitted = 0
     for entity_type, name, artist in missing:
         _, pending = resolve_image(entity_type, name, artist)
