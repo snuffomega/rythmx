@@ -65,7 +65,7 @@ export function CruiseControl({ toast }: CruiseControlProps) {
     setSaving(true);
     try {
       await cruiseControlApi.saveConfig(form);
-      const runMode = form.cc_dry_run ? 'dry' : (form.cc_run_mode ?? 'playlist');
+      const runMode = form.cc_dry_run ? 'preview' : (form.cc_run_mode ?? 'build');
       await cruiseControlApi.runNow(runMode);
       toast.success('Config saved and run started');
       refetchStatus();

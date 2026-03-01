@@ -19,7 +19,7 @@ const HOURS = Array.from({ length: 24 }, (_, i) => {
   return { value: i, label: `${h}:00 ${ampm}` };
 });
 
-type PDRunMode = 'playlist' | 'cruise';
+type PDRunMode = 'build' | 'fetch';
 
 const PD_PIPELINE_STEPS = [
   { label: 'Poll History' },
@@ -32,8 +32,8 @@ const PD_PIPELINE_STEPS = [
 ];
 
 const MODE_INFO: Record<PDRunMode, string> = {
-  playlist: 'Generates a curated playlist of tracks from artists similar to your listening history. Best for exploring at your own pace.',
-  cruise: 'Queues similar-artist albums directly into your acquisition pipeline — hands-off discovery that fills your library automatically.',
+  build: 'Generates a curated playlist of tracks from artists similar to your listening history. Best for exploring at your own pace.',
+  fetch: 'Queues similar-artist albums directly into your acquisition pipeline — hands-off discovery that fills your library automatically.',
 };
 
 function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
@@ -48,7 +48,7 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
 }
 
 function PDPipeline({ runMode }: { runMode: PDRunMode }) {
-  const steps = runMode === 'playlist'
+  const steps = runMode === 'build'
     ? PD_PIPELINE_STEPS.filter(s => !s.cruiseOnly)
     : PD_PIPELINE_STEPS;
 
@@ -62,7 +62,7 @@ function PDPipeline({ runMode }: { runMode: PDRunMode }) {
               <span className="font-medium">
                 <span className="mr-1 opacity-40">{i + 1}</span>
                 {step.label}
-                {step.cruiseOnly && <span className="ml-1 opacity-30 text-[10px]">cruise</span>}
+                {step.cruiseOnly && <span className="ml-1 opacity-30 text-[10px]">fetch</span>}
               </span>
             </div>
             {i < steps.length - 1 && <span className="text-[#222] text-xs px-0.5">›</span>}
@@ -133,7 +133,7 @@ interface PDConfig extends PersonalDiscoveryConfig {
 
 export function PersonalDiscovery({ toast }: PersonalDiscoveryProps) {
   const [config, setConfig] = useState<PDConfig>({
-    run_mode: 'playlist',
+    run_mode: 'build',
     closeness: 5,
     seed_period: '1month',
     min_scrobbles: 10,
@@ -195,7 +195,7 @@ export function PersonalDiscovery({ toast }: PersonalDiscoveryProps) {
 
           <div>
             <div className="flex border border-[#2a2a2a] w-fit mb-3">
-              {(['playlist', 'cruise'] as PDRunMode[]).map(mode => {
+              {(['build', 'fetch'] as PDRunMode[]).map(mode => {
                 const active = config.run_mode === mode;
                 return (
                   <button
@@ -205,7 +205,7 @@ export function PersonalDiscovery({ toast }: PersonalDiscoveryProps) {
                       active ? 'bg-[#1e1e1e] text-text-primary' : 'text-[#3a3a3a] hover:text-[#666]'
                     }`}
                   >
-                    {mode === 'playlist' ? 'Playlist' : 'Cruise'}
+                    {mode === 'build' ? 'Build' : 'Fetch'}
                   </button>
                 );
               })}

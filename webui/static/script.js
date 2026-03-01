@@ -353,9 +353,9 @@ async function loadCruiseControl() {
 function setRunMode(mode) {
     document.getElementById('cc-run-mode').value = mode;
     const descs = {
-        dry:      'Scan only — no downloads or playlist saved',
-        playlist: 'Scan + build playlist from owned new releases, no downloads',
-        cruise:   'Scan + playlist + queue downloads for unowned releases',
+        preview: 'Scan only — no downloads or playlist saved',
+        build:   'Scan + build playlist from owned new releases, no downloads',
+        fetch:   'Scan + playlist + queue downloads for unowned releases',
     };
     const descEl = document.getElementById('cc-run-mode-desc');
     if (descEl) descEl.textContent = descs[mode] || '';
@@ -383,7 +383,7 @@ function populateCCForm(cfg) {
     set('cc-cache-hour',       'release_cache_refresh_hour',    '5');
     set('cc-schedule-weekday', 'cc_schedule_weekday',           '3');
     set('cc-schedule-hour',    'cc_schedule_hour',              '5');
-    setRunMode(cfg['cc_run_mode'] || 'playlist');
+    setRunMode(cfg['cc_run_mode'] || 'build');
     const prefixEl = document.getElementById('cc-playlist-prefix');
     if (prefixEl) prefixEl.value = cfg['cc_playlist_prefix'] || 'New Music';
 }
@@ -511,7 +511,7 @@ async function _saveCCConfig() {
 }
 
 async function _runCCNow() {
-    const runMode      = document.getElementById('cc-run-mode')?.value || 'playlist';
+    const runMode      = document.getElementById('cc-run-mode')?.value || 'build';
     const forceRefresh = document.getElementById('cc-force-refresh')?.checked || false;
     try {
         await api('/cruise-control/run-now', {

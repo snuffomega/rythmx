@@ -104,7 +104,7 @@ export interface CruiseControlStatus {
 }
 
 export interface CruiseControlConfig {
-  cc_run_mode: 'playlist' | 'cruise';
+  cc_run_mode: 'build' | 'fetch';
   cc_playlist_prefix: string;
   cc_min_listens: number;
   cc_period: Period;

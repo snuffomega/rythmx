@@ -72,10 +72,10 @@ export function CCConfigForm({
           <div>
             <div className="flex border border-[#2a2a2a] w-fit mb-3">
               {([
-                { value: 'playlist', label: 'Playlist' },
-                { value: 'cruise', label: 'Cruise' },
+                { value: 'build', label: 'Build' },
+                { value: 'fetch', label: 'Fetch' },
               ] as const).map(({ value, label }) => {
-                const active = (form.cc_run_mode ?? 'playlist') === value;
+                const active = (form.cc_run_mode ?? 'build') === value;
                 return (
                   <button
                     key={value}
@@ -90,7 +90,7 @@ export function CCConfigForm({
               })}
             </div>
             <p className="text-[#555] text-xs leading-relaxed">
-              {(form.cc_run_mode ?? 'playlist') === 'playlist'
+              {(form.cc_run_mode ?? 'build') === 'build'
                 ? 'Creates a curated playlist of new releases from artists in your library. Browse at your own pace.'
                 : 'Queues new releases directly into your acquisition pipeline for hands-off library growth.'}
             </p>
@@ -156,7 +156,7 @@ export function CCConfigForm({
         stage={statusData?.stage}
         totalStages={statusData?.total_stages}
         state={statusData?.state ?? 'idle'}
-        runMode={form.cc_run_mode ?? 'playlist'}
+        runMode={form.cc_run_mode ?? 'build'}
       />
 
       <section className="border-t border-[#1a1a1a] pt-6">

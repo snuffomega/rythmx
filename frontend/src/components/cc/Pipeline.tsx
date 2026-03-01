@@ -14,11 +14,11 @@ interface PipelineStatusProps {
   stage?: number;
   totalStages?: number;
   state: 'idle' | 'running' | 'error' | 'completed';
-  runMode: 'playlist' | 'cruise';
+  runMode: 'build' | 'fetch';
 }
 
 export function PipelineStatus({ stage, state, runMode }: PipelineStatusProps) {
-  const steps = runMode === 'playlist'
+  const steps = runMode === 'build'
     ? PIPELINE_STEPS.filter(s => !s.cruiseOnly)
     : PIPELINE_STEPS;
 
@@ -49,7 +49,7 @@ export function PipelineStatus({ stage, state, runMode }: PipelineStatusProps) {
                 <span className={`font-medium ${isActive ? 'font-semibold' : ''}`}>
                   <span className="mr-1 opacity-40">{stepNum}</span>
                   {step.label}
-                  {step.cruiseOnly && <span className="ml-1 opacity-30 text-[10px]">cruise</span>}
+                  {step.cruiseOnly && <span className="ml-1 opacity-30 text-[10px]">fetch</span>}
                 </span>
               </div>
               {i < steps.length - 1 && (

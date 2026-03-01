@@ -66,7 +66,7 @@ def cc_config_get():
             coerced[k] = v
     defaults = {
         "cc_enabled": False,
-        "cc_run_mode": "playlist",
+        "cc_run_mode": "build",
         "cc_period": "1month",
         "cc_min_listens": config.CC_MIN_LISTENS,
         "cc_lookback_days": config.CC_LOOKBACK_DAYS,
@@ -107,9 +107,9 @@ def cc_run_now():
     if scheduler.get_status()["is_running"]:
         return jsonify({"status": "error", "message": "A cycle is already running"}), 409
     data = request.get_json(silent=True) or {}
-    run_mode = data.get("run_mode", "cruise")
-    if run_mode not in ("dry", "playlist", "cruise"):
-        run_mode = "cruise"
+    run_mode = data.get("run_mode", "fetch")
+    if run_mode not in ("preview", "build", "fetch"):
+        run_mode = "fetch"
     force_refresh = bool(data.get("force_refresh", False))
     t = threading.Thread(
         target=scheduler.run_cycle,

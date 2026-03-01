@@ -40,13 +40,13 @@ def get_status() -> dict:
     }
 
 
-def run_cycle(run_mode: str = "cruise", force_refresh: bool = False) -> dict:
+def run_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict:
     """
     Execute one cruise control cycle.
-    run_mode: "dry" | "playlist" | "cruise"
-      dry      — scan only, no playlist saved
-      playlist — scan + build named playlist from owned new releases
-      cruise   — playlist + queue downloads for unowned releases
+    run_mode: "preview" | "build" | "fetch"
+      preview — scan only, no playlist saved
+      build   — scan + build named playlist from owned new releases
+      fetch   — build + queue downloads for unowned releases
     force_refresh — bypass 7-day release cache, re-fetch from provider
     Returns a result summary dict.
     """
@@ -71,11 +71,11 @@ def run_cycle(run_mode: str = "cruise", force_refresh: bool = False) -> dict:
         _is_running = False
 
 
-def _execute_cycle(run_mode: str = "cruise", force_refresh: bool = False) -> dict:
+def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict:
     """
     Full 7-stage Cruise Control pipeline.
     Imports inline to avoid circular imports.
-    run_mode: "dry" | "playlist" | "cruise"
+    run_mode: "preview" | "build" | "fetch"
     """
     from app.db import get_library_reader
     soulsync_reader = get_library_reader()
@@ -248,7 +248,7 @@ def _execute_cycle(run_mode: str = "cruise", force_refresh: bool = False) -> dic
     # Compute playlist name now so both Stage 6 and Stage 7 share the same value.
     playlist_prefix = settings.get("cc_playlist_prefix", "New Music")
     playlist_name_date = (f"{playlist_prefix}_{_date.today().isoformat()}"
-                          if run_mode in ("playlist", "cruise") else None)
+                          if run_mode in ("build", "fetch") else None)
 
     # -------------------------------------------------------------------------
     # Stage 5-6 — Acquisition queue (cruise mode only)
@@ -260,7 +260,7 @@ def _execute_cycle(run_mode: str = "cruise", force_refresh: bool = False) -> dic
     queued_count = 0
     to_queue = []
 
-    if run_mode == "cruise":
+    if run_mode == "fetch":
         # Sort by release_date descending (newest first)
         unowned.sort(key=lambda r: r.release_date, reverse=True)
         today_str = _date.today().isoformat()
@@ -289,7 +289,7 @@ def _execute_cycle(run_mode: str = "cruise", force_refresh: bool = False) -> dic
             logger.info("Stage 6: queued '%s \u2014 %s' (queue_id=%d)", r.artist, r.title, queue_id)
         logger.info("Stage 6: %d releases added to acquisition queue", queued_count)
     else:
-        logger.info("Stage 5-6: skipped (run_mode=%s)", run_mode)
+        logger.info("Stage 5-6: skipped (not fetch mode, run_mode=%s)", run_mode)
 
     # -------------------------------------------------------------------------
     # Stage 7 — Build named playlist (playlist/cruise modes)
@@ -302,7 +302,7 @@ def _execute_cycle(run_mode: str = "cruise", force_refresh: bool = False) -> dic
     playlist_tracks = []
     plex_playlist_id = None
 
-    if run_mode in ("playlist", "cruise"):
+    if run_mode in ("build", "fetch"):
         try:
             # Owned: expand each album to individual tracks
             for r in owned_releases:
@@ -368,7 +368,7 @@ def _execute_cycle(run_mode: str = "cruise", force_refresh: bool = False) -> dic
         except Exception as e:
             logger.warning("Stage 7 playlist build failed (non-fatal): %s", e)
     else:
-        logger.info("Stage 7: skipped (run_mode=dry)")
+        logger.info("Stage 7: skipped (run_mode=preview)")
 
     # -------------------------------------------------------------------------
     # Stage 8 — Auto-sync: rebuild all auto_sync=1 playlists (playlist/cruise modes)
@@ -376,16 +376,16 @@ def _execute_cycle(run_mode: str = "cruise", force_refresh: bool = False) -> dic
     # Skipped in dry mode. Each auto_sync playlist is rebuilt in-place using the
     # data already fetched this cycle (owned_releases, top_artists).
     # -------------------------------------------------------------------------
-    if run_mode in ("playlist", "cruise"):
+    if run_mode in ("build", "fetch"):
         auto_playlists = [p for p in cc_store.list_playlists() if p.get("auto_sync")]
         logger.info("Stage 8: %d auto-sync playlist(s) to rebuild", len(auto_playlists))
         for pl in auto_playlists:
             _auto_sync_playlist(pl, owned_releases, top_artists, settings, soulsync_reader)
     else:
-        logger.info("Stage 8: skipped (run_mode=dry)")
+        logger.info("Stage 8: skipped (run_mode=preview)")
 
     # Write history entries for this cycle (dry runs produce no history)
-    if run_mode != "dry":
+    if run_mode != "preview":
         queued_keys = {(r.artist, r.title) for r in to_queue}
         for r in owned_releases:
             cc_store.add_history_entry(
@@ -395,12 +395,12 @@ def _execute_cycle(run_mode: str = "cruise", force_refresh: bool = False) -> dic
             if (r.artist, r.title) in queued_keys:
                 # Newly queued this run
                 entry_status, entry_reason = "queued", ""
-            elif run_mode == "cruise" and cc_store.is_in_queue(r.artist, r.title):
+            elif run_mode == "fetch" and cc_store.is_in_queue(r.artist, r.title):
                 # Already pending/submitted in queue from a prior cruise run
                 entry_status, entry_reason = "queued", "already_queued"
             else:
                 entry_status = "skipped"
-                entry_reason = "playlist_mode" if run_mode == "playlist" else ""
+                entry_reason = "build_mode" if run_mode == "build" else ""
             cc_store.add_history_entry(
                 {"artist_name": r.artist, "album_name": r.title},
                 status=entry_status, reason=entry_reason
@@ -573,7 +573,7 @@ def _loop():
         if config.CC_ENABLED:
             settings = cc_store.get_all_settings()
             if _should_run_cc(settings):
-                mode = settings.get("cc_run_mode", "cruise")
+                mode = settings.get("cc_run_mode", "fetch")
                 force = _should_weekly_refresh(settings)
                 if force:
                     cc_store.set_setting("release_cache_last_cleared_weekday",
