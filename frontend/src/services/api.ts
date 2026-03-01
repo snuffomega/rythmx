@@ -225,3 +225,11 @@ export const personalDiscoveryApi = {
       body: JSON.stringify(config),
     }),
 };
+
+export const imageServiceApi = {
+  warmCache: (maxItems = 40) =>
+    request<{ status: string; submitted: number }>('/images/warm-cache', {
+      method: 'POST',
+      body: JSON.stringify({ max_items: maxItems }),
+    }),
+};
