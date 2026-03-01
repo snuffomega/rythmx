@@ -1,4 +1,5 @@
-import { Music2, Users, ChevronRight, Disc3, Sparkles, Radio } from 'lucide-react';
+import { useRef, useState, useEffect } from 'react';
+import { Music2, Users, ChevronLeft, ChevronRight, Disc3, Sparkles, Radio } from 'lucide-react';
 import { useApi } from '../hooks/useApi';
 import { useImage } from '../hooks/useImage';
 import { statsApi, cruiseControlApi, acquisitionApi } from '../services/api';
@@ -149,9 +150,55 @@ function SectionHeader({
 }
 
 function HScrollShelf({ children }: { children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [canLeft, setCanLeft] = useState(false);
+  const [canRight, setCanRight] = useState(false);
+
+  const update = () => {
+    const el = ref.current;
+    if (!el) return;
+    setCanLeft(el.scrollLeft > 4);
+    setCanRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 4);
+  };
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    update();
+    el.addEventListener('scroll', update, { passive: true });
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => { el.removeEventListener('scroll', update); ro.disconnect(); };
+  }, []);
+
+  const scroll = (dir: 'left' | 'right') => {
+    ref.current?.scrollBy({ left: dir === 'right' ? 320 : -320, behavior: 'smooth' });
+  };
+
   return (
-    <div className="flex gap-4 overflow-x-auto scrollbar-hide snap-x pb-2 -mx-1 px-1">
-      {children}
+    <div className="relative">
+      {canLeft && (
+        <button
+          onClick={() => scroll('left')}
+          className="hidden lg:flex absolute left-0 top-0 bottom-2 z-10 w-12 items-center justify-start bg-gradient-to-r from-[#0a0a0a] via-[#0a0a0a]/70 to-transparent"
+        >
+          <ChevronLeft size={20} className="text-white/50 hover:text-white/90 transition-colors" />
+        </button>
+      )}
+      <div
+        ref={ref}
+        className="flex gap-4 overflow-x-auto scrollbar-hide snap-x pb-2 -mx-1 px-1"
+      >
+        {children}
+      </div>
+      {canRight && (
+        <button
+          onClick={() => scroll('right')}
+          className="hidden lg:flex absolute right-0 top-0 bottom-2 z-10 w-12 items-center justify-end bg-gradient-to-l from-[#0a0a0a] via-[#0a0a0a]/70 to-transparent"
+        >
+          <ChevronRight size={20} className="text-white/50 hover:text-white/90 transition-colors" />
+        </button>
+      )}
     </div>
   );
 }

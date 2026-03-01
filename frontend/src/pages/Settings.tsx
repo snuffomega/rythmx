@@ -263,12 +263,8 @@ export function SettingsPage({ toast }: SettingsPageProps) {
 
       <section className="border-t border-[#1a1a1a] pt-8">
         <h2 className="text-text-muted text-xs font-semibold uppercase tracking-widest mb-4">Images</h2>
-        <div className="space-y-5">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="text-text-primary text-sm font-semibold">Warm Image Cache</p>
-              <p className="text-[#444] text-xs mt-0.5">Pre-fetch artwork in the background for uncached entities</p>
-            </div>
+        <div className="flex items-center gap-6 flex-wrap">
+          <div className="flex items-center gap-3">
             <button
               onClick={handleWarmCache}
               disabled={warmingCache}
@@ -277,15 +273,20 @@ export function SettingsPage({ toast }: SettingsPageProps) {
               {warmingCache ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
               Warm Now
             </button>
-          </div>
-          <div className="flex items-center justify-between gap-4 pt-4 border-t border-[#1a1a1a]">
             <div>
-              <p className="text-text-primary text-sm font-semibold">Clear Image Cache</p>
-              <p className="text-[#444] text-xs mt-0.5">Force all artwork to re-fetch on next load</p>
+              <p className="text-text-primary text-sm font-semibold">Warm Image Cache</p>
+              <p className="text-[#444] text-xs mt-0.5">Pre-fetch artwork in the background</p>
             </div>
+          </div>
+          <div className="w-px h-10 bg-[#1a1a1a] flex-shrink-0 hidden sm:block" />
+          <div className="flex items-center gap-3">
             <button onClick={() => setConfirmClearImageCache(true)} className="btn-secondary text-sm flex-shrink-0">
               Clear Cache
             </button>
+            <div>
+              <p className="text-text-primary text-sm font-semibold">Clear Image Cache</p>
+              <p className="text-[#444] text-xs mt-0.5">Force all artwork to re-fetch</p>
+            </div>
           </div>
         </div>
       </section>

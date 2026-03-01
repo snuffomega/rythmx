@@ -120,7 +120,7 @@ function StatsModal({ open, onClose, contentType, period }: StatsModalProps) {
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-[#1a1a1a] flex-shrink-0">
           <span className="text-text-primary text-sm font-semibold">
-            Top {label}
+            Top {label} by Scrobbles
           </span>
           <button onClick={onClose} className="text-text-muted hover:text-text-primary transition-colors">
             <X size={16} />
