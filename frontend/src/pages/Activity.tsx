@@ -22,7 +22,7 @@ const STATUS_FILTERS: Array<{ value: AcquisitionStatus | 'all'; label: string }>
 export function ActivityPage({ toast }: ActivityPageProps) {
   const [filter, setFilter] = useState<AcquisitionStatus | 'all'>('all');
   const [checking, setChecking] = useState(false);
-  const { data: queue, loading, refetch } = useApi(() => acquisitionApi.getQueue(filter === 'all' ? undefined : filter));
+  const { data: queue, loading, refetch } = useApi(() => acquisitionApi.getQueue(filter === 'all' ? undefined : filter), filter);
   const { data: stats } = useApi(() => acquisitionApi.getStats());
 
   const handleCheckNow = async () => {
