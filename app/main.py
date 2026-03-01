@@ -13,7 +13,7 @@ from app.runners import scheduler
 from app.db import cc_store
 
 logging.basicConfig(
-    level=logging.DEBUG if config.FLASK_DEBUG else logging.INFO,
+    level=getattr(logging, config.LOG_LEVEL, logging.INFO),
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)

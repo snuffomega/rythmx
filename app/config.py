@@ -50,6 +50,7 @@ SPOTIFY_CLIENT_SECRET = _optional("SPOTIFY_CLIENT_SECRET")
 FLASK_HOST = _optional("FLASK_HOST", "0.0.0.0")
 FLASK_PORT = int(_optional("FLASK_PORT", "8009"))
 FLASK_DEBUG = _optional("FLASK_DEBUG", "false").lower() == "true"
+LOG_LEVEL = _optional("LOG_LEVEL", "DEBUG" if FLASK_DEBUG else "INFO").upper()
 
 # --- Cruise Control defaults ---
 CC_ENABLED = _optional("CC_ENABLED", "false").lower() == "true"
