@@ -11,7 +11,7 @@ new_music_bp = Blueprint("new_music", __name__)
 
 
 @new_music_bp.route("/api/cruise-control/status")
-def cc_status():
+def get_new_music_status():
     raw = scheduler.get_status()
     is_running = raw.get("is_running", False)
     last_result = raw.get("last_result") or {}
@@ -38,8 +38,13 @@ def cc_status():
     })
 
 
+def cc_status():
+    """Deprecated: Use get_new_music_status(). Target removal: Phase 3."""
+    return get_new_music_status()
+
+
 @new_music_bp.route("/api/cruise-control/config", methods=["GET"])
-def cc_config_get():
+def get_new_music_config():
     raw = cc_store.get_all_settings()
     bool_keys = {"cc_enabled", "cc_auto_push_playlist", "cc_dry_run"}
     int_keys = {
@@ -85,8 +90,13 @@ def cc_config_get():
     return jsonify({"status": "ok", "config": {**defaults, **coerced}})
 
 
+def cc_config_get():
+    """Deprecated: Use get_new_music_config(). Target removal: Phase 3."""
+    return get_new_music_config()
+
+
 @new_music_bp.route("/api/cruise-control/config", methods=["POST"])
-def cc_config_save():
+def save_new_music_config():
     data = request.get_json(silent=True) or {}
     allowed_keys = {
         "cc_enabled", "cc_max_per_cycle", "cc_cycle_hours",
@@ -102,8 +112,13 @@ def cc_config_save():
     return jsonify({"status": "ok"})
 
 
+def cc_config_save():
+    """Deprecated: Use save_new_music_config(). Target removal: Phase 3."""
+    return save_new_music_config()
+
+
 @new_music_bp.route("/api/cruise-control/run-now", methods=["POST"])
-def cc_run_now():
+def run_cycle_now():
     if scheduler.get_status()["is_running"]:
         return jsonify({"status": "error", "message": "A cycle is already running"}), 409
     data = request.get_json(silent=True) or {}
@@ -122,8 +137,13 @@ def cc_run_now():
     return jsonify({"status": "ok", "message": "cycle_started", "run_mode": run_mode})
 
 
+def cc_run_now():
+    """Deprecated: Use run_cycle_now(). Target removal: Phase 3."""
+    return run_cycle_now()
+
+
 @new_music_bp.route("/api/cruise-control/history")
-def cc_history():
+def get_cycle_history():
     limit = min(int(request.args.get("limit", 100)), 500)
     rows = cc_store.get_history(limit=limit)
     history = [
@@ -137,6 +157,11 @@ def cc_history():
         for r in rows
     ]
     return jsonify({"status": "ok", "history": history})
+
+
+def cc_history():
+    """Deprecated: Use get_cycle_history(). Target removal: Phase 3."""
+    return get_cycle_history()
 
 
 @new_music_bp.route("/api/release-cache/clear", methods=["POST"])
