@@ -236,6 +236,36 @@ def _deezer_get_artist_photo(deezer_id: str) -> str:
         return ""
 
 
+def _deezer_search_album_art(artist: str, album_title: str) -> str:
+    """
+    Search Deezer for an album cover by artist + album title.
+    Returns cover_xl (1000px) or cover_medium (250px), or "" if not found.
+    Reuses the Deezer rate-limit lock.
+    """
+    global _deezer_img_last_call
+    with _deezer_img_lock:
+        elapsed = time.monotonic() - _deezer_img_last_call
+        if elapsed < _DEEZER_IMG_RATE:
+            time.sleep(_DEEZER_IMG_RATE - elapsed)
+        _deezer_img_last_call = time.monotonic()
+    try:
+        resp = _session.get(
+            f"{_DEEZER_BASE}/search/album",
+            params={"q": f"{artist} {album_title}", "limit": 5},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        items = resp.json().get("data", [])
+        for item in items:
+            url = item.get("cover_xl") or item.get("cover_medium", "")
+            if url and "/images/cover//" not in url:
+                return url
+        return ""
+    except requests.RequestException as e:
+        logger.debug("Deezer album art search failed for '%s - %s': %s", artist, album_title, e)
+        return ""
+
+
 def _deezer_search_artist_id(name: str) -> str | None:
     """Search Deezer for an artist by name, return artist ID or None."""
     global _deezer_img_last_call
@@ -326,13 +356,42 @@ def _fetch_and_cache(entity_type: str, name: str, artist: str) -> None:
         elif entity_type == "album":
             # Strip common release-type suffixes so "ICE - Single" searches as "ICE"
             search_name = re.sub(r'\s*[-–]\s*(single|ep|extended play)\s*$', '', name, flags=re.IGNORECASE).strip()
-            data = _itunes_img_get("/search", {
-                "term": f"{artist} {search_name}",
-                "entity": "album",
-                "media": "music",
-                "limit": 5,
-            })
-            url = _extract_art(data)
+
+            # Tier 0: Direct iTunes /lookup when itunes_album_id is known in release_cache
+            itunes_album_id = cc_store.get_release_itunes_album_id(artist, name)
+            if itunes_album_id:
+                data = _itunes_img_get("/lookup", {
+                    "id": itunes_album_id,
+                    "entity": "collection",
+                    "limit": 1,
+                })
+                url = _extract_art(data)
+
+            # Tier 1: iTunes name search
+            if not url:
+                data = _itunes_img_get("/search", {
+                    "term": f"{artist} {search_name}",
+                    "entity": "album",
+                    "media": "music",
+                    "limit": 5,
+                })
+                url = _extract_art(data)
+
+            # Tier 1b: Retry with punctuation-stripped artist name ("Ballyhoo!" → "ballyhoo")
+            if not url:
+                clean_artist = re.sub(r"[^\w\s]", " ", artist).strip()
+                if clean_artist.lower() != artist.lower():
+                    data = _itunes_img_get("/search", {
+                        "term": f"{clean_artist} {search_name}",
+                        "entity": "album",
+                        "media": "music",
+                        "limit": 5,
+                    })
+                    url = _extract_art(data)
+
+            # Tier 2: Deezer album search
+            if not url:
+                url = _deezer_search_album_art(artist, search_name)
 
         elif entity_type == "track":
             data = _itunes_img_get("/search", {

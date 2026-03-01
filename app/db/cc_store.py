@@ -788,6 +788,23 @@ def save_releases_to_cache(artist_name: str, releases: list):
             )
 
 
+def get_release_itunes_album_id(artist_name: str, album_title: str) -> str | None:
+    """
+    Return itunes_album_id from release_cache for a known artist+album, or None.
+    Used by image_service as Tier 0 for album art lookups — more reliable than name search.
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            """SELECT itunes_album_id FROM release_cache
+               WHERE lower(artist_name) = lower(?)
+                 AND lower(album_title) = lower(?)
+                 AND itunes_album_id IS NOT NULL AND itunes_album_id != ''
+               ORDER BY cached_at DESC LIMIT 1""",
+            (artist_name, album_title),
+        ).fetchone()
+    return row["itunes_album_id"] if row else None
+
+
 def clear_release_cache(artist_name: str | None = None):
     """Delete all rows (or rows for one artist) from release_cache."""
     with _connect() as conn:
