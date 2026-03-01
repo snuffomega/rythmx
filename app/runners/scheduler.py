@@ -137,7 +137,7 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
             "Identity: %s → iTunes:%s (confidence=%d, method=%s)",
             artist_name, identity_itunes_id or "none",
             identity.get("confidence", 0),
-            identity.get("reason_codes", ["?"])[-1],
+            (identity.get("reason_codes") or ["?"])[-1],
         )
 
         # Enrich with pre-resolved IDs from SoulSync's own artists table.
