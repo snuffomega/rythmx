@@ -1,4 +1,0 @@
-2025-12-19 19:41:16,797 | INFO | smoke_test | Starting smoke test run_id=smoke_test-20251220004116-3d2aab08
-2025-12-19 19:44:08,893 | INFO | smoke_test | Starting smoke test run_id=smoke_test-20251220004408-c0e8bd0d
-2025-12-19 19:45:44,126 | INFO | smoke_test | Starting smoke test run_id=smoke_test-20251220004544-cbb08a61
-2025-12-19 19:45:44,148 | INFO | smoke_test | DB insert OK
