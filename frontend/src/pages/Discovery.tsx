@@ -16,6 +16,21 @@ function placeholderGradient(seed: string) {
   return `linear-gradient(135deg, hsl(${h},25%,10%) 0%, hsl(${(h + 40) % 360},20%,16%) 100%)`;
 }
 
+function useInView(rootMargin = '200px') {
+  const ref = useRef<HTMLDivElement>(null);
+  const [inView, setInView] = useState(false);
+  useEffect(() => {
+    const el = ref.current; if (!el) return;
+    const obs = new IntersectionObserver(
+      ([e]) => { if (e.isIntersecting) { setInView(true); obs.disconnect(); } },
+      { rootMargin }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
+  return { ref, inView };
+}
+
 function AlbumTile({
   artist,
   title,
@@ -29,12 +44,13 @@ function AlbumTile({
   sub?: string;
   wide?: boolean;
 }) {
-  const resolvedImg = useImage('album', title, artist);
+  const { ref, inView } = useInView();
+  const resolvedImg = useImage('album', title, artist, !inView);
   const src = image || resolvedImg;
   const w = wide ? 'w-48' : 'w-40';
   const h = wide ? 'h-48' : 'h-40';
   return (
-    <div className={`flex-shrink-0 ${w} snap-start group cursor-pointer`}>
+    <div ref={ref} className={`flex-shrink-0 ${w} snap-start group cursor-pointer`}>
       <div
         className={`${w} ${h} overflow-hidden relative`}
         style={!src ? { background: placeholderGradient(artist) } : undefined}
@@ -60,10 +76,11 @@ function AlbumTile({
 }
 
 function ArtistTile({ artist }: { artist: Artist }) {
-  const resolvedImg = useImage('artist', artist.name);
+  const { ref, inView } = useInView();
+  const resolvedImg = useImage('artist', artist.name, '', !inView);
   const src = artist.image || resolvedImg;
   return (
-    <div className="flex-shrink-0 w-36 snap-start text-center group cursor-pointer">
+    <div ref={ref} className="flex-shrink-0 w-36 snap-start text-center group cursor-pointer">
       <div
         className="w-36 h-36 overflow-hidden mx-auto relative"
         style={!src ? { background: placeholderGradient(artist.name) } : undefined}
@@ -180,9 +197,9 @@ function HScrollShelf({ children }: { children: React.ReactNode }) {
       {canLeft && (
         <button
           onClick={() => scroll('left')}
-          className="hidden lg:flex absolute left-0 top-0 bottom-2 z-10 w-12 items-center justify-start bg-gradient-to-r from-[#0a0a0a] via-[#0a0a0a]/70 to-transparent"
+          className="hidden lg:flex absolute -left-5 top-0 bottom-2 z-10 w-8 items-center justify-center"
         >
-          <ChevronLeft size={20} className="text-white/50 hover:text-white/90 transition-colors" />
+          <ChevronLeft size={22} className="text-white/60 hover:text-white/95 transition-colors" />
         </button>
       )}
       <div
@@ -194,9 +211,9 @@ function HScrollShelf({ children }: { children: React.ReactNode }) {
       {canRight && (
         <button
           onClick={() => scroll('right')}
-          className="hidden lg:flex absolute right-0 top-0 bottom-2 z-10 w-12 items-center justify-end bg-gradient-to-l from-[#0a0a0a] via-[#0a0a0a]/70 to-transparent"
+          className="hidden lg:flex absolute -right-5 top-0 bottom-2 z-10 w-8 items-center justify-center"
         >
-          <ChevronRight size={20} className="text-white/50 hover:text-white/90 transition-colors" />
+          <ChevronRight size={22} className="text-white/60 hover:text-white/95 transition-colors" />
         </button>
       )}
     </div>
