@@ -338,6 +338,37 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
                     "release_date": r.release_date,
                 })
 
+            # Seed from download_queue: items previously queued that aged out of the
+            # current lookback window (7-day cache expired, re-run after weeks, etc).
+            # Ensures the playlist always reflects the full pending acquisition state.
+            if run_mode == "fetch":
+                queued_items = (
+                    rythmx_store.get_queue(status="pending") +
+                    rythmx_store.get_queue(status="submitted")
+                )
+                in_playlist = {
+                    (music_client.norm(t["artist_name"]), music_client.norm(t["track_name"]))
+                    for t in playlist_tracks if not t.get("is_owned")
+                }
+                for q in queued_items:
+                    key = (music_client.norm(q["artist_name"]), music_client.norm(q["album_title"]))
+                    if key not in in_playlist:
+                        playlist_tracks.append({
+                            "plex_rating_key": None,
+                            "track_name": q["album_title"],
+                            "artist_name": q["artist_name"],
+                            "album_name": q["album_title"],
+                            "album_cover_url": "",
+                            "score": None,
+                            "is_owned": 0,
+                            "release_date": q.get("release_date") or "",
+                        })
+                        in_playlist.add(key)
+                        logger.debug(
+                            "Stage 7: seeded queued release '%s — %s' from download_queue",
+                            q["artist_name"], q["album_title"],
+                        )
+
             # Cap owned tracks at max_playlist_tracks (unowned album cards are kept)
             max_pl = int(settings.get("max_playlist_tracks", 50))
             owned_tracks  = [t for t in playlist_tracks if t.get("is_owned")]

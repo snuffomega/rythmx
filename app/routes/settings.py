@@ -62,6 +62,12 @@ def settings_test_soulsync():
                             "message": "Library DB not synced yet — click Sync Library"})
         try:
             with _sq.connect(db_path) as _c:
+                tbl = _c.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='tracks'"
+                ).fetchone()
+                if not tbl:
+                    return jsonify({"connected": False,
+                                    "message": "Library not synced yet — click Sync Library"})
                 count = _c.execute("SELECT COUNT(*) FROM tracks").fetchone()[0]
             return jsonify({"connected": True, "message": f"{count:,} tracks indexed"})
         except Exception as e:
