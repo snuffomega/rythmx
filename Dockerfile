@@ -17,6 +17,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY app/ ./app/
 COPY scripts/ ./scripts/
+COPY tests/ ./tests/
 
 # Copy the compiled React app into the webui/ folder Flask serves
 COPY --from=builder /build/dist ./webui/
