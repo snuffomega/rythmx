@@ -1,7 +1,7 @@
 import logging
 from flask import Blueprint, jsonify, request
 from app.db import cc_store
-from app import last_fm_client, plex_push
+from app.clients import last_fm_client, plex_push
 
 logger = logging.getLogger(__name__)
 
@@ -10,7 +10,7 @@ playlists_bp = Blueprint("playlists", __name__)
 
 def _build_taste_playlist_tracks(playlist_name: str) -> list[dict]:
     """Build + save a taste-based playlist. Returns the saved tracks."""
-    from app import engine
+    from app.services import engine
     from app.db import get_library_reader
     sr = get_library_reader()
 
@@ -71,7 +71,7 @@ def _build_taste_playlist_tracks(playlist_name: str) -> list[dict]:
 
 def _import_external_playlist(source: str, source_url: str) -> dict:
     """Import tracks from an external source. Returns importer result dict."""
-    from app import playlist_importer
+    from app.services import playlist_importer
     if source == "lastfm":
         return playlist_importer.import_from_lastfm(source_url)
     if source == "deezer":

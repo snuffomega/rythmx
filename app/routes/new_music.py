@@ -2,7 +2,8 @@ import logging
 import threading
 from flask import Blueprint, jsonify, request
 from app.db import cc_store
-from app import config, scheduler
+from app import config
+from app.runners import scheduler
 
 logger = logging.getLogger(__name__)
 

@@ -2,7 +2,8 @@ import logging
 from datetime import datetime
 from flask import Blueprint, jsonify, request
 from app.db import cc_store
-from app import config, last_fm_client, plex_push, soulsync_api
+from app import config
+from app.clients import last_fm_client, plex_push, soulsync_api
 
 logger = logging.getLogger(__name__)
 

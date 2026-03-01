@@ -8,7 +8,8 @@ Never log secret values.
 import logging
 from flask import Flask, jsonify, send_from_directory
 from flask_talisman import Talisman
-from app import config, scheduler
+from app import config
+from app.runners import scheduler
 from app.db import cc_store
 
 logging.basicConfig(

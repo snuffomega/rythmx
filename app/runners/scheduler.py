@@ -79,7 +79,8 @@ def _execute_cycle(run_mode: str = "cruise", force_refresh: bool = False) -> dic
     """
     from app.db import get_library_reader
     soulsync_reader = get_library_reader()
-    from app import last_fm_client, plex_push, music_client, identity_resolver
+    from app.clients import last_fm_client, plex_push, music_client
+    from app.services import identity_resolver
     from datetime import date as _date
 
     logger.info("Cruise control cycle starting (run_mode=%s, force_refresh=%s)",
@@ -433,7 +434,8 @@ def _auto_sync_playlist(pl, owned_releases, top_artists, settings, soulsync_read
       deezer / spotify / lastfm — re-import from source_url
     """
     from app.db import cc_store as _cc_store
-    from app import last_fm_client, engine
+    from app.clients import last_fm_client
+    from app.services import engine
 
     name = pl.get("name") or pl.get("playlist_name")
     source = pl.get("source", "")
@@ -498,7 +500,7 @@ def _auto_sync_playlist(pl, owned_releases, top_artists, settings, soulsync_read
             logger.info("Stage 8: auto-synced taste playlist '%s' (%d tracks)", name, len(to_save))
 
         elif source in ("spotify", "lastfm", "deezer"):
-            from app import playlist_importer
+            from app.services import playlist_importer
             source_url = pl.get("source_url") or ""
             if not source_url:
                 logger.warning("Stage 8: skipping '%s' — no source_url stored", name)
@@ -584,14 +586,14 @@ def _loop():
                 ran_cc = True
         # Run acquisition worker every loop regardless of whether CC ran
         try:
-            from app import acquisition
+            from app.services import acquisition
             acquisition.check_queue()
         except Exception as e:
             logger.warning("Acquisition worker error (non-fatal): %s", e)
         # Warm image cache during idle hours — no-op if everything is already cached
         if not ran_cc:
             try:
-                from app import image_service as _img_svc
+                from app.services import image_service as _img_svc
                 _img_svc.warm_image_cache()
             except Exception as e:
                 logger.debug("Image warmer error (non-fatal): %s", e)

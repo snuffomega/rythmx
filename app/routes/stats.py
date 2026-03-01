@@ -1,7 +1,7 @@
 import logging
 from flask import Blueprint, jsonify, request
 from app.db import cc_store
-from app import last_fm_client
+from app.clients import last_fm_client
 
 logger = logging.getLogger(__name__)
 

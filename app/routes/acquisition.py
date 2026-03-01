@@ -55,7 +55,7 @@ def acquisition_stats():
 def acquisition_check_now():
     """Trigger the acquisition worker immediately (re-check submitted items)."""
     try:
-        from app import acquisition
+        from app.services import acquisition
         acquisition.check_queue()
         stats = cc_store.get_queue_stats()
         return jsonify({"status": "ok", "message": "Acquisition worker run complete", **stats})

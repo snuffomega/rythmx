@@ -43,7 +43,7 @@ def _norm_title(s: str) -> str:
     Strips feat./ft./featuring (parenthetical or trailing), then applies
     music_client.norm() (NFKC + lowercase + strip articles + no punctuation).
     """
-    from app.music_client import norm
+    from app.clients.music_client import norm
     if not s:
         return ""
     s = re.sub(
@@ -87,8 +87,8 @@ def resolve_artist(lastfm_name: str, force: bool = False) -> dict:
     force=True bypasses the cache and forces a fresh resolution.
     """
     from app.db import cc_store
-    from app import last_fm_client
-    from app.music_client import norm, search_artist_candidates_itunes, get_artist_top_tracks_itunes
+    from app.clients import last_fm_client
+    from app.clients.music_client import norm, search_artist_candidates_itunes, get_artist_top_tracks_itunes
 
     result = {
         "lastfm_name": lastfm_name,

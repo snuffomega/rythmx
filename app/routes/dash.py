@@ -1,7 +1,7 @@
 import logging
 from flask import Blueprint, jsonify, request
 from app.db import cc_store
-from app import last_fm_client, plex_push, soulsync_api
+from app.clients import last_fm_client, plex_push, soulsync_api
 
 logger = logging.getLogger(__name__)
 
@@ -11,7 +11,7 @@ dash_bp = Blueprint("dash", __name__)
 @dash_bp.route("/api/discovery/candidates")
 def discovery_candidates():
     from app.db import get_library_reader
-    from app import engine
+    from app.services import engine
     sr = get_library_reader()
 
     candidates = sr.get_discovery_pool(limit=200)

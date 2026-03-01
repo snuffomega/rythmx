@@ -706,7 +706,7 @@ def get_cached_releases(artist_name: str, max_age_days: int = 7):
     Returns [...]  → cache hit with results.
     """
     import time
-    from app.music_client import Release
+    from app.clients.music_client import Release
     max_age_secs = max_age_days * 86400
     with _connect() as conn:
         row = conn.execute(
