@@ -7,6 +7,11 @@ data/
 # Local reference notes
 local-notes/
 
+# Logs
+logs/
+app/logs/
+*.log
+
 # Python
 __pycache__/
 *.pyc
