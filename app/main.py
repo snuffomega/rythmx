@@ -72,10 +72,14 @@ def create_app() -> Flask:
     # Removing it means any injected inline <script> is blocked by the browser.
     Talisman(
         app,
-        force_https=False,  # handled by reverse proxy in production
+        force_https=False,              # HTTPS termination owned by reverse proxy
+        strict_transport_security=True,
+        strict_transport_security_max_age=31536000,        # 1 year
+        strict_transport_security_include_subdomains=True,
+        strict_transport_security_preload=True,            # enables HSTS preload list
         content_security_policy={
             "default-src": "'self'",
-            "script-src": "'self'",
+            "script-src": "'self'",    # no unsafe-inline — Vite bundle loads via 'self'
             "style-src": "'self' 'unsafe-inline'",  # Tailwind runtime needs this
             "img-src": "'self' data: https:",
             "connect-src": "'self'",
