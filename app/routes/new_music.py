@@ -9,6 +9,14 @@ logger = logging.getLogger(__name__)
 
 new_music_bp = Blueprint("new_music", __name__)
 
+# Maps backend stage (1-8) to frontend pipeline display step per run mode.
+# Build: 5 visible steps (no Queue/Fetch steps); Fetch: 7 visible steps.
+_STAGE_MAP = {
+    "build":   {1: 1, 2: 2, 3: 3, 4: 4, 5: None, 6: None, 7: 5, 8: 5},
+    "fetch":   {1: 1, 2: 2, 3: 3, 4: 4, 5: 5,    6: 6,    7: 7, 8: 7},
+    "preview": {1: 1, 2: 2, 3: 3, 4: 4, 5: None, 6: None, 7: None, 8: None},
+}
+
 
 @new_music_bp.route("/api/cruise-control/status")
 def get_new_music_status():
@@ -29,9 +37,16 @@ def get_new_music_status():
             "owned": last_result.get("releases_owned", 0),
             "queued": last_result.get("queued", 0),
         }
+    cur_stage = raw.get("current_stage")
+    cur_mode  = raw.get("current_run_mode") or "build"
+    stage_map = _STAGE_MAP.get(cur_mode, _STAGE_MAP["build"])
+    display_stage = stage_map.get(cur_stage) if cur_stage else None
+    total_stages  = 5 if cur_mode == "build" else (7 if cur_mode == "fetch" else 4)
     return jsonify({
         "status": "ok",
         "state": state,
+        "stage": display_stage if is_running else None,
+        "total_stages": total_stages if is_running else None,
         "last_run": raw.get("last_run"),
         "summary": summary,
         "error": last_result.get("error"),

@@ -28,6 +28,8 @@ _last_run: datetime | None = None
 _last_result: dict = {}
 _stop_event = threading.Event()
 _thread: threading.Thread | None = None
+_current_stage: int | None = None   # backend stage 1-8; None when not running
+_current_run_mode: str | None = None
 
 
 def get_status() -> dict:
@@ -37,6 +39,8 @@ def get_status() -> dict:
         "last_result": _last_result,
         "enabled": config.CC_ENABLED,
         "cycle_hours": config.CC_CYCLE_HOURS,
+        "current_stage": _current_stage,
+        "current_run_mode": _current_run_mode,
     }
 
 
@@ -50,13 +54,14 @@ def run_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict:
     force_refresh — bypass 7-day release cache, re-fetch from provider
     Returns a result summary dict.
     """
-    global _is_running, _last_run, _last_result
+    global _is_running, _last_run, _last_result, _current_stage, _current_run_mode
 
     if _is_running:
         logger.warning("Cruise control cycle already running — skipping")
         return {"status": "skipped", "reason": "already_running"}
 
     _is_running = True
+    _current_run_mode = run_mode
     _last_run = datetime.utcnow()
 
     try:
@@ -69,6 +74,8 @@ def run_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict:
         return _last_result
     finally:
         _is_running = False
+        _current_stage = None
+        _current_run_mode = None
 
 
 def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict:
@@ -77,6 +84,7 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
     Imports inline to avoid circular imports.
     run_mode: "preview" | "build" | "fetch"
     """
+    global _current_stage
     from app.db import get_library_reader
     soulsync_reader = get_library_reader()
     from app.clients import last_fm_client, plex_push, music_client
@@ -106,6 +114,7 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
     # -------------------------------------------------------------------------
     # Stage 1 — Last.fm top artists filtered by min_listens
     # -------------------------------------------------------------------------
+    _current_stage = 1
     top_artists = last_fm_client.get_top_artists(period=period, limit=200)
     qualified = {name: plays for name, plays in top_artists.items() if plays >= min_listens}
     logger.info("Stage 1: %d artists qualify (min_listens=%d, period=%s)",
@@ -119,6 +128,7 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
     # -------------------------------------------------------------------------
     # Stage 2-3 — Resolve identities + get new releases
     # -------------------------------------------------------------------------
+    _current_stage = 2
     all_releases = []
     artists_with_releases = 0
 
@@ -204,12 +214,14 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
             seen.add(key)
             unique_releases.append(r)
 
+    _current_stage = 3
     logger.info("Stage 2-3: %d unique releases found across %d artists",
                 len(unique_releases), artists_with_releases)
 
     # -------------------------------------------------------------------------
     # Stage 4 — Owned-check via SoulSync DB
     # -------------------------------------------------------------------------
+    _current_stage = 4
     owned_releases = []   # Release objects that are in the library (for Stage 7 playlist)
     unowned = []
     owned_count = 0
@@ -261,6 +273,7 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
     to_queue = []
 
     if run_mode == "fetch":
+        _current_stage = 5
         # Sort by release_date descending (newest first)
         unowned.sort(key=lambda r: r.release_date, reverse=True)
         today_str = _date.today().isoformat()
@@ -276,6 +289,7 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
         logger.info("Stage 5: %d releases selected for acquisition (cap=%d)",
                     len(to_queue), max_per_cycle)
 
+        _current_stage = 6
         for r in to_queue:
             queue_id = rythmx_store.add_to_queue(
                 artist_name=r.artist, album_title=r.title,
@@ -299,6 +313,7 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
     # Saves to playlist_tracks as "{prefix}_{YYYY-MM-DD}".
     # Dry mode skips playlist creation entirely.
     # -------------------------------------------------------------------------
+    _current_stage = 7
     playlist_tracks = []
     plex_playlist_id = None
 
@@ -407,6 +422,7 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
     # Skipped in dry mode. Each auto_sync playlist is rebuilt in-place using the
     # data already fetched this cycle (owned_releases, top_artists).
     # -------------------------------------------------------------------------
+    _current_stage = 8
     if run_mode in ("build", "fetch"):
         auto_playlists = [p for p in rythmx_store.list_playlists() if p.get("auto_sync")]
         logger.info("Stage 8: %d auto-sync playlist(s) to rebuild", len(auto_playlists))

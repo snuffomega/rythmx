@@ -43,7 +43,7 @@ export function ActivityPage({ toast }: ActivityPageProps) {
       <div className="flex items-end justify-between">
         <div>
           <h1 className="page-title mb-1">Activity</h1>
-          <p className="text-[#444] text-sm">Acquisition queue and download status</p>
+          <p className="text-[#444] text-sm">Acquisition queue and fetch status</p>
         </div>
         <button
           onClick={handleCheckNow}
