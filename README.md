@@ -1,8 +1,6 @@
 # rythmx
 
-Automated music discovery and acquisition. Reads your SoulSync library database,
-cross-references Last.fm listening history, scores new releases, queues downloads
-via SoulSync, and publishes playlists to Plex.
+Automated music discovery and acquisition.
 
 ## Pages
 - **Discovery** — scored track recommendations; download or publish to Plex
@@ -10,13 +8,6 @@ via SoulSync, and publishes playlists to Plex.
 - **Stats** — Last.fm top artists/tracks, acquisition history
 - **Settings** — configure all service connections
 
-## Setup
-
-1. Copy `.env.example` to `.env` and fill in your credentials
-2. Confirm your SoulSync Docker volume name: `docker volume ls`
-3. Update `docker-compose.yml` with the correct volume name
-4. Start: `docker-compose up -d`
-5. Open: http://localhost:8009
 
 ## Configuration
 
