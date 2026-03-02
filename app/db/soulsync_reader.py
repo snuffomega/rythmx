@@ -281,7 +281,8 @@ def check_album_owned(artist_name: str, album_name: str,
                       itunes_artist_id: str = None,
                       deezer_album_id: str = None,
                       spotify_album_id: str = None,
-                      itunes_album_id: str = None) -> str | None:
+                      itunes_album_id: str = None,
+                      musicbrainz_release_id: str = None) -> str | None:
     """
     Owned-check for a release (album/single) against SoulSync's tracks table.
     Returns the Plex ratingKey (tracks.id) of a matching track, or None if not owned.
@@ -293,6 +294,7 @@ def check_album_owned(artist_name: str, album_name: str,
     Tier 1a: itunes_album_id exact match against albums.itunes_album_id
     Tier 1b: deezer_album_id exact match against albums.deezer_id
     Tier 1c: spotify_album_id exact match against albums.spotify_album_id
+    Tier 1d: musicbrainz_release_id exact match against albums.musicbrainz_release_id
     Tier 2a: itunes_artist_id + album title (reliable when Spotify not scanned)
     Tier 2b: spotify_artist_id + album title
     Tier 3:  artist name + album title text match (last resort)
@@ -341,6 +343,18 @@ def check_album_owned(artist_name: str, album_name: str,
                     "JOIN albums al ON t.album_id = al.id "
                     "WHERE al.spotify_album_id = ? LIMIT 1",
                     (spotify_album_id,)
+                ).fetchone()
+                if row:
+                    return row[0]
+
+            # Tier 1d — MusicBrainz release ID (exact)
+            # SoulSync stores this as albums.musicbrainz_release_id
+            if musicbrainz_release_id:
+                row = conn.execute(
+                    "SELECT t.id FROM tracks t "
+                    "JOIN albums al ON t.album_id = al.id "
+                    "WHERE al.musicbrainz_release_id = ? LIMIT 1",
+                    (musicbrainz_release_id,)
                 ).fetchone()
                 if row:
                     return row[0]
