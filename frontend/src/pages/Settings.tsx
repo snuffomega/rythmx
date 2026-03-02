@@ -3,7 +3,7 @@ import { CheckCircle, XCircle, Loader2, RefreshCw, Database, Radio, ChevronDown,
 import { useApi } from '../hooks/useApi';
 import { settingsApi, libraryApi, imageServiceApi } from '../services/api';
 import { ConfirmDialog } from '../components/ConfirmDialog';
-import type { LibraryBackend } from '../types';
+import type { LibraryBackend, LibraryEnrichStatus } from '../types';
 
 const BACKEND_LABELS: Record<string, string> = {
   soulsync: 'SoulSync',
@@ -103,6 +103,8 @@ export function SettingsPage({ toast }: SettingsPageProps) {
     if (libraryStatus?.backend) setBackend(libraryStatus.backend as LibraryBackend);
   }, [libraryStatus?.backend]);
   const [syncing, setSyncing] = useState(false);
+  const [enriching, setEnriching] = useState(false);
+  const [liveEnrichStatus, setLiveEnrichStatus] = useState<LibraryEnrichStatus | null>(null);
   const [switchingBackend, setSwitchingBackend] = useState(false);
   const [warmingCache, setWarmingCache] = useState(false);
   const [confirmClearHistory, setConfirmClearHistory] = useState(false);
@@ -136,6 +138,35 @@ export function SettingsPage({ toast }: SettingsPageProps) {
       setSyncing(false);
     }
   };
+
+  const handleEnrich = async () => {
+    setEnriching(true);
+    try {
+      await libraryApi.enrich();
+    } catch {
+      toast.error('Failed to start enrich');
+      setEnriching(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!enriching) return;
+    const id = setInterval(async () => {
+      try {
+        const s = await libraryApi.enrichStatus();
+        setLiveEnrichStatus(s);
+        if (!s.enrich_running) {
+          setEnriching(false);
+          refetchLibrary();
+          clearInterval(id);
+        }
+      } catch {
+        setEnriching(false);
+        clearInterval(id);
+      }
+    }, 3000);
+    return () => clearInterval(id);
+  }, [enriching]);
 
   const handleClearHistory = async () => {
     try {
@@ -250,6 +281,10 @@ export function SettingsPage({ toast }: SettingsPageProps) {
             <p className="text-[#444] text-xs mt-1">{libraryStatus.track_count.toLocaleString()} tracks indexed</p>
           )}
 
+          {libraryStatus?.last_synced && (
+            <p className="text-[#444] text-xs">Last synced: {libraryStatus.last_synced}</p>
+          )}
+
           <button
             onClick={handleSync}
             disabled={syncing}
@@ -258,6 +293,38 @@ export function SettingsPage({ toast }: SettingsPageProps) {
             {syncing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
             Sync Library Now
           </button>
+
+          {backend === 'plex' && (
+            <div className="space-y-2 pt-1">
+              {(() => {
+                const status = liveEnrichStatus ?? libraryStatus;
+                const total = status?.total_albums ?? 0;
+                const enriched = status?.enriched_albums ?? 0;
+                const pct = status?.enrich_pct ?? 0;
+                return total > 0 ? (
+                  <div className="space-y-1">
+                    <p className="text-[#444] text-xs">
+                      {enriched.toLocaleString()} / {total.toLocaleString()} albums enriched ({pct}%)
+                    </p>
+                    <div className="h-0.5 bg-[#1a1a1a] w-full">
+                      <div
+                        className="h-0.5 bg-accent transition-all duration-500"
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                  </div>
+                ) : null;
+              })()}
+              <button
+                onClick={handleEnrich}
+                disabled={enriching}
+                className="btn-secondary flex items-center gap-2 text-sm"
+              >
+                {enriching ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                Enrich Library
+              </button>
+            </div>
+          )}
         </div>
       </section>
 

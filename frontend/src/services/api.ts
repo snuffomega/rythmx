@@ -13,6 +13,7 @@ import type {
   TopAlbum,
   StatsSummary,
   LibraryStatus,
+  LibraryEnrichStatus,
   ConnectionStatus,
   Settings,
   ReleaseKind,
@@ -216,6 +217,14 @@ export const libraryApi = {
       .then(({ status: _s, ...rest }) => rest as LibraryStatus),
   sync: () =>
     request<{ status: string }>('/library/sync', { method: 'POST' }),
+  enrichStatus: () =>
+    request<{ status: string; enrich_running: boolean } & LibraryStatus>('/library/enrich-status')
+      .then(({ status: _s, ...rest }) => rest as LibraryEnrichStatus),
+  enrich: (batch_size = 50) =>
+    request<{ status: string }>('/library/enrich', {
+      method: 'POST',
+      body: JSON.stringify({ batch_size }),
+    }),
 };
 
 export const personalDiscoveryApi = {

@@ -155,6 +155,14 @@ export interface LibraryStatus {
   backend: LibraryBackend;
   track_count: number;
   last_synced?: string;
+  synced?: boolean;
+  total_albums?: number;
+  enriched_albums?: number;
+  enrich_pct?: number;
+}
+
+export interface LibraryEnrichStatus extends LibraryStatus {
+  enrich_running: boolean;
 }
 
 export interface ConnectionStatus {
