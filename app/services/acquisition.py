@@ -41,7 +41,7 @@ def check_queue():
         for item in pending:
             _submit_item(item)
 
-    # --- Step 2: re-check submitted items ---
+    # --- Step 2: re-check submitted items against the library reader ---
     submitted = rythmx_store.get_queue(status="submitted")
     if submitted:
         _recheck_submitted(submitted)

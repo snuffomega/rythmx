@@ -12,10 +12,54 @@ from app import config
 from app.runners import scheduler
 from app.db import rythmx_store
 
+
+class _SecretRedactionFilter(logging.Filter):
+    """
+    Belt-and-suspenders redaction filter applied to the root logger.
+
+    Scrubs known secret values from ALL log records before they are emitted —
+    including messages from third-party libraries (urllib3, requests, spotipy)
+    that may log full request URLs containing API keys as query parameters.
+
+    Matches against record.msg and every item in record.args so the secret
+    is removed whether it appears in the format string or as an argument.
+    """
+
+    def __init__(self):
+        super().__init__()
+        # Collect all non-empty secret values at startup
+        self._secrets = [v for v in [
+            config.LASTFM_API_KEY,
+            config.PLEX_TOKEN,
+            config.SPOTIFY_CLIENT_ID,
+            config.SPOTIFY_CLIENT_SECRET,
+            config.FANART_API_KEY,
+        ] if v]
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        for secret in self._secrets:
+            if isinstance(record.msg, str) and secret in record.msg:
+                record.msg = record.msg.replace(secret, "[REDACTED]")
+            if record.args:
+                if isinstance(record.args, dict):
+                    record.args = {
+                        k: (v.replace(secret, "[REDACTED]") if isinstance(v, str) else v)
+                        for k, v in record.args.items()
+                    }
+                else:
+                    record.args = tuple(
+                        (a.replace(secret, "[REDACTED]") if isinstance(a, str) else a)
+                        for a in record.args
+                    )
+        return True
+
+
 logging.basicConfig(
     level=getattr(logging, config.LOG_LEVEL, logging.INFO),
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
+# Attach redaction filter to root logger — catches all child loggers including urllib3
+logging.getLogger().addFilter(_SecretRedactionFilter())
 logger = logging.getLogger(__name__)
 
 
@@ -23,18 +67,20 @@ def create_app() -> Flask:
     app = Flask(__name__, static_folder="../webui", static_url_path="")
 
     # --- Security headers ---
+    # 'unsafe-inline' is intentionally absent from script-src: the Vite bundle
+    # loads from 'self' as a module script — no inline scripts are ever needed.
+    # Removing it means any injected inline <script> is blocked by the browser.
     Talisman(
         app,
         force_https=False,  # handled by reverse proxy in production
         content_security_policy={
             "default-src": "'self'",
-            "script-src": "'self' 'unsafe-inline'",
-            "style-src": "'self' 'unsafe-inline'",
+            "script-src": "'self'",
+            "style-src": "'self' 'unsafe-inline'",  # Tailwind runtime needs this
             "img-src": "'self' data: https:",
             "connect-src": "'self'",
         },
         frame_options="DENY",
-        content_security_policy_nonce_in=["script-src"],
     )
 
     # --- Init DB ---

@@ -61,7 +61,9 @@ def _get(method: str, extra_params: dict = None) -> dict | None:
             return None
         return data
     except requests.RequestException as e:
-        logger.error("Last.fm request failed (%s): %s", method, e)
+        # Log exception type only — str(e) from requests includes the full request
+        # URL, which contains api_key as a query parameter.
+        logger.error("Last.fm request failed (%s): %s", method, type(e).__name__)
         return None
 
 
@@ -226,7 +228,7 @@ def get_recent_tracks(limit: int = 200) -> list[dict]:
 def get_similar_artists(artist_name: str, limit: int = 20) -> list[dict]:
     """
     Returns similar artists from Last.fm: [{name, match_score}, ...]
-    Supplement to SoulSync's music-map.com similar_artists table.
+    Supplements the library's similar_artists data.
     """
     data = _get("artist.getSimilar", {
         "artist": artist_name,
