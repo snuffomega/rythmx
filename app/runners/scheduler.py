@@ -416,26 +416,31 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
         logger.info("Stage 8: skipped (run_mode=preview)")
 
     # Write history entries for this cycle (dry runs produce no history)
+    # Wrapped in its own try-except — history failure is non-fatal and must not
+    # corrupt the returned result dict or prevent the cycle from completing.
     if run_mode != "preview":
-        queued_keys = {(r.artist, r.title) for r in to_queue}
-        for r in owned_releases:
-            rythmx_store.add_history_entry(
-                {"artist_name": r.artist, "album_name": r.title}, status="owned"
-            )
-        for r in unowned:
-            if (r.artist, r.title) in queued_keys:
-                # Newly queued this run
-                entry_status, entry_reason = "queued", ""
-            elif run_mode == "fetch" and rythmx_store.is_in_queue(r.artist, r.title):
-                # Already pending/submitted in queue from a prior cruise run
-                entry_status, entry_reason = "queued", "already_queued"
-            else:
-                entry_status = "skipped"
-                entry_reason = "build_mode" if run_mode == "build" else ""
-            rythmx_store.add_history_entry(
-                {"artist_name": r.artist, "album_name": r.title},
-                status=entry_status, reason=entry_reason
-            )
+        try:
+            queued_keys = {(r.artist, r.title) for r in to_queue}
+            for r in owned_releases:
+                rythmx_store.add_history_entry(
+                    {"artist_name": r.artist, "album_name": r.title}, status="owned"
+                )
+            for r in unowned:
+                if (r.artist, r.title) in queued_keys:
+                    # Newly queued this run
+                    entry_status, entry_reason = "queued", ""
+                elif run_mode == "fetch" and rythmx_store.is_in_queue(r.artist, r.title):
+                    # Already pending/submitted in queue from a prior cruise run
+                    entry_status, entry_reason = "queued", "already_queued"
+                else:
+                    entry_status = "skipped"
+                    entry_reason = "build_mode" if run_mode == "build" else ""
+                rythmx_store.add_history_entry(
+                    {"artist_name": r.artist, "album_name": r.title},
+                    status=entry_status, reason=entry_reason
+                )
+        except Exception as e:
+            logger.warning("History write failed (non-fatal): %s", e)
 
     queue_stats = rythmx_store.get_queue_stats()
     return {
