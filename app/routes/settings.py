@@ -1,4 +1,5 @@
 import logging
+import threading
 from datetime import datetime
 from flask import Blueprint, jsonify, request
 from app.db import rythmx_store
@@ -8,6 +9,10 @@ from app.clients import last_fm_client, plex_push, soulsync_api
 logger = logging.getLogger(__name__)
 
 settings_bp = Blueprint("settings", __name__)
+
+# Track background enrich thread state
+_enrich_thread: threading.Thread | None = None
+_enrich_lock = threading.Lock()
 
 
 @settings_bp.route("/api/settings", methods=["GET"])
@@ -63,12 +68,12 @@ def settings_test_soulsync():
         try:
             with _sq.connect(db_path) as _c:
                 tbl = _c.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name='tracks'"
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='lib_tracks'"
                 ).fetchone()
                 if not tbl:
                     return jsonify({"connected": False,
                                     "message": "Library not synced yet — click Sync Library"})
-                count = _c.execute("SELECT COUNT(*) FROM tracks").fetchone()[0]
+                count = _c.execute("SELECT COUNT(*) FROM lib_tracks").fetchone()[0]
             return jsonify({"connected": True, "message": f"{count:,} tracks indexed"})
         except Exception as e:
             return jsonify({"connected": False, "message": str(e)})
@@ -127,17 +132,9 @@ def settings_test_fanart():
 
 @settings_bp.route("/api/library/status", methods=["GET"])
 def library_status():
-    from app.db import get_library_reader
-    lr = get_library_reader()
-    accessible = lr.is_db_accessible()
-    backend = rythmx_store.get_setting("library_backend") or config.LIBRARY_BACKEND
-    return jsonify({
-        "status": "ok",
-        "backend": backend,
-        "accessible": accessible,
-        "track_count": lr.get_track_count() if accessible else 0,
-        "last_synced": rythmx_store.get_setting("library_last_synced"),
-    })
+    from app.services import library_service
+    status = library_service.get_status()
+    return jsonify({"status": "ok", **status})
 
 
 @settings_bp.route("/api/library/sync", methods=["POST"])
@@ -156,6 +153,39 @@ def library_sync():
     except Exception as e:
         logger.warning("library sync failed: %s", e)
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@settings_bp.route("/api/library/enrich-status", methods=["GET"])
+def library_enrich_status():
+    from app.services import library_service
+    global _enrich_thread
+    status = library_service.get_status()
+    running = _enrich_thread is not None and _enrich_thread.is_alive()
+    return jsonify({"status": "ok", "enrich_running": running, **status})
+
+
+@settings_bp.route("/api/library/enrich", methods=["POST"])
+def library_enrich():
+    global _enrich_thread
+    with _enrich_lock:
+        if _enrich_thread is not None and _enrich_thread.is_alive():
+            return jsonify({"status": "ok", "message": "Enrich already running"}), 202
+
+        data = request.get_json() or {}
+        batch_size = int(data.get("batch_size", 50))
+
+        def _run():
+            from app.services import library_service as _lib_svc
+            try:
+                result = _lib_svc.enrich_library(batch_size=batch_size)
+                logger.info("Library enrich complete: %s", result)
+            except Exception as e:
+                logger.error("Library enrich failed: %s", e)
+
+        _enrich_thread = threading.Thread(target=_run, daemon=True, name="lib-enrich")
+        _enrich_thread.start()
+
+    return jsonify({"status": "ok", "message": "Enrich started"}), 202
 
 
 @settings_bp.route("/api/settings/library-backend", methods=["POST"])
