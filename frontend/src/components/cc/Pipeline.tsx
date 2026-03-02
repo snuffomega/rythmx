@@ -22,8 +22,19 @@ export function PipelineStatus({ stage, state, runMode }: PipelineStatusProps) {
     ? PIPELINE_STEPS.filter(s => !s.cruiseOnly)
     : PIPELINE_STEPS;
 
+  const progressPct =
+    state === 'completed' ? 100
+    : state === 'running' && stage !== undefined
+      ? Math.round(((stage - 1) / Math.max(steps.length - 1, 1)) * 100)
+      : 0;
+
   return (
     <div className="border border-[#1a1a1a]">
+      {/* Accent progress fill bar */}
+      <div className="h-px bg-[#1a1a1a] w-full">
+        <div className="h-px bg-accent transition-all duration-500" style={{ width: `${progressPct}%` }} />
+      </div>
+
       {/* Desktop: inline row */}
       <div className="hidden sm:flex px-4 py-3 items-center">
         {steps.map((step, i) => {
@@ -34,15 +45,18 @@ export function PipelineStatus({ stage, state, runMode }: PipelineStatusProps) {
 
           return (
             <div key={i} className="flex items-center">
-              <div className={`flex items-center gap-1.5 py-2 px-3 text-xs transition-colors ${
-                isError ? 'text-danger' : isActive ? 'text-white' : 'text-[#555]'
+              <div className={`flex items-center gap-1.5 py-2 px-3 text-xs transition-all duration-300 ${
+                isError ? 'text-danger'
+                : isActive ? 'text-white bg-accent/10'
+                : isDone ? 'text-[#444]'
+                : 'text-[#333]'
               }`}>
                 {isError ? (
                   <AlertCircle size={11} className="flex-shrink-0" />
                 ) : isActive ? (
-                  <Loader2 size={11} className="animate-spin flex-shrink-0" />
+                  <Loader2 size={11} className="animate-spin flex-shrink-0 text-accent" />
                 ) : isDone ? (
-                  <CheckCircle size={11} className="flex-shrink-0" />
+                  <CheckCircle size={11} className="flex-shrink-0 text-success" />
                 ) : (
                   <Circle size={11} className="flex-shrink-0" />
                 )}
@@ -70,13 +84,18 @@ export function PipelineStatus({ stage, state, runMode }: PipelineStatusProps) {
 
           return (
             <div key={i} className="flex items-center gap-1 min-w-0 flex-1">
-              <div className={`flex flex-col items-center gap-0.5 min-w-0 flex-1 ${
-                isError ? 'text-danger' : isActive ? 'text-white' : 'text-[#555]'
+              <div className={`flex flex-col items-center gap-0.5 min-w-0 flex-1 transition-all duration-300 ${
+                isError ? 'text-danger'
+                : isActive ? 'text-white'
+                : isDone ? 'text-[#444]'
+                : 'text-[#333]'
               }`}>
                 {isError ? (
                   <AlertCircle size={12} className="flex-shrink-0" />
                 ) : isActive ? (
-                  <Loader2 size={12} className="animate-spin flex-shrink-0" />
+                  <Loader2 size={12} className="animate-spin flex-shrink-0 text-accent" />
+                ) : isDone ? (
+                  <CheckCircle size={12} className="flex-shrink-0 text-success" />
                 ) : (
                   <Circle size={12} className="flex-shrink-0" />
                 )}
