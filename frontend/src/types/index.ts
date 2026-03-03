@@ -120,6 +120,8 @@ export interface CruiseControlConfig {
   release_cache_refresh_hour: number;
   nr_ignore_keywords: string;
   nr_ignore_artists: string;
+  cc_include_features: boolean;
+  cc_release_kinds: string;
 }
 
 export interface HistoryItem {

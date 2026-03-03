@@ -61,7 +61,7 @@ def cc_status():
 @new_music_bp.route("/api/cruise-control/config", methods=["GET"])
 def get_new_music_config():
     raw = rythmx_store.get_all_settings()
-    bool_keys = {"enabled", "auto_push_playlist", "dry_run"}
+    bool_keys = {"enabled", "auto_push_playlist", "dry_run", "cc_include_features"}
     int_keys = {
         "min_listens", "lookback_days", "max_per_cycle", "cycle_hours",
         "max_playlist_tracks", "schedule_weekday", "schedule_hour",
@@ -70,6 +70,7 @@ def get_new_music_config():
     config_keys = bool_keys | int_keys | {
         "run_mode", "playlist_prefix", "period",
         "nr_ignore_keywords", "nr_ignore_artists",
+        "cc_release_kinds",
     }
     coerced = {}
     for k, v in raw.items():
@@ -102,6 +103,8 @@ def get_new_music_config():
         "nr_ignore_artists": "",
         "release_cache_refresh_weekday": 4,
         "release_cache_refresh_hour": 6,
+        "cc_include_features": True,
+        "cc_release_kinds": config.CC_RELEASE_KINDS,
     }
     return jsonify({"status": "ok", "config": {**defaults, **coerced}})
 
@@ -121,6 +124,7 @@ def save_new_music_config():
         "max_playlist_tracks", "schedule_weekday", "schedule_hour",
         "dry_run", "nr_ignore_keywords", "nr_ignore_artists",
         "release_cache_refresh_weekday", "release_cache_refresh_hour",
+        "cc_include_features", "cc_release_kinds",
     }
     for key, value in data.items():
         if key in allowed_keys:

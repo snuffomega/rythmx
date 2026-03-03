@@ -523,6 +523,7 @@ def get_new_releases_for_artist(
     cached_ids: dict | None = None,
     spotify_artist_id: str = None,
     force_refresh: bool = False,
+    allowed_kinds: set | None = None,
 ) -> tuple[list[Release], dict]:
     """
     Discover new releases for a single artist using the configured provider chain:
@@ -548,7 +549,8 @@ def get_new_releases_for_artist(
     cutoff = datetime.utcnow() - timedelta(days=days_ago)
     cutoff_str = cutoff.strftime("%Y-%m-%d")
     ignore_kw = [k.strip().lower() for k in (ignore_keywords or [])]
-    allowed_kinds = {k.strip().lower() for k in config.CC_RELEASE_KINDS.split(",") if k.strip()}
+    if allowed_kinds is None:
+        allowed_kinds = {k.strip().lower() for k in config.CC_RELEASE_KINDS.split(",") if k.strip()}
     provider = config.MUSIC_API_PROVIDER
 
     # --- Release cache check (7-day TTL) ---

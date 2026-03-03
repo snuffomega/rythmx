@@ -110,6 +110,13 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
     # Normalize: lowercase + strip punctuation so "Ballyhoo!" matches "ballyhoo"
     _strip_punct = lambda s: re.sub(r"[^\w\s]", "", s).strip()
     ignore_artists = {_strip_punct(a.strip().lower()) for a in settings.get("nr_ignore_artists", "").split(",") if a.strip()}
+    cc_release_kinds_raw = settings.get("cc_release_kinds") or config.CC_RELEASE_KINDS
+    allowed_kinds = {k.strip().lower() for k in cc_release_kinds_raw.split(",") if k.strip()}
+    include_features_raw = settings.get("cc_include_features")
+    include_features = (
+        True if include_features_raw is None
+        else str(include_features_raw).lower() not in ("false", "0", "no")
+    )
 
     # -------------------------------------------------------------------------
     # Stage 1 — Last.fm top artists filtered by min_listens
@@ -175,6 +182,7 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
             cached_ids=cached,
             spotify_artist_id=sp_artist_id,
             force_refresh=force_refresh,
+            allowed_kinds=allowed_kinds,
         )
 
         # Write resolved IDs back to cache so subsequent cycles skip API searches.
@@ -213,6 +221,15 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
         if key not in seen:
             seen.add(key)
             unique_releases.append(r)
+
+    if not include_features:
+        _FEAT_RE = re.compile(r'\b(feat\.?|ft\.?|featuring)\b|\(with ', re.IGNORECASE)
+        before = len(unique_releases)
+        unique_releases = [r for r in unique_releases if not _FEAT_RE.search(r.title)]
+        filtered = before - len(unique_releases)
+        if filtered:
+            logger.info("Stage 2-3: filtered %d feature/collab release(s) (cc_include_features=false)",
+                        filtered)
 
     _current_stage = 3
     logger.info("Stage 2-3: %d unique releases found across %d artists",

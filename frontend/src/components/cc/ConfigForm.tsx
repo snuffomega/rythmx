@@ -171,6 +171,14 @@ export function CCConfigForm({
           </div>
           <div className="w-px h-8 bg-[#1a1a1a] self-center" />
           <div className="flex items-center gap-3">
+            <Toggle on={form.cc_include_features ?? true} onChange={v => update('cc_include_features', v)} />
+            <div>
+              <p className="text-text-primary text-sm font-medium">Include features &amp; collabs</p>
+              <p className="text-[#444] text-xs">Include releases where this artist is featured</p>
+            </div>
+          </div>
+          <div className="w-px h-8 bg-[#1a1a1a] self-center" />
+          <div className="flex items-center gap-3">
             <Toggle on={!!form.enabled} onChange={v => update('enabled', v)} />
             <div>
               <p className="text-text-primary text-sm font-medium">Weekly Schedule</p>
@@ -194,6 +202,31 @@ export function CCConfigForm({
 
         {advanced && (
           <div className="mt-5 space-y-5">
+            <div>
+              <label className="label">Release Types</label>
+              <div className="flex items-center gap-5 mt-1.5">
+                {(['album', 'single', 'ep'] as const).map(kind => {
+                  const kinds = (form.cc_release_kinds ?? 'album,single,ep').split(',').map(s => s.trim());
+                  const checked = kinds.includes(kind);
+                  const toggleKind = () => {
+                    const next = checked ? kinds.filter(k => k !== kind) : [...kinds, kind];
+                    update('cc_release_kinds', next.join(','));
+                  };
+                  return (
+                    <label key={kind} className="flex items-center gap-1.5 cursor-pointer text-sm text-text-muted hover:text-text-secondary transition-colors select-none">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={toggleKind}
+                        className="accent-accent w-3.5 h-3.5 cursor-pointer"
+                      />
+                      <span className="capitalize">{kind}</span>
+                    </label>
+                  );
+                })}
+              </div>
+              <p className="text-[#444] text-xs mt-1">Which release types to include in each scan</p>
+            </div>
             <div>
               <label className="label">Playlist Name</label>
               <input className="input" value={form.playlist_prefix ?? ''} onChange={e => update('playlist_prefix', e.target.value)} placeholder="New Music" />
