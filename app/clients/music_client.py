@@ -559,7 +559,9 @@ def get_new_releases_for_artist(
         if cached is not None:
             releases = [
                 r for r in cached
-                if not r.is_upcoming and (r.release_date or "") >= cutoff_str
+                if not r.is_upcoming
+                and (r.release_date or "") >= cutoff_str
+                and r.kind in allowed_kinds
             ]
             logger.debug("Release cache hit for '%s': %d/%d in window",
                          artist_name, len(releases), len(cached))
