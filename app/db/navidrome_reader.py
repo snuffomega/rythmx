@@ -27,7 +27,7 @@ def get_track_count() -> int:
     return 0
 
 
-def get_soulsync_artist_id(artist_name: str):
+def get_native_artist_id(artist_name: str):
     return None
 
 

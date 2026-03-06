@@ -95,7 +95,7 @@ def _recheck_submitted(items: list[dict]):
         album = item["album_title"]
         try:
             cached = rythmx_store.get_cached_artist(artist) or {}
-            ss_id = cached.get("soulsync_artist_id") or reader.get_soulsync_artist_id(artist)
+            ss_id = cached.get("soulsync_artist_id") or reader.get_native_artist_id(artist)
             rating_key = reader.check_album_owned(
                 artist, album,
                 soulsync_artist_id=ss_id,

@@ -6,7 +6,7 @@ set the LIBRARY_BACKEND env var and see app/db/__init__.py.
 
 Interface contract (all backends must implement these with identical signatures):
   Identity:
-    get_soulsync_artist_id(artist_name: str) -> str | None
+    get_native_artist_id(artist_name: str) -> str | None  (backend's internal artist PK)
     get_spotify_artist_id(artist_name: str) -> str | None
     get_deezer_artist_id(artist_name: str) -> str | None
     get_itunes_artist_id(artist_name: str) -> str | None
@@ -209,7 +209,7 @@ def get_deezer_artist_id(artist_name: str) -> str | None:
         return None
 
 
-def get_soulsync_artist_id(artist_name: str) -> str | None:
+def get_native_artist_id(artist_name: str) -> str | None:
     """
     Look up SoulSync's internal artists.id for a given artist name.
     Returns the SoulSync artist PK (used for exact JOIN queries) or None.
@@ -248,7 +248,7 @@ def get_soulsync_artist_id(artist_name: str) -> str | None:
                     return str(r[0])
             return None
     except Exception as e:
-        logger.debug("soulsync_reader.get_soulsync_artist_id skipped (%s)", e)
+        logger.debug("soulsync_reader.get_native_artist_id skipped (%s)", e)
         return None
 
 
@@ -451,7 +451,7 @@ def find_track_by_name(artist_name: str, track_title: str) -> str | None:
     if not artist_name or not track_title:
         return None
 
-    # Inline _norm: mirrors get_soulsync_artist_id() and music_client.norm()
+    # Inline _norm: mirrors get_native_artist_id() and music_client.norm()
     import unicodedata, re as _re
 
     def _norm(s: str) -> str:

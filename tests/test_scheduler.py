@@ -55,7 +55,7 @@ def _mock_reader(owned_rating_key=None):
     r.get_spotify_artist_id.return_value = None
     r.get_deezer_artist_id.return_value = None
     r.get_itunes_artist_id.return_value = None
-    r.get_soulsync_artist_id.return_value = None
+    r.get_native_artist_id.return_value = None
     r.check_album_owned.return_value = owned_rating_key
     r.get_tracks_for_album.return_value = [
         {"plex_rating_key": "rk001", "track_title": "Track 1", "album_thumb_url": ""}

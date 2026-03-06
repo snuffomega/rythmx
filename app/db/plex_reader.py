@@ -14,7 +14,6 @@ Tables are created by migrations/002_add_lib_tables.sql (not here).
 Functions not applicable to this backend return safe empty values:
   get_discovery_pool()       → []    (SoulSync-specific)
   get_similar_artists_map()  → {}    (SoulSync-specific)
-  get_soulsync_artist_id()   → None  (not applicable)
 """
 import sqlite3
 import time
@@ -183,9 +182,18 @@ def get_track_count() -> int:
 # Identity helpers
 # ---------------------------------------------------------------------------
 
-def get_soulsync_artist_id(artist_name: str) -> str | None:
-    """Not applicable for Plex backend."""
-    return None
+def get_native_artist_id(artist_name: str) -> str | None:
+    """Return the Plex ratingKey for an artist by name. Used for track expansion queries."""
+    try:
+        with _connect() as conn:
+            row = conn.execute(
+                "SELECT id FROM lib_artists WHERE name_lower = lower(?) LIMIT 1",
+                (artist_name,),
+            ).fetchone()
+            return row["id"] if row else None
+    except Exception as e:
+        logger.debug("plex_reader.get_native_artist_id failed: %s", e)
+        return None
 
 
 def get_spotify_artist_id(artist_name: str) -> str | None:

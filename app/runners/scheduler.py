@@ -8,9 +8,9 @@ Cruise Control pipeline (7 stages):
   1. Poll Last.fm — top artists filtered by min-listens threshold
   2. Resolve artist identities — Last.fm name → Deezer/Spotify/MB IDs (cached)
   3. Find new releases — within lookback_days, via music_client provider chain
-  4. Owned-check — SoulSync DB (case-insensitive artist + album name)
+  4. Owned-check — library backend (Plex/SoulSync), case-insensitive artist + album name
   5. Build download queue — unowned releases, capped at max_per_cycle
-  6. Queue downloads — SoulSync API (or dry-run)
+  6. Queue downloads — acquisition worker (stub)
   7. Save history — rythmx.db; playlist from owned candidates
 """
 import re
@@ -86,7 +86,7 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
     """
     global _current_stage
     from app.db import get_library_reader
-    soulsync_reader = get_library_reader()
+    library_reader = get_library_reader()
     from app.clients import last_fm_client, plex_push, music_client
     from app.services import identity_resolver
     from datetime import date as _date
@@ -157,14 +157,13 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
             (identity.get("reason_codes") or ["?"])[-1],
         )
 
-        # Enrich with pre-resolved IDs from SoulSync's own artists table.
-        # For library artists SoulSync has already resolved iTunes/Deezer/MB IDs —
-        # reusing these skips external API search calls entirely.
-        # Also resolve the SoulSync internal artist ID for exact PK joins in owned-check.
-        sp_artist_id = soulsync_reader.get_spotify_artist_id(artist_name)
-        dz_artist_id = soulsync_reader.get_deezer_artist_id(artist_name)
-        it_artist_id = soulsync_reader.get_itunes_artist_id(artist_name)
-        ss_artist_id = soulsync_reader.get_soulsync_artist_id(artist_name)
+        # Enrich with pre-resolved IDs from the library backend (Plex/SoulSync).
+        # Reusing cached IDs skips external API search calls entirely.
+        # get_native_artist_id() returns the backend's internal PK for track expansion.
+        sp_artist_id = library_reader.get_spotify_artist_id(artist_name)
+        dz_artist_id = library_reader.get_deezer_artist_id(artist_name)
+        it_artist_id = library_reader.get_itunes_artist_id(artist_name)
+        ss_artist_id = library_reader.get_native_artist_id(artist_name)
 
         if sp_artist_id and not cached.get("spotify_artist_id"):
             cached["spotify_artist_id"] = sp_artist_id
@@ -244,12 +243,12 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
     owned_count = 0
 
     for r in unique_releases:
-        # Use cached SoulSync artist ID for Tier 0 PK join (most reliable)
+        # Use cached native artist ID for PK-based owned-check tiers
         cached_r = rythmx_store.get_cached_artist(r.artist) or {}
-        ss_id = cached_r.get("soulsync_artist_id") or soulsync_reader.get_soulsync_artist_id(r.artist)
-        sp_id = soulsync_reader.get_spotify_artist_id(r.artist)
-        it_id = cached_r.get("itunes_artist_id") or soulsync_reader.get_itunes_artist_id(r.artist)
-        rating_key = soulsync_reader.check_album_owned(
+        ss_id = cached_r.get("soulsync_artist_id") or library_reader.get_native_artist_id(r.artist)
+        sp_id = library_reader.get_spotify_artist_id(r.artist)
+        it_id = cached_r.get("itunes_artist_id") or library_reader.get_itunes_artist_id(r.artist)
+        rating_key = library_reader.check_album_owned(
             r.artist, r.title,
             soulsync_artist_id=ss_id,
             spotify_artist_id=sp_id,
@@ -340,9 +339,9 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
             for r in owned_releases:
                 cached_r = rythmx_store.get_cached_artist(r.artist) or {}
                 ss_id = (cached_r.get("soulsync_artist_id")
-                         or soulsync_reader.get_soulsync_artist_id(r.artist))
+                         or library_reader.get_native_artist_id(r.artist))
                 if ss_id:
-                    tracks = soulsync_reader.get_tracks_for_album(ss_id, r.title)
+                    tracks = library_reader.get_tracks_for_album(ss_id, r.title)
                     for t in tracks:
                         playlist_tracks.append({
                             "plex_rating_key": t["plex_rating_key"],
@@ -355,7 +354,7 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
                             "release_date": r.release_date,
                         })
                 else:
-                    logger.debug("Stage 7: no SoulSync ID for owned release artist '%s'", r.artist)
+                    logger.debug("Stage 7: no native artist ID for owned release artist '%s'", r.artist)
 
             # Unowned: album-level placeholder (shown as "Missing" in playlist UI)
             for r in unowned:
@@ -444,7 +443,7 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
         auto_playlists = [p for p in rythmx_store.list_playlists() if p.get("auto_sync")]
         logger.info("Stage 8: %d auto-sync playlist(s) to rebuild", len(auto_playlists))
         for pl in auto_playlists:
-            _auto_sync_playlist(pl, owned_releases, top_artists, settings, soulsync_reader)
+            _auto_sync_playlist(pl, owned_releases, top_artists, settings, library_reader)
     else:
         logger.info("Stage 8: skipped (run_mode=preview)")
 
@@ -493,7 +492,7 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
     }
 
 
-def _auto_sync_playlist(pl, owned_releases, top_artists, settings, soulsync_reader):
+def _auto_sync_playlist(pl, owned_releases, top_artists, settings, library_reader):
     """
     Rebuild a single auto_sync playlist in-place.
 
@@ -515,9 +514,9 @@ def _auto_sync_playlist(pl, owned_releases, top_artists, settings, soulsync_read
             for r in owned_releases:
                 cached_r = rythmx_store.get_cached_artist(r.artist) or {}
                 ss_id = (cached_r.get("soulsync_artist_id")
-                         or soulsync_reader.get_soulsync_artist_id(r.artist))
+                         or library_reader.get_native_artist_id(r.artist))
                 if ss_id:
-                    tracks = soulsync_reader.get_tracks_for_album(ss_id, r.title)
+                    tracks = library_reader.get_tracks_for_album(ss_id, r.title)
                     for t in tracks:
                         playlist_tracks.append({
                             "plex_rating_key": t["plex_rating_key"],
@@ -541,9 +540,9 @@ def _auto_sync_playlist(pl, owned_releases, top_artists, settings, soulsync_read
             artist_tracks = {}
             for artist_name in top_artists:
                 cached = rythmx_store.get_cached_artist(artist_name) or {}
-                ss_id = cached.get("soulsync_artist_id") or soulsync_reader.get_soulsync_artist_id(artist_name)
+                ss_id = cached.get("soulsync_artist_id") or library_reader.get_native_artist_id(artist_name)
                 if ss_id:
-                    tracks = soulsync_reader.get_all_tracks_for_artist(ss_id)
+                    tracks = library_reader.get_all_tracks_for_artist(ss_id)
                     if tracks:
                         artist_tracks[artist_name] = tracks
 

@@ -30,7 +30,7 @@ def _build_taste_playlist_tracks(playlist_name: str) -> list[dict]:
     resolved_count = 0
     for artist_name in top_artists:
         cached = rythmx_store.get_cached_artist(artist_name) or {}
-        ss_id = cached.get("soulsync_artist_id") or sr.get_soulsync_artist_id(artist_name)
+        ss_id = cached.get("soulsync_artist_id") or sr.get_native_artist_id(artist_name)
         if ss_id:
             tracks = sr.get_all_tracks_for_artist(ss_id)
             if tracks:

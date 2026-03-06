@@ -19,6 +19,42 @@ from app.db import rythmx_store
 
 logger = logging.getLogger(__name__)
 
+# Enrichment source registry — defines all possible enrichment passes.
+# priority: order of execution (lower = first)
+# fills: columns populated on lib_albums / lib_artists
+# rate_limit_rpm: requests per minute ceiling
+# implemented: True = active now; False = registered but deferred
+ENRICH_SOURCES = [
+    {
+        "name": "itunes",
+        "priority": 1,
+        "fills": ["itunes_album_id", "itunes_artist_id"],
+        "rate_limit_rpm": 20,
+        "implemented": True,
+    },
+    {
+        "name": "deezer",
+        "priority": 2,
+        "fills": ["deezer_id"],
+        "rate_limit_rpm": 50,
+        "implemented": True,
+    },
+    {
+        "name": "musicbrainz",
+        "priority": 3,
+        "fills": ["musicbrainz_id", "musicbrainz_release_id"],
+        "rate_limit_rpm": 1,
+        "implemented": False,  # Phase 10
+    },
+    {
+        "name": "spotify",
+        "priority": 4,
+        "fills": ["spotify_artist_id", "spotify_album_id"],
+        "rate_limit_rpm": 30,
+        "implemented": False,  # P1
+    },
+]
+
 _ITUNES_BASE = "https://itunes.apple.com"
 _ITUNES_RATE_INTERVAL = 3.1  # seconds between calls (20/min limit + margin)
 _itunes_last_call: float = 0.0
@@ -148,10 +184,26 @@ def sync_library() -> dict:
     return plex_reader.sync_library()
 
 
+def _write_enrichment_meta(conn, source: str, entity_type: str, entity_id: str,
+                           status: str, error_msg: str = None) -> None:
+    """Upsert a row into enrichment_meta. Silently ignores if table doesn't exist yet."""
+    try:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO enrichment_meta
+                (source, entity_type, entity_id, status, enriched_at, error_msg)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+            """,
+            (source, entity_type, entity_id, status, error_msg),
+        )
+    except Exception as e:
+        logger.debug("enrichment_meta write skipped: %s", e)
+
+
 def enrich_library(batch_size: int = 50) -> dict:
     """
     Stage 2: For each lib_album missing iTunes + Deezer IDs, query iTunes then Deezer.
-    Resumable: only processes WHERE itunes_album_id IS NULL AND deezer_id IS NULL.
+    Resumable: skips albums already marked not_found in enrichment_meta.
     Micro-batched: fetches batch_size albums, commits after each batch.
     Returns {enriched, failed, skipped, remaining}.
     """
@@ -169,6 +221,14 @@ def enrich_library(batch_size: int = 50) -> dict:
                 JOIN lib_artists ar ON la.artist_id = ar.id
                 WHERE la.itunes_album_id IS NULL
                   AND la.deezer_id IS NULL
+                  AND la.id NOT IN (
+                      SELECT entity_id FROM enrichment_meta
+                      WHERE entity_type = 'album'
+                        AND status = 'not_found'
+                        AND source IN ('itunes', 'deezer')
+                      GROUP BY entity_id
+                      HAVING COUNT(DISTINCT source) >= 2
+                  )
                 LIMIT ?
                 """,
                 (batch_size,),
@@ -213,6 +273,7 @@ def enrich_library(batch_size: int = 50) -> dict:
                             """,
                             (itunes_result["itunes_artist_id"], album["artist_id"]),
                         )
+                    _write_enrichment_meta(conn, "itunes", "album", album_id, "found")
                 enriched += 1
                 logger.debug(
                     "Enrich: iTunes hit for '%s / %s' → id=%s",
@@ -224,6 +285,13 @@ def enrich_library(batch_size: int = 50) -> dict:
                                artist_name, album_title, e)
                 failed += 1
                 continue
+
+        # iTunes miss — record it so we don't hammer the API again
+        try:
+            with _connect() as conn:
+                _write_enrichment_meta(conn, "itunes", "album", album_id, "not_found")
+        except Exception:
+            pass
 
         # iTunes miss → try Deezer
         deezer_result = _deezer_search_album(artist_name, album_title)
@@ -243,6 +311,7 @@ def enrich_library(batch_size: int = 50) -> dict:
                          deezer_result.get("api_title", ""),
                          album_id),
                     )
+                    _write_enrichment_meta(conn, "deezer", "album", album_id, "found")
                 enriched += 1
                 logger.debug(
                     "Enrich: Deezer hit for '%s / %s' → id=%s",
@@ -255,9 +324,7 @@ def enrich_library(batch_size: int = 50) -> dict:
                 failed += 1
                 continue
 
-        # Both misses — mark with a low confidence so it doesn't re-run endlessly.
-        # Set deezer_id to empty string to exclude from the WHERE clause next pass
-        # (we use NULL check — skip rows that returned no results to avoid hammering APIs).
+        # Both misses — record not_found for Deezer; album excluded from future runs
         try:
             with _connect() as conn:
                 conn.execute(
@@ -270,6 +337,7 @@ def enrich_library(batch_size: int = 50) -> dict:
                     """,
                     (album_id,),
                 )
+                _write_enrichment_meta(conn, "deezer", "album", album_id, "not_found")
         except Exception:
             pass
         skipped += 1
