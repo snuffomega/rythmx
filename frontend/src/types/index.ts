@@ -167,6 +167,14 @@ export interface LibraryEnrichStatus extends LibraryStatus {
   enrich_running: boolean;
 }
 
+export interface SpotifyEnrichStatus {
+  enrich_running: boolean;
+  enriched_artists: number;
+  total_artists: number;
+  last_run?: string | null;
+  spotify_available: boolean;
+}
+
 export interface ConnectionStatus {
   connected: boolean;
   message?: string;

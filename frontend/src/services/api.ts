@@ -14,6 +14,7 @@ import type {
   StatsSummary,
   LibraryStatus,
   LibraryEnrichStatus,
+  SpotifyEnrichStatus,
   ConnectionStatus,
   Settings,
   ReleaseKind,
@@ -222,6 +223,14 @@ export const libraryApi = {
       .then(({ status: _s, ...rest }) => rest as LibraryEnrichStatus),
   enrich: (batch_size = 50) =>
     request<{ status: string }>('/library/enrich', {
+      method: 'POST',
+      body: JSON.stringify({ batch_size }),
+    }),
+  spotifyStatus: () =>
+    request<{ status: string; enrich_running: boolean } & SpotifyEnrichStatus>('/library/spotify-status')
+      .then(({ status: _s, ...rest }) => rest as SpotifyEnrichStatus),
+  enrichSpotify: (batch_size = 20) =>
+    request<{ status: string }>('/library/enrich-spotify', {
       method: 'POST',
       body: JSON.stringify({ batch_size }),
     }),

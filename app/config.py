@@ -44,6 +44,9 @@ PLEX_MUSIC_SECTION = _optional("PLEX_MUSIC_SECTION", "Music")
 # --- Spotify ---
 SPOTIFY_CLIENT_ID = _optional("SPOTIFY_CLIENT_ID")
 SPOTIFY_CLIENT_SECRET = _optional("SPOTIFY_CLIENT_SECRET")
+# Rate limit for Spotify API calls. Default 100 RPM is conservative.
+# Lower if you hit 429s; Spotify's actual limit varies and changes over time.
+SPOTIFY_RATE_LIMIT_RPM = int(_optional("SPOTIFY_RATE_LIMIT_RPM", "100"))
 
 # --- Flask ---
 FLASK_HOST = _optional("FLASK_HOST", "0.0.0.0")

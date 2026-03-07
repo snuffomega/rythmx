@@ -441,6 +441,19 @@ def _spotify_available() -> bool:
     return bool(config.SPOTIFY_CLIENT_ID and config.SPOTIFY_CLIENT_SECRET)
 
 
+_spotify_rate_interval: float = 60.0 / max(config.SPOTIFY_RATE_LIMIT_RPM, 1)
+_spotify_last_call: float = 0.0
+
+
+def _spotify_rate_limit() -> None:
+    """Sleep if needed to stay under SPOTIFY_RATE_LIMIT_RPM. Call before every Spotify request."""
+    global _spotify_last_call
+    elapsed = time.time() - _spotify_last_call
+    if elapsed < _spotify_rate_interval:
+        time.sleep(_spotify_rate_interval - elapsed)
+    _spotify_last_call = time.time()
+
+
 def _spotify_get_releases(name: str, cutoff: datetime,
                           allowed_kinds: set, ignore_kw: list[str],
                           spotify_artist_id: str = None) -> list[Release]:
@@ -464,6 +477,7 @@ def _spotify_get_releases(name: str, cutoff: datetime,
     artist_id = spotify_artist_id
     if not artist_id:
         try:
+            _spotify_rate_limit()
             results = sp.search(q=f'artist:"{name}"', type="artist", limit=5)
             artists = results.get("artists", {}).get("items", [])
             if not artists:
@@ -472,6 +486,10 @@ def _spotify_get_releases(name: str, cutoff: datetime,
             artist = next((a for a in artists if norm(a["name"]) == norm_name), artists[0])
             artist_id = artist["id"]
         except Exception as e:
+            msg = str(e)
+            if "429" in msg or "rate" in msg.lower():
+                logger.warning("Spotify rate limit hit searching '%s' — falling back to iTunes", name)
+                return []
             logger.error("Spotify artist search failed for '%s': %s", name, e)
             return []
 
@@ -479,6 +497,7 @@ def _spotify_get_releases(name: str, cutoff: datetime,
         groups = ",".join(k for k in ("album", "single") if k in allowed_kinds)
         offset = 0
         while True:
+            _spotify_rate_limit()
             resp = sp.artist_albums(artist_id, include_groups=groups, limit=50, offset=offset)
             if not resp or not resp.get("items"):
                 break
@@ -507,6 +526,10 @@ def _spotify_get_releases(name: str, cutoff: datetime,
             else:
                 break
     except Exception as e:
+        msg = str(e)
+        if "429" in msg or "rate" in msg.lower():
+            logger.warning("Spotify rate limit hit fetching albums for '%s' — falling back to iTunes", name)
+            return []
         logger.error("Spotify artist albums failed for '%s': %s", name, e)
 
     return releases

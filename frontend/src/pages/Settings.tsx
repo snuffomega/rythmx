@@ -3,7 +3,7 @@ import { CheckCircle, XCircle, Loader2, RefreshCw, Database, Radio, ChevronDown,
 import { useApi } from '../hooks/useApi';
 import { settingsApi, libraryApi, imageServiceApi } from '../services/api';
 import { ConfirmDialog } from '../components/ConfirmDialog';
-import type { LibraryBackend, LibraryEnrichStatus } from '../types';
+import type { LibraryBackend, LibraryEnrichStatus, SpotifyEnrichStatus } from '../types';
 
 const BACKEND_LABELS: Record<string, string> = {
   soulsync: 'SoulSync',
@@ -97,6 +97,7 @@ interface SettingsPageProps {
 
 export function SettingsPage({ toast }: SettingsPageProps) {
   const { data: libraryStatus, loading: libraryLoading, refetch: refetchLibrary } = useApi(() => libraryApi.getStatus());
+  const { data: spotifyStatusData, refetch: refetchSpotifyStatus } = useApi(() => libraryApi.spotifyStatus());
   const [backend, setBackend] = useState<LibraryBackend>('soulsync');
 
   useEffect(() => {
@@ -105,6 +106,8 @@ export function SettingsPage({ toast }: SettingsPageProps) {
   const [syncing, setSyncing] = useState(false);
   const [enriching, setEnriching] = useState(false);
   const [liveEnrichStatus, setLiveEnrichStatus] = useState<LibraryEnrichStatus | null>(null);
+  const [enrichingSpotify, setEnrichingSpotify] = useState(false);
+  const [liveSpotifyStatus, setLiveSpotifyStatus] = useState<SpotifyEnrichStatus | null>(null);
   const [switchingBackend, setSwitchingBackend] = useState(false);
   const [warmingCache, setWarmingCache] = useState(false);
   const [confirmClearHistory, setConfirmClearHistory] = useState(false);
@@ -167,6 +170,35 @@ export function SettingsPage({ toast }: SettingsPageProps) {
     }, 3000);
     return () => clearInterval(id);
   }, [enriching]);
+
+  const handleEnrichSpotify = async () => {
+    setEnrichingSpotify(true);
+    try {
+      await libraryApi.enrichSpotify();
+    } catch {
+      toast.error('Failed to start Spotify enrich');
+      setEnrichingSpotify(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!enrichingSpotify) return;
+    const id = setInterval(async () => {
+      try {
+        const s = await libraryApi.spotifyStatus();
+        setLiveSpotifyStatus(s);
+        if (!s.enrich_running) {
+          setEnrichingSpotify(false);
+          refetchSpotifyStatus();
+          clearInterval(id);
+        }
+      } catch {
+        setEnrichingSpotify(false);
+        clearInterval(id);
+      }
+    }, 3000);
+    return () => clearInterval(id);
+  }, [enrichingSpotify]);
 
   const handleClearHistory = async () => {
     try {
@@ -322,6 +354,44 @@ export function SettingsPage({ toast }: SettingsPageProps) {
               >
                 {enriching ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
                 Enrich Library
+              </button>
+            </div>
+          )}
+
+          {spotifyStatusData?.spotify_available && (
+            <div className="space-y-2 pt-1">
+              {(() => {
+                const s = liveSpotifyStatus ?? spotifyStatusData;
+                const enriched = s?.enriched_artists ?? 0;
+                const total = s?.total_artists ?? 0;
+                const pct = total > 0 ? Math.round((enriched / total) * 100) : 0;
+                const lastRun = s?.last_run;
+                return (
+                  <div className="space-y-1">
+                    {total > 0 && (
+                      <>
+                        <p className="text-[#444] text-xs">
+                          {enriched.toLocaleString()} / {total.toLocaleString()} artists Spotify-enriched ({pct}%)
+                          {lastRun && <span className="ml-2">· last run {lastRun}</span>}
+                        </p>
+                        <div className="h-0.5 bg-[#1a1a1a] w-full">
+                          <div
+                            className="h-0.5 bg-success transition-all duration-500"
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })()}
+              <button
+                onClick={handleEnrichSpotify}
+                disabled={enrichingSpotify}
+                className="btn-secondary flex items-center gap-2 text-sm"
+              >
+                {enrichingSpotify ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                Enrich Spotify
               </button>
             </div>
           )}

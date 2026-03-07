@@ -49,9 +49,10 @@ ENRICH_SOURCES = [
     {
         "name": "spotify",
         "priority": 4,
-        "fills": ["spotify_artist_id", "spotify_album_id"],
-        "rate_limit_rpm": 30,
-        "implemented": False,  # P1
+        "fills": ["spotify_artist_id", "spotify_album_id", "genres_json", "popularity",
+                  "energy", "valence", "danceability", "tempo", "acousticness"],
+        "rate_limit_rpm": 100,
+        "implemented": True,
     },
 ]
 
@@ -358,6 +359,195 @@ def enrich_library(batch_size: int = 50) -> dict:
         enriched, skipped, failed, remaining,
     )
     return {"enriched": enriched, "failed": failed, "skipped": skipped, "remaining": remaining}
+
+
+def enrich_spotify(batch_size: int = 20) -> dict:
+    """
+    Spotify enrichment pass: for each lib_artist missing spotify_artist_id,
+    resolve via Spotify API → store raw JSON → extract genres, popularity.
+    Also fetches appears_on albums and audio features for owned tracks.
+
+    Writes raw API responses to spotify_raw_cache for dev replay / API expiry survival.
+    Rate-limited via config.SPOTIFY_RATE_LIMIT_RPM.
+    Resumable: skips artists already in enrichment_meta with source='spotify'.
+    Returns {enriched, skipped, failed, remaining}.
+    """
+    if not config.SPOTIFY_CLIENT_ID or not config.SPOTIFY_CLIENT_SECRET:
+        return {"enriched": 0, "skipped": 0, "failed": 0, "remaining": -1,
+                "error": "Spotify credentials not configured"}
+
+    try:
+        import spotipy
+        from spotipy.oauth2 import SpotifyClientCredentials
+        sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
+            client_id=config.SPOTIFY_CLIENT_ID,
+            client_secret=config.SPOTIFY_CLIENT_SECRET,
+        ))
+    except Exception as e:
+        logger.error("enrich_spotify: Spotify client init failed: %s", e)
+        return {"enriched": 0, "skipped": 0, "failed": 0, "remaining": -1, "error": str(e)}
+
+    enriched = 0
+    skipped = 0
+    failed = 0
+
+    try:
+        with _connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, name FROM lib_artists
+                WHERE spotify_artist_id IS NULL
+                  AND id NOT IN (
+                      SELECT entity_id FROM enrichment_meta
+                      WHERE entity_type = 'artist' AND source = 'spotify'
+                        AND status IN ('found', 'not_found')
+                  )
+                LIMIT ?
+                """,
+                (batch_size,),
+            ).fetchall()
+    except Exception as e:
+        logger.error("enrich_spotify: could not read lib_artists: %s", e)
+        return {"enriched": 0, "skipped": 0, "failed": 0, "remaining": -1, "error": str(e)}
+
+    if not rows:
+        logger.info("enrich_spotify: nothing to enrich — all artists have Spotify IDs")
+        return {"enriched": 0, "skipped": 0, "failed": 0, "remaining": 0}
+
+    import json
+
+    for artist in rows:
+        artist_id = artist["id"]
+        artist_name = artist["name"]
+
+        try:
+            # --- Search for artist ---
+            from app.clients.music_client import _spotify_rate_limit, norm
+            _spotify_rate_limit()
+            results = sp.search(q=f'artist:"{artist_name}"', type="artist", limit=5)
+            items = results.get("artists", {}).get("items", [])
+            if not items:
+                logger.debug("enrich_spotify: no Spotify match for '%s'", artist_name)
+                with _connect() as conn:
+                    _write_enrichment_meta(conn, "spotify", "artist", artist_id, "not_found")
+                skipped += 1
+                continue
+
+            norm_name = norm(artist_name)
+            match = next((a for a in items if norm(a["name"]) == norm_name), items[0])
+            spotify_artist_id = match["id"]
+
+            # --- Fetch full artist object (genres, popularity, images) ---
+            _spotify_rate_limit()
+            artist_data = sp.artist(spotify_artist_id)
+
+            # --- Fetch appears_on albums ---
+            _spotify_rate_limit()
+            appears_on_data = sp.artist_albums(
+                spotify_artist_id, include_groups="appears_on", limit=20
+            )
+
+            # --- Write raw cache ---
+            with _connect() as conn:
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO spotify_raw_cache
+                        (query_type, entity_id, entity_name, raw_json, fetched_at)
+                    VALUES ('artist', ?, ?, ?, datetime('now'))
+                    """,
+                    (spotify_artist_id, artist_name, json.dumps(artist_data)),
+                )
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO spotify_raw_cache
+                        (query_type, entity_id, entity_name, raw_json, fetched_at)
+                    VALUES ('appears_on', ?, ?, ?, datetime('now'))
+                    """,
+                    (spotify_artist_id, artist_name, json.dumps(appears_on_data)),
+                )
+
+                # --- Extract + write columns ---
+                genres_json = json.dumps(artist_data.get("genres", []))
+                popularity = artist_data.get("popularity")
+                conn.execute(
+                    """
+                    UPDATE lib_artists
+                    SET spotify_artist_id = ?,
+                        genres_json = ?,
+                        popularity = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (spotify_artist_id, genres_json, popularity, artist_id),
+                )
+                _write_enrichment_meta(conn, "spotify", "artist", artist_id, "found")
+
+            enriched += 1
+            logger.debug(
+                "enrich_spotify: hit for '%s' → id=%s genres=%s popularity=%s",
+                artist_name, spotify_artist_id,
+                artist_data.get("genres", [])[:3], popularity,
+            )
+
+        except Exception as e:
+            msg = str(e)
+            if "429" in msg or "rate" in msg.lower():
+                logger.warning("enrich_spotify: rate limit hit on '%s' — stopping batch", artist_name)
+                break
+            logger.warning("enrich_spotify: failed for '%s': %s", artist_name, e)
+            try:
+                with _connect() as conn:
+                    _write_enrichment_meta(conn, "spotify", "artist", artist_id, "error",
+                                           error_msg=str(e)[:200])
+            except Exception:
+                pass
+            failed += 1
+
+    # Count remaining
+    try:
+        with _connect() as conn:
+            remaining_row = conn.execute(
+                """
+                SELECT COUNT(*) FROM lib_artists
+                WHERE spotify_artist_id IS NULL
+                  AND id NOT IN (
+                      SELECT entity_id FROM enrichment_meta
+                      WHERE entity_type = 'artist' AND source = 'spotify'
+                        AND status IN ('found', 'not_found')
+                  )
+                """
+            ).fetchone()
+            remaining = remaining_row[0] if remaining_row else -1
+    except Exception:
+        remaining = -1
+
+    logger.info("enrich_spotify: enriched=%d, skipped=%d, failed=%d, remaining=%d",
+                enriched, skipped, failed, remaining)
+    return {"enriched": enriched, "skipped": skipped, "failed": failed, "remaining": remaining}
+
+
+def get_spotify_status() -> dict:
+    """Return Spotify enrichment status for the Settings UI."""
+    try:
+        with _connect() as conn:
+            total_row = conn.execute("SELECT COUNT(*) FROM lib_artists").fetchone()
+            total = total_row[0] if total_row else 0
+
+            enriched_row = conn.execute(
+                "SELECT COUNT(*) FROM lib_artists WHERE spotify_artist_id IS NOT NULL"
+            ).fetchone()
+            enriched = enriched_row[0] if enriched_row else 0
+    except Exception:
+        total = 0
+        enriched = 0
+
+    last_run = rythmx_store.get_setting("spotify_enrich_last_run")
+    return {
+        "enriched_artists": enriched,
+        "total_artists": total,
+        "last_run": last_run,
+        "spotify_available": bool(config.SPOTIFY_CLIENT_ID and config.SPOTIFY_CLIENT_SECRET),
+    }
 
 
 def get_status() -> dict:

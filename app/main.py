@@ -60,6 +60,9 @@ logging.basicConfig(
 )
 # Attach redaction filter to root logger — catches all child loggers including urllib3
 logging.getLogger().addFilter(_SecretRedactionFilter())
+# Silence spotipy's internal request logger — it logs Bearer tokens in Authorization headers
+logging.getLogger("spotipy").setLevel(logging.WARNING)
+logging.getLogger("spotipy.client").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 

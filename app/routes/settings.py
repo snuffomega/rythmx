@@ -13,6 +13,8 @@ settings_bp = Blueprint("settings", __name__)
 # Track background enrich thread state
 _enrich_thread: threading.Thread | None = None
 _enrich_lock = threading.Lock()
+_spotify_enrich_thread: threading.Thread | None = None
+_spotify_enrich_lock = threading.Lock()
 
 
 @settings_bp.route("/api/settings", methods=["GET"])
@@ -186,6 +188,41 @@ def library_enrich():
         _enrich_thread.start()
 
     return jsonify({"status": "ok", "message": "Enrich started"}), 202
+
+
+@settings_bp.route("/api/library/spotify-status", methods=["GET"])
+def library_spotify_status():
+    from app.services import library_service
+    global _spotify_enrich_thread
+    status = library_service.get_spotify_status()
+    running = _spotify_enrich_thread is not None and _spotify_enrich_thread.is_alive()
+    return jsonify({"status": "ok", "enrich_running": running, **status})
+
+
+@settings_bp.route("/api/library/enrich-spotify", methods=["POST"])
+def library_enrich_spotify():
+    global _spotify_enrich_thread
+    with _spotify_enrich_lock:
+        if _spotify_enrich_thread is not None and _spotify_enrich_thread.is_alive():
+            return jsonify({"status": "ok", "message": "Spotify enrich already running"}), 202
+
+        data = request.get_json() or {}
+        batch_size = int(data.get("batch_size", 20))
+
+        def _run():
+            from app.services import library_service as _lib_svc
+            from app.db import rythmx_store as _store
+            try:
+                result = _lib_svc.enrich_spotify(batch_size=batch_size)
+                _store.set_setting("spotify_enrich_last_run", datetime.utcnow().isoformat())
+                logger.info("Spotify enrich complete: %s", result)
+            except Exception as e:
+                logger.error("Spotify enrich failed: %s", e)
+
+        _spotify_enrich_thread = threading.Thread(target=_run, daemon=True, name="spotify-enrich")
+        _spotify_enrich_thread.start()
+
+    return jsonify({"status": "ok", "message": "Spotify enrich started"}), 202
 
 
 @settings_bp.route("/api/settings/library-backend", methods=["POST"])
