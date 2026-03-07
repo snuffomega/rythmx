@@ -109,15 +109,22 @@ if albums:
         track_id = track_items[0]["id"]
 
 if track_id:
-    features = sp.audio_features([track_id])
-    if features and features[0]:
-        f = features[0]
-        audio_keys = ["energy", "valence", "danceability", "tempo", "acousticness",
-                      "instrumentalness", "speechiness", "loudness"]
-        for key in audio_keys:
-            check(f"audio_features.{key}", key in f, str(round(f.get(key, 0), 3)))
-    else:
-        check("Audio features returned", False, "empty response")
+    try:
+        features = sp.audio_features([track_id])
+        if features and features[0]:
+            f = features[0]
+            audio_keys = ["energy", "valence", "danceability", "tempo", "acousticness",
+                          "instrumentalness", "speechiness", "loudness"]
+            for key in audio_keys:
+                check(f"audio_features.{key}", key in f, str(round(f.get(key, 0), 3)))
+        else:
+            check("Audio features returned", False, "empty response")
+    except Exception as e:
+        msg = str(e)
+        if "403" in msg:
+            print("  ⚠️  audio_features — SKIPPED (Spotify removed this endpoint for new apps, Nov 2024)")
+        else:
+            check("Audio features", False, msg[:80])
 else:
     check("Audio features", False, "no track ID available to test")
 

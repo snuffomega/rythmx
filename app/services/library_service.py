@@ -49,8 +49,9 @@ ENRICH_SOURCES = [
     {
         "name": "spotify",
         "priority": 4,
-        "fills": ["spotify_artist_id", "spotify_album_id", "genres_json", "popularity",
-                  "energy", "valence", "danceability", "tempo", "acousticness"],
+        "fills": ["spotify_artist_id", "spotify_album_id", "genres_json", "popularity"],
+        # NOTE: audio features (energy, valence, etc.) removed Nov 2024 by Spotify for new apps.
+        # Columns retained in lib_tracks schema for possible future re-addition.
         "rate_limit_rpm": 100,
         "implemented": True,
     },
