@@ -185,6 +185,15 @@ export interface LastfmTagsStatus {
   lastfm_available: boolean;
 }
 
+export interface DeezerBpmStatus {
+  enrich_running: boolean;
+  enriched_albums: number;
+  total_albums: number;
+  enriched_tracks: number;
+  total_tracks: number;
+  last_run?: string | null;
+}
+
 export interface ConnectionStatus {
   connected: boolean;
   message?: string;

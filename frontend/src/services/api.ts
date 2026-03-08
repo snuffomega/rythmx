@@ -16,6 +16,7 @@ import type {
   LibraryEnrichStatus,
   SpotifyEnrichStatus,
   LastfmTagsStatus,
+  DeezerBpmStatus,
   ConnectionStatus,
   Settings,
   ReleaseKind,
@@ -240,6 +241,14 @@ export const libraryApi = {
       .then(({ status: _s, ...rest }) => rest as LastfmTagsStatus),
   enrichLastfmTags: (batch_size = 50) =>
     request<{ status: string }>('/library/enrich-lastfm-tags', {
+      method: 'POST',
+      body: JSON.stringify({ batch_size }),
+    }),
+  deezerBpmStatus: () =>
+    request<{ status: string; enrich_running: boolean } & DeezerBpmStatus>('/library/deezer-bpm-status')
+      .then(({ status: _s, ...rest }) => rest as DeezerBpmStatus),
+  enrichDeezerBpm: (batch_size = 30) =>
+    request<{ status: string }>('/library/enrich-deezer-bpm', {
       method: 'POST',
       body: JSON.stringify({ batch_size }),
     }),

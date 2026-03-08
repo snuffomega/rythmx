@@ -17,6 +17,8 @@ _spotify_enrich_thread: threading.Thread | None = None
 _spotify_enrich_lock = threading.Lock()
 _lastfm_tags_thread: threading.Thread | None = None
 _lastfm_tags_lock = threading.Lock()
+_deezer_bpm_thread: threading.Thread | None = None
+_deezer_bpm_lock = threading.Lock()
 
 
 @settings_bp.route("/api/settings", methods=["GET"])
@@ -260,6 +262,41 @@ def library_enrich_lastfm_tags():
         _lastfm_tags_thread.start()
 
     return jsonify({"status": "ok", "message": "Last.fm tag enrich started"}), 202
+
+
+@settings_bp.route("/api/library/deezer-bpm-status", methods=["GET"])
+def library_deezer_bpm_status():
+    from app.services import library_service
+    global _deezer_bpm_thread
+    status = library_service.get_deezer_bpm_status()
+    running = _deezer_bpm_thread is not None and _deezer_bpm_thread.is_alive()
+    return jsonify({"status": "ok", "enrich_running": running, **status})
+
+
+@settings_bp.route("/api/library/enrich-deezer-bpm", methods=["POST"])
+def library_enrich_deezer_bpm():
+    global _deezer_bpm_thread
+    with _deezer_bpm_lock:
+        if _deezer_bpm_thread is not None and _deezer_bpm_thread.is_alive():
+            return jsonify({"status": "ok", "message": "Deezer BPM enrich already running"}), 202
+
+        data = request.get_json() or {}
+        batch_size = int(data.get("batch_size", 30))
+
+        def _run():
+            from app.services import library_service as _lib_svc
+            from app.db import rythmx_store as _store
+            try:
+                result = _lib_svc.enrich_deezer_bpm(batch_size=batch_size)
+                _store.set_setting("deezer_bpm_last_run", datetime.utcnow().isoformat())
+                logger.info("Deezer BPM enrich complete: %s", result)
+            except Exception as e:
+                logger.error("Deezer BPM enrich failed: %s", e)
+
+        _deezer_bpm_thread = threading.Thread(target=_run, daemon=True, name="deezer-bpm-enrich")
+        _deezer_bpm_thread.start()
+
+    return jsonify({"status": "ok", "message": "Deezer BPM enrich started"}), 202
 
 
 @settings_bp.route("/api/settings/library-backend", methods=["POST"])

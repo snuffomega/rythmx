@@ -62,6 +62,13 @@ ENRICH_SOURCES = [
         "rate_limit_rpm": 200,
         "implemented": True,
     },
+    {
+        "name": "deezer_bpm",
+        "priority": 6,
+        "fills": ["lib_tracks.tempo"],   # BPM from Deezer track endpoint
+        "rate_limit_rpm": 50,
+        "implemented": True,
+    },
 ]
 
 _ITUNES_BASE = "https://itunes.apple.com"
@@ -783,4 +790,196 @@ def get_status() -> dict:
         "total_albums": total_albums,
         "enriched_albums": enriched_albums,
         "enrich_pct": enrich_pct,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Deezer BPM enrichment
+# ---------------------------------------------------------------------------
+
+_DEEZER_ALBUM_URL = "https://api.deezer.com/album/{album_id}/tracks"
+_DEEZER_BPM_RATE_INTERVAL = 1.2   # seconds between calls (~50/min, conservative)
+_deezer_bpm_last_call: float = 0.0
+
+
+def _fetch_deezer_album_tracks(deezer_album_id: str) -> list[dict]:
+    """
+    Fetch the track list for a Deezer album.
+    Returns list of {title, bpm} dicts. Empty on error or no tracks.
+    """
+    global _deezer_bpm_last_call
+    import requests
+
+    elapsed = time.time() - _deezer_bpm_last_call
+    if elapsed < _DEEZER_BPM_RATE_INTERVAL:
+        time.sleep(_DEEZER_BPM_RATE_INTERVAL - elapsed)
+    _deezer_bpm_last_call = time.time()
+
+    try:
+        resp = requests.get(
+            _DEEZER_ALBUM_URL.format(album_id=deezer_album_id),
+            timeout=10,
+        )
+        resp.raise_for_status()
+        tracks = resp.json().get("data", [])
+        return [
+            {"title": t.get("title", ""), "bpm": float(t["bpm"])}
+            for t in tracks
+            if t.get("bpm") and float(t.get("bpm", 0)) > 0
+        ]
+    except Exception as e:
+        logger.debug("Deezer BPM fetch failed for album %s: %s", deezer_album_id, e)
+        return []
+
+
+def enrich_deezer_bpm(batch_size: int = 30) -> dict:
+    """
+    Deezer BPM enrichment pass.
+
+    For each lib_album with a deezer_id, fetch the Deezer track list and write
+    bpm → lib_tracks.tempo using exact title match (title_lower).
+
+    Only processes albums not already in enrichment_meta(source='deezer_bpm').
+    Resumable — interrupted runs pick up where they left off.
+
+    Returns {enriched_tracks, enriched_albums, failed, skipped, remaining}.
+    """
+    import json
+
+    enriched_tracks = 0
+    enriched_albums = 0
+    failed = 0
+    skipped = 0
+
+    # Load albums that have a deezer_id but haven't been BPM-enriched yet
+    try:
+        with _connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT la.id, la.deezer_id, ar.name AS artist_name, la.title
+                FROM lib_albums la
+                JOIN lib_artists ar ON la.artist_id = ar.id
+                WHERE la.deezer_id IS NOT NULL
+                  AND la.id NOT IN (
+                      SELECT entity_id FROM enrichment_meta
+                      WHERE entity_type = 'album' AND source = 'deezer_bpm'
+                        AND status IN ('found', 'not_found')
+                  )
+                LIMIT ?
+                """,
+                (batch_size,),
+            ).fetchall()
+    except Exception as e:
+        logger.error("enrich_deezer_bpm: could not read lib_albums: %s", e)
+        return {"enriched_tracks": 0, "enriched_albums": 0,
+                "failed": 0, "skipped": 0, "remaining": -1, "error": str(e)}
+
+    if not rows:
+        logger.info("enrich_deezer_bpm: nothing to enrich")
+        return {"enriched_tracks": 0, "enriched_albums": 0,
+                "failed": 0, "skipped": 0, "remaining": 0}
+
+    for album in rows:
+        album_id = album["id"]
+        deezer_album_id = album["deezer_id"]
+        artist_name = album["artist_name"]
+        album_title = album["title"]
+
+        deezer_tracks = _fetch_deezer_album_tracks(deezer_album_id)
+
+        if not deezer_tracks:
+            try:
+                with _connect() as conn:
+                    _write_enrichment_meta(conn, "deezer_bpm", "album", album_id, "not_found")
+                skipped += 1
+            except Exception:
+                pass
+            continue
+
+        # Build lookup: title_lower → bpm
+        bpm_map = {t["title"].lower(): t["bpm"] for t in deezer_tracks}
+
+        try:
+            with _connect() as conn:
+                # Match lib_tracks for this album by title_lower
+                lib_tracks = conn.execute(
+                    "SELECT id, title_lower FROM lib_tracks WHERE album_id = ?",
+                    (album_id,),
+                ).fetchall()
+
+                updated = 0
+                for track in lib_tracks:
+                    bpm = bpm_map.get(track["title_lower"])
+                    if bpm:
+                        conn.execute(
+                            "UPDATE lib_tracks SET tempo = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                            (bpm, track["id"]),
+                        )
+                        updated += 1
+
+                _write_enrichment_meta(conn, "deezer_bpm", "album", album_id,
+                                       "found" if updated > 0 else "not_found")
+
+            enriched_tracks += updated
+            enriched_albums += 1
+            logger.debug(
+                "enrich_deezer_bpm: '%s / %s' → %d tracks updated",
+                artist_name, album_title, updated,
+            )
+        except Exception as e:
+            logger.warning("enrich_deezer_bpm: failed for '%s / %s': %s",
+                           artist_name, album_title, e)
+            try:
+                with _connect() as conn:
+                    _write_enrichment_meta(conn, "deezer_bpm", "album", album_id,
+                                           "error", error_msg=str(e)[:200])
+            except Exception:
+                pass
+            failed += 1
+
+    logger.info(
+        "enrich_deezer_bpm: enriched_tracks=%d enriched_albums=%d failed=%d skipped=%d",
+        enriched_tracks, enriched_albums, failed, skipped,
+    )
+    return {
+        "enriched_tracks": enriched_tracks,
+        "enriched_albums": enriched_albums,
+        "failed": failed,
+        "skipped": skipped,
+        "remaining": len(rows),
+    }
+
+
+def get_deezer_bpm_status() -> dict:
+    """
+    Returns {enriched_albums, total_albums_with_deezer, enriched_tracks,
+             total_tracks, last_run}.
+    total_albums_with_deezer is the pool that can be enriched.
+    """
+    try:
+        with _connect() as conn:
+            total_albums = conn.execute(
+                "SELECT COUNT(*) FROM lib_albums WHERE deezer_id IS NOT NULL"
+            ).fetchone()[0]
+            enriched_albums = conn.execute(
+                """
+                SELECT COUNT(*) FROM enrichment_meta
+                WHERE source = 'deezer_bpm' AND entity_type = 'album'
+                  AND status = 'found'
+                """
+            ).fetchone()[0]
+            enriched_tracks = conn.execute(
+                "SELECT COUNT(*) FROM lib_tracks WHERE tempo IS NOT NULL AND tempo > 0"
+            ).fetchone()[0]
+            total_tracks = conn.execute("SELECT COUNT(*) FROM lib_tracks").fetchone()[0]
+    except Exception:
+        total_albums = enriched_albums = enriched_tracks = total_tracks = 0
+
+    last_run = rythmx_store.get_setting("deezer_bpm_last_run")
+    return {
+        "enriched_albums": enriched_albums,
+        "total_albums": total_albums,
+        "enriched_tracks": enriched_tracks,
+        "total_tracks": total_tracks,
+        "last_run": last_run,
     }

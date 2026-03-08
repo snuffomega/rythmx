@@ -3,7 +3,7 @@ import { CheckCircle, XCircle, Loader2, RefreshCw, Database, Radio, ChevronDown,
 import { useApi } from '../hooks/useApi';
 import { settingsApi, libraryApi, imageServiceApi } from '../services/api';
 import { ConfirmDialog } from '../components/ConfirmDialog';
-import type { LibraryBackend, LibraryEnrichStatus, SpotifyEnrichStatus, LastfmTagsStatus } from '../types';
+import type { LibraryBackend, LibraryEnrichStatus, SpotifyEnrichStatus, LastfmTagsStatus, DeezerBpmStatus } from '../types';
 
 const BACKEND_LABELS: Record<string, string> = {
   soulsync: 'SoulSync',
@@ -99,6 +99,7 @@ export function SettingsPage({ toast }: SettingsPageProps) {
   const { data: libraryStatus, loading: libraryLoading, refetch: refetchLibrary } = useApi(() => libraryApi.getStatus());
   const { data: spotifyStatusData, refetch: refetchSpotifyStatus } = useApi(() => libraryApi.spotifyStatus());
   const { data: lastfmTagsData, refetch: refetchLastfmTags } = useApi(() => libraryApi.lastfmTagsStatus());
+  const { data: deezerBpmData, refetch: refetchDeezerBpm } = useApi(() => libraryApi.deezerBpmStatus());
   const [backend, setBackend] = useState<LibraryBackend>('soulsync');
 
   useEffect(() => {
@@ -111,6 +112,8 @@ export function SettingsPage({ toast }: SettingsPageProps) {
   const [liveSpotifyStatus, setLiveSpotifyStatus] = useState<SpotifyEnrichStatus | null>(null);
   const [enrichingLastfmTags, setEnrichingLastfmTags] = useState(false);
   const [liveLastfmTagsStatus, setLiveLastfmTagsStatus] = useState<LastfmTagsStatus | null>(null);
+  const [enrichingDeezerBpm, setEnrichingDeezerBpm] = useState(false);
+  const [liveDeezerBpmStatus, setLiveDeezerBpmStatus] = useState<DeezerBpmStatus | null>(null);
   const [switchingBackend, setSwitchingBackend] = useState(false);
   const [warmingCache, setWarmingCache] = useState(false);
   const [confirmClearHistory, setConfirmClearHistory] = useState(false);
@@ -231,6 +234,35 @@ export function SettingsPage({ toast }: SettingsPageProps) {
     }, 3000);
     return () => clearInterval(id);
   }, [enrichingLastfmTags]);
+
+  const handleEnrichDeezerBpm = async () => {
+    setEnrichingDeezerBpm(true);
+    try {
+      await libraryApi.enrichDeezerBpm();
+    } catch {
+      toast.error('Failed to start BPM enrich');
+      setEnrichingDeezerBpm(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!enrichingDeezerBpm) return;
+    const id = setInterval(async () => {
+      try {
+        const s = await libraryApi.deezerBpmStatus();
+        setLiveDeezerBpmStatus(s);
+        if (!s.enrich_running) {
+          setEnrichingDeezerBpm(false);
+          refetchDeezerBpm();
+          clearInterval(id);
+        }
+      } catch {
+        setEnrichingDeezerBpm(false);
+        clearInterval(id);
+      }
+    }, 3000);
+    return () => clearInterval(id);
+  }, [enrichingDeezerBpm]);
 
   const handleClearHistory = async () => {
     try {
@@ -464,6 +496,45 @@ export function SettingsPage({ toast }: SettingsPageProps) {
               >
                 {enrichingLastfmTags ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
                 Enrich Genres
+              </button>
+            </div>
+          )}
+
+          {(deezerBpmData?.total_albums ?? 0) > 0 && (
+            <div className="space-y-2 pt-1">
+              {(() => {
+                const s = liveDeezerBpmStatus ?? deezerBpmData;
+                const ea = s?.enriched_albums ?? 0;
+                const ta = s?.total_albums ?? 0;
+                const et = s?.enriched_tracks ?? 0;
+                const pct = ta > 0 ? Math.round((ea / ta) * 100) : 0;
+                const lastRun = s?.last_run;
+                return (
+                  <div className="space-y-1">
+                    {ta > 0 && (
+                      <>
+                        <p className="text-[#444] text-xs">
+                          {ea.toLocaleString()} / {ta.toLocaleString()} albums · {et.toLocaleString()} tracks with BPM ({pct}%)
+                          {lastRun && <span className="ml-2">· last run {lastRun}</span>}
+                        </p>
+                        <div className="h-0.5 bg-[#1a1a1a] w-full">
+                          <div
+                            className="h-0.5 bg-accent transition-all duration-500"
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })()}
+              <button
+                onClick={handleEnrichDeezerBpm}
+                disabled={enrichingDeezerBpm}
+                className="btn-secondary flex items-center gap-2 text-sm"
+              >
+                {enrichingDeezerBpm ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                Enrich BPM
               </button>
             </div>
           )}
