@@ -81,6 +81,19 @@ def _connect():
     return conn
 
 
+import re as _re
+_TITLE_SUFFIX_RE = _re.compile(
+    r'\s*[\(\[](single|ep|deluxe|deluxe\s+edition|explicit|remaster(ed)?|'
+    r'expanded|anniversary\s+edition|bonus\s+track[s]?|special\s+edition|'
+    r'reissue)[\s\w]*[\)\]]',
+    _re.IGNORECASE,
+)
+
+def _strip_title_suffixes(title: str) -> str:
+    """Strip Plex-appended suffixes like [Single], [EP], (Deluxe Edition) before search."""
+    return _TITLE_SUFFIX_RE.sub("", title).strip()
+
+
 def _itunes_search_album(artist_name: str, album_title: str) -> dict | None:
     """
     Query iTunes Search API for a specific album.
@@ -253,7 +266,7 @@ def enrich_library(batch_size: int = 50) -> dict:
     for album in rows:
         album_id = album["id"]
         artist_name = album["artist_name"]
-        album_title = album["local_title"] or album["title"]
+        album_title = _strip_title_suffixes(album["local_title"] or album["title"])
 
         itunes_result = _itunes_search_album(artist_name, album_title)
         if itunes_result:
