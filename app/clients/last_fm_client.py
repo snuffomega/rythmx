@@ -273,11 +273,13 @@ def get_artist_top_tracks(artist_name: str, limit: int = 10) -> list[str]:
     return titles
 
 
-def get_artist_tags(artist_name: str, min_count: int = 10) -> list[str]:
+def get_artist_tags(artist_name: str, min_count: int = 10) -> list[list]:
     """
     Return top crowd-sourced tags for an artist from Last.fm.
     Filters noise tags ("seen live", "favourite", etc.) via min_count threshold.
-    Returns up to 5 tag name strings.
+    Returns up to 5 entries as [name, count] pairs — count is a 0-100 relative
+    popularity score reflecting how many listeners tagged the artist this way.
+    Example: [["reggae", 100], ["ska", 72], ["punk rock", 31]]
     """
     data = _get("artist.getTopTags", {"artist": artist_name, "autocorrect": 1})
     if not data:
@@ -285,16 +287,17 @@ def get_artist_tags(artist_name: str, min_count: int = 10) -> list[str]:
     tags = data.get("toptags", {}).get("tag", [])
     if isinstance(tags, dict):
         tags = [tags]
-    result = [t["name"] for t in tags if int(t.get("count", 0)) >= min_count][:5]
+    result = [[t["name"], int(t.get("count", 0))] for t in tags if int(t.get("count", 0)) >= min_count][:5]
     logger.debug("Last.fm artist tags for '%s': %s", artist_name, result)
     return result
 
 
-def get_album_tags(artist_name: str, album_title: str, min_count: int = 5) -> list[str]:
+def get_album_tags(artist_name: str, album_title: str, min_count: int = 5) -> list[list]:
     """
     Return top crowd-sourced tags for a specific album from Last.fm.
     Lower min_count threshold than artist tags — album tags are sparser.
-    Returns up to 5 tag name strings. Empty list if album not found.
+    Returns up to 5 entries as [name, count] pairs. Empty list if album not found.
+    Example: [["reggae", 85], ["roots", 40]]
     """
     data = _get("album.getTopTags", {
         "artist": artist_name,
@@ -306,7 +309,7 @@ def get_album_tags(artist_name: str, album_title: str, min_count: int = 5) -> li
     tags = data.get("tags", {}).get("tag", [])
     if isinstance(tags, dict):
         tags = [tags]
-    result = [t["name"] for t in tags if int(t.get("count", 0)) >= min_count][:5]
+    result = [[t["name"], int(t.get("count", 0))] for t in tags if int(t.get("count", 0)) >= min_count][:5]
     logger.debug("Last.fm album tags for '%s / %s': %s", artist_name, album_title, result)
     return result
 
