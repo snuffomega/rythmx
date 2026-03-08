@@ -55,6 +55,13 @@ ENRICH_SOURCES = [
         "rate_limit_rpm": 100,
         "implemented": True,
     },
+    {
+        "name": "lastfm_tags",
+        "priority": 5,
+        "fills": ["lastfm_tags_json"],   # on both lib_artists and lib_albums
+        "rate_limit_rpm": 200,
+        "implemented": True,
+    },
 ]
 
 _ITUNES_BASE = "https://itunes.apple.com"
@@ -548,6 +555,183 @@ def get_spotify_status() -> dict:
         "total_artists": total,
         "last_run": last_run,
         "spotify_available": bool(config.SPOTIFY_CLIENT_ID and config.SPOTIFY_CLIENT_SECRET),
+    }
+
+
+def enrich_lastfm_tags(batch_size: int = 50) -> dict:
+    """
+    Last.fm genre tag enrichment pass.
+
+    Artist pass: fetches artist.getTopTags for each lib_artist missing lastfm_tags_json.
+    Album pass: fetches album.getTopTags for each lib_album missing lastfm_tags_json;
+                falls back to parent artist's tags when Last.fm has no album-level data.
+
+    Resumable — skips rows already in enrichment_meta(source='lastfm_tags').
+    Returns {enriched_artists, enriched_albums, skipped, failed, remaining_artists, remaining_albums}.
+    """
+    from app.clients.last_fm_client import get_artist_tags, get_album_tags
+    import json
+
+    enriched_artists = 0
+    enriched_albums = 0
+    skipped = 0
+    failed = 0
+
+    # --- Artist pass ---
+    try:
+        with _connect() as conn:
+            artist_rows = conn.execute(
+                """
+                SELECT id, name FROM lib_artists
+                WHERE lastfm_tags_json IS NULL
+                  AND id NOT IN (
+                      SELECT entity_id FROM enrichment_meta
+                      WHERE entity_type = 'artist' AND source = 'lastfm_tags'
+                        AND status IN ('found', 'not_found')
+                  )
+                LIMIT ?
+                """,
+                (batch_size,),
+            ).fetchall()
+    except Exception as e:
+        logger.error("enrich_lastfm_tags: could not read lib_artists: %s", e)
+        return {"enriched_artists": 0, "enriched_albums": 0, "skipped": 0,
+                "failed": 0, "remaining_artists": -1, "remaining_albums": -1, "error": str(e)}
+
+    for artist in artist_rows:
+        artist_id, artist_name = artist["id"], artist["name"]
+        try:
+            tags = get_artist_tags(artist_name)
+            tags_json = json.dumps(tags)
+            status = "found" if tags else "not_found"
+            with _connect() as conn:
+                conn.execute(
+                    "UPDATE lib_artists SET lastfm_tags_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (tags_json, artist_id),
+                )
+                _write_enrichment_meta(conn, "lastfm_tags", "artist", artist_id, status)
+            enriched_artists += 1
+            logger.debug("enrich_lastfm_tags artist '%s': %s", artist_name, tags)
+        except Exception as e:
+            logger.warning("enrich_lastfm_tags: artist '%s' failed: %s", artist_name, e)
+            try:
+                with _connect() as conn:
+                    _write_enrichment_meta(conn, "lastfm_tags", "artist", artist_id, "error",
+                                           error_msg=str(e)[:200])
+            except Exception:
+                pass
+            failed += 1
+
+    # --- Album pass ---
+    try:
+        with _connect() as conn:
+            album_rows = conn.execute(
+                """
+                SELECT a.id, a.title, a.artist_id,
+                       ar.name AS artist_name, ar.lastfm_tags_json AS artist_tags
+                FROM lib_albums a
+                JOIN lib_artists ar ON ar.id = a.artist_id
+                WHERE a.lastfm_tags_json IS NULL
+                  AND a.id NOT IN (
+                      SELECT entity_id FROM enrichment_meta
+                      WHERE entity_type = 'album' AND source = 'lastfm_tags'
+                        AND status IN ('found', 'not_found', 'fallback')
+                  )
+                LIMIT ?
+                """,
+                (batch_size,),
+            ).fetchall()
+    except Exception as e:
+        logger.error("enrich_lastfm_tags: could not read lib_albums: %s", e)
+        album_rows = []
+
+    for album in album_rows:
+        album_id = album["id"]
+        album_title = album["title"]
+        artist_name = album["artist_name"]
+        artist_tags_json = album["artist_tags"]
+        try:
+            tags = get_album_tags(artist_name, album_title)
+            if tags:
+                tags_json = json.dumps(tags)
+                status = "found"
+            else:
+                # Fallback: use parent artist's tags
+                tags_json = artist_tags_json or json.dumps([])
+                status = "fallback"
+            with _connect() as conn:
+                conn.execute(
+                    "UPDATE lib_albums SET lastfm_tags_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (tags_json, album_id),
+                )
+                _write_enrichment_meta(conn, "lastfm_tags", "album", album_id, status)
+            enriched_albums += 1
+            logger.debug("enrich_lastfm_tags album '%s / %s': %s (status=%s)",
+                         artist_name, album_title, tags, status)
+        except Exception as e:
+            logger.warning("enrich_lastfm_tags: album '%s / %s' failed: %s",
+                           artist_name, album_title, e)
+            try:
+                with _connect() as conn:
+                    _write_enrichment_meta(conn, "lastfm_tags", "album", album_id, "error",
+                                           error_msg=str(e)[:200])
+            except Exception:
+                pass
+            failed += 1
+
+    # Count remaining
+    try:
+        with _connect() as conn:
+            rem_artists = conn.execute(
+                """SELECT COUNT(*) FROM lib_artists WHERE lastfm_tags_json IS NULL
+                   AND id NOT IN (SELECT entity_id FROM enrichment_meta
+                                  WHERE entity_type='artist' AND source='lastfm_tags'
+                                    AND status IN ('found','not_found'))"""
+            ).fetchone()[0]
+            rem_albums = conn.execute(
+                """SELECT COUNT(*) FROM lib_albums WHERE lastfm_tags_json IS NULL
+                   AND id NOT IN (SELECT entity_id FROM enrichment_meta
+                                  WHERE entity_type='album' AND source='lastfm_tags'
+                                    AND status IN ('found','not_found','fallback'))"""
+            ).fetchone()[0]
+    except Exception:
+        rem_artists = rem_albums = -1
+
+    logger.info("enrich_lastfm_tags: artists=%d albums=%d failed=%d remaining=%d/%d",
+                enriched_artists, enriched_albums, failed, rem_artists, rem_albums)
+    return {
+        "enriched_artists": enriched_artists,
+        "enriched_albums": enriched_albums,
+        "skipped": skipped,
+        "failed": failed,
+        "remaining_artists": rem_artists,
+        "remaining_albums": rem_albums,
+    }
+
+
+def get_lastfm_tags_status() -> dict:
+    """Return Last.fm tag enrichment status for the Settings UI."""
+    try:
+        with _connect() as conn:
+            total_artists = conn.execute("SELECT COUNT(*) FROM lib_artists").fetchone()[0]
+            enriched_artists = conn.execute(
+                "SELECT COUNT(*) FROM lib_artists WHERE lastfm_tags_json IS NOT NULL"
+            ).fetchone()[0]
+            total_albums = conn.execute("SELECT COUNT(*) FROM lib_albums").fetchone()[0]
+            enriched_albums = conn.execute(
+                "SELECT COUNT(*) FROM lib_albums WHERE lastfm_tags_json IS NOT NULL"
+            ).fetchone()[0]
+    except Exception:
+        total_artists = enriched_artists = total_albums = enriched_albums = 0
+
+    last_run = rythmx_store.get_setting("lastfm_tags_last_run")
+    return {
+        "enriched_artists": enriched_artists,
+        "total_artists": total_artists,
+        "enriched_albums": enriched_albums,
+        "total_albums": total_albums,
+        "last_run": last_run,
+        "lastfm_available": bool(config.LASTFM_API_KEY),
     }
 
 

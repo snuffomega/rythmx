@@ -175,6 +175,16 @@ export interface SpotifyEnrichStatus {
   spotify_available: boolean;
 }
 
+export interface LastfmTagsStatus {
+  enrich_running: boolean;
+  enriched_artists: number;
+  total_artists: number;
+  enriched_albums: number;
+  total_albums: number;
+  last_run?: string | null;
+  lastfm_available: boolean;
+}
+
 export interface ConnectionStatus {
   connected: boolean;
   message?: string;

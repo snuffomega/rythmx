@@ -273,6 +273,44 @@ def get_artist_top_tracks(artist_name: str, limit: int = 10) -> list[str]:
     return titles
 
 
+def get_artist_tags(artist_name: str, min_count: int = 10) -> list[str]:
+    """
+    Return top crowd-sourced tags for an artist from Last.fm.
+    Filters noise tags ("seen live", "favourite", etc.) via min_count threshold.
+    Returns up to 5 tag name strings.
+    """
+    data = _get("artist.getTopTags", {"artist": artist_name, "autocorrect": 1})
+    if not data:
+        return []
+    tags = data.get("toptags", {}).get("tag", [])
+    if isinstance(tags, dict):
+        tags = [tags]
+    result = [t["name"] for t in tags if int(t.get("count", 0)) >= min_count][:5]
+    logger.debug("Last.fm artist tags for '%s': %s", artist_name, result)
+    return result
+
+
+def get_album_tags(artist_name: str, album_title: str, min_count: int = 5) -> list[str]:
+    """
+    Return top crowd-sourced tags for a specific album from Last.fm.
+    Lower min_count threshold than artist tags — album tags are sparser.
+    Returns up to 5 tag name strings. Empty list if album not found.
+    """
+    data = _get("album.getTopTags", {
+        "artist": artist_name,
+        "album": album_title,
+        "autocorrect": 1,
+    })
+    if not data:
+        return []
+    tags = data.get("tags", {}).get("tag", [])
+    if isinstance(tags, dict):
+        tags = [tags]
+    result = [t["name"] for t in tags if int(t.get("count", 0)) >= min_count][:5]
+    logger.debug("Last.fm album tags for '%s / %s': %s", artist_name, album_title, result)
+    return result
+
+
 def test_connection() -> dict:
     """
     Verify Last.fm credentials work. Returns {status, username} or {status, error}.
