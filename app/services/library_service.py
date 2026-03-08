@@ -798,15 +798,13 @@ def get_status() -> dict:
 # ---------------------------------------------------------------------------
 
 _DEEZER_ALBUM_URL = "https://api.deezer.com/album/{album_id}/tracks"
+_DEEZER_TRACK_URL = "https://api.deezer.com/track/{track_id}"
 _DEEZER_BPM_RATE_INTERVAL = 1.2   # seconds between calls (~50/min, conservative)
 _deezer_bpm_last_call: float = 0.0
 
 
-def _fetch_deezer_album_tracks(deezer_album_id: str) -> list[dict]:
-    """
-    Fetch the track list for a Deezer album.
-    Returns list of {title, bpm} dicts. Empty on error or no tracks.
-    """
+def _deezer_rate_limited_get(url: str) -> dict | None:
+    """Single rate-limited GET to Deezer. Returns parsed JSON or None on error."""
     global _deezer_bpm_last_call
     import requests
 
@@ -816,20 +814,46 @@ def _fetch_deezer_album_tracks(deezer_album_id: str) -> list[dict]:
     _deezer_bpm_last_call = time.time()
 
     try:
-        resp = requests.get(
-            _DEEZER_ALBUM_URL.format(album_id=deezer_album_id),
-            timeout=10,
-        )
+        resp = requests.get(url, timeout=10)
         resp.raise_for_status()
-        tracks = resp.json().get("data", [])
-        return [
-            {"title": t.get("title", ""), "bpm": float(t["bpm"])}
-            for t in tracks
-            if t.get("bpm") and float(t.get("bpm", 0)) > 0
-        ]
+        return resp.json()
     except Exception as e:
-        logger.debug("Deezer BPM fetch failed for album %s: %s", deezer_album_id, e)
+        logger.debug("Deezer request failed for %s: %s", url, e)
+        return None
+
+
+def _fetch_deezer_album_tracks(deezer_album_id: str) -> list[dict]:
+    """
+    Fetch BPM for all tracks in a Deezer album.
+
+    Two-pass: first GET /album/{id}/tracks for track IDs, then GET /track/{id}
+    per track for BPM (bpm is not included in the album tracks list response).
+
+    Returns list of {title, bpm} dicts. Empty on error or no tracks.
+    """
+    # Pass 1: get track IDs from album endpoint
+    data = _deezer_rate_limited_get(_DEEZER_ALBUM_URL.format(album_id=deezer_album_id))
+    if not data:
         return []
+    track_stubs = data.get("data", [])
+    if not track_stubs:
+        return []
+
+    # Pass 2: fetch each track individually to get BPM
+    results = []
+    for stub in track_stubs:
+        track_id = stub.get("id")
+        title = stub.get("title", "")
+        if not track_id:
+            continue
+        track_data = _deezer_rate_limited_get(_DEEZER_TRACK_URL.format(track_id=track_id))
+        if not track_data:
+            continue
+        bpm = float(track_data.get("bpm", 0) or 0)
+        if bpm > 0:
+            results.append({"title": title, "bpm": bpm})
+
+    return results
 
 
 def enrich_deezer_bpm(batch_size: int = 30) -> dict:
