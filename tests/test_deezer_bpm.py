@@ -41,17 +41,26 @@ def _track_row(track_id="t1", title_lower="some song"):
 # _fetch_deezer_album_tracks
 # ---------------------------------------------------------------------------
 
+def _make_mock_resp(json_data):
+    r = MagicMock()
+    r.json.return_value = json_data
+    r.raise_for_status.return_value = None
+    return r
+
+
 class TestFetchDeezerAlbumTracks:
     def test_returns_bpm_list_on_success(self):
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = _make_deezer_track_response([
-            {"title": "Some Song", "bpm": 120.0},
-            {"title": "Another Song", "bpm": 95.5},
-        ])
-        mock_resp.raise_for_status.return_value = None
+        # Pass 1 (album): track stubs with IDs only
+        album_resp = _make_mock_resp({"data": [
+            {"id": "1", "title": "Some Song"},
+            {"id": "2", "title": "Another Song"},
+        ]})
+        # Pass 2 (per-track): individual track responses with BPM
+        track1_resp = _make_mock_resp({"id": "1", "title": "Some Song", "bpm": 120.0})
+        track2_resp = _make_mock_resp({"id": "2", "title": "Another Song", "bpm": 95.5})
 
         with patch("app.services.library_service.time") as mock_time, \
-             patch("requests.get", return_value=mock_resp):
+             patch("requests.get", side_effect=[album_resp, track1_resp, track2_resp]):
             mock_time.time.return_value = 9999.0
             from app.services.library_service import _fetch_deezer_album_tracks
             result = _fetch_deezer_album_tracks("dz99")
@@ -61,15 +70,17 @@ class TestFetchDeezerAlbumTracks:
         assert result[1] == {"title": "Another Song", "bpm": 95.5}
 
     def test_filters_zero_bpm(self):
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = _make_deezer_track_response([
-            {"title": "Track A", "bpm": 0},
-            {"title": "Track B", "bpm": 130.0},
-        ])
-        mock_resp.raise_for_status.return_value = None
+        # Pass 1: two track stubs
+        album_resp = _make_mock_resp({"data": [
+            {"id": "1", "title": "Track A"},
+            {"id": "2", "title": "Track B"},
+        ]})
+        # Pass 2: track A has bpm=0 (should be filtered), track B has bpm=130
+        track1_resp = _make_mock_resp({"id": "1", "title": "Track A", "bpm": 0})
+        track2_resp = _make_mock_resp({"id": "2", "title": "Track B", "bpm": 130.0})
 
         with patch("app.services.library_service.time") as mock_time, \
-             patch("requests.get", return_value=mock_resp):
+             patch("requests.get", side_effect=[album_resp, track1_resp, track2_resp]):
             mock_time.time.return_value = 9999.0
             from app.services.library_service import _fetch_deezer_album_tracks
             result = _fetch_deezer_album_tracks("dz99")
