@@ -37,8 +37,8 @@ def get_status() -> dict:
         "is_running": _is_running,
         "last_run": _last_run.isoformat() if _last_run else None,
         "last_result": _last_result,
-        "enabled": config.CC_ENABLED,
-        "cycle_hours": config.CC_CYCLE_HOURS,
+        "enabled": config.SCHEDULER_ENABLED,
+        "cycle_hours": config.CYCLE_HOURS,
         "current_stage": _current_stage,
         "current_run_mode": _current_run_mode,
     }
@@ -105,14 +105,14 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
     max_per_cycle = int(settings.get("max_per_cycle", config.MAX_PER_CYCLE))
     period = settings.get("period", "1month")
     auto_push = settings.get("auto_push_playlist", "false") == "true"
-    ignore_kw_raw = settings.get("nr_ignore_keywords", "") or config.CC_IGNORE_KEYWORDS
+    ignore_kw_raw = settings.get("nr_ignore_keywords", "") or config.IGNORE_KEYWORDS
     ignore_keywords = [k.strip() for k in ignore_kw_raw.split(",") if k.strip()]
     # Normalize: lowercase + strip punctuation so "Ballyhoo!" matches "ballyhoo"
     _strip_punct = lambda s: re.sub(r"[^\w\s]", "", s).strip()
     ignore_artists = {_strip_punct(a.strip().lower()) for a in settings.get("nr_ignore_artists", "").split(",") if a.strip()}
-    cc_release_kinds_raw = settings.get("cc_release_kinds") or config.CC_RELEASE_KINDS
-    allowed_kinds = {k.strip().lower() for k in cc_release_kinds_raw.split(",") if k.strip()}
-    include_features_raw = settings.get("cc_include_features")
+    release_kinds_raw = settings.get("release_kinds") or config.RELEASE_KINDS
+    allowed_kinds = {k.strip().lower() for k in release_kinds_raw.split(",") if k.strip()}
+    include_features_raw = settings.get("include_features")
     include_features = (
         True if include_features_raw is None
         else str(include_features_raw).lower() not in ("false", "0", "no")
@@ -227,7 +227,7 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
         unique_releases = [r for r in unique_releases if not _FEAT_RE.search(r.title)]
         filtered = before - len(unique_releases)
         if filtered:
-            logger.info("Stage 2-3: filtered %d feature/collab release(s) (cc_include_features=false)",
+            logger.info("Stage 2-3: filtered %d feature/collab release(s) (include_features=false)",
                         filtered)
 
     _current_stage = 3
@@ -626,7 +626,7 @@ def _should_run_cc(settings: dict) -> bool:
         return True
 
     # Interval mode (default)
-    cycle_hours = int(settings.get("cycle_hours") or config.CC_CYCLE_HOURS)
+    cycle_hours = int(settings.get("cycle_hours") or config.CYCLE_HOURS)
     if not last_run_iso:
         return True
     last = datetime.fromisoformat(last_run_iso)
@@ -637,7 +637,7 @@ def _loop():
     """Background loop — checks every hour whether a CC cycle should run."""
     while not _stop_event.is_set():
         ran_cc = False
-        if config.CC_ENABLED:
+        if config.SCHEDULER_ENABLED:
             settings = rythmx_store.get_all_settings()
             if _should_run_cc(settings):
                 mode = settings.get("run_mode", "fetch")
@@ -675,7 +675,7 @@ def start():
     _stop_event.clear()
     _thread = threading.Thread(target=_loop, daemon=True, name="cc-scheduler")
     _thread.start()
-    logger.info("Cruise control scheduler started (interval=%dh)", config.CC_CYCLE_HOURS)
+    logger.info("Cruise control scheduler started (interval=%dh)", config.CYCLE_HOURS)
 
 
 def stop():

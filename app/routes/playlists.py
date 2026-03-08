@@ -201,7 +201,7 @@ def playlists_update(name):
 
 @playlists_bp.route("/api/playlists/<path:name>/tracks/<int:row_id>", methods=["DELETE"])
 def playlists_remove_track(name, row_id):
-    """Remove a single track row from a playlist by cc_playlist.id."""
+    """Remove a single track row from a playlist by playlist_tracks.id."""
     rythmx_store.remove_playlist_row(row_id)
     return jsonify({"status": "ok"})
 

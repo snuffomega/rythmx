@@ -2,7 +2,7 @@
 identity_resolver.py — confidence-based artist identity resolution.
 
 Algorithm:
-  1. Check cc.db cache — return immediately if confidence >= 85 and not stale.
+  1. Check rythmx.db cache — return immediately if confidence >= 85 and not stale.
   2. Fetch Last.fm top tracks for the artist (artist.getTopTracks, public endpoint).
   3. Search iTunes for name-matched artist candidates.
   4. Score candidates: exact norm match +1000, contains +500, + popularity if available.
@@ -10,7 +10,7 @@ Algorithm:
   6. Count normalized title overlap with Last.fm top tracks.
   7. Boost score by overlap * 200; pick winner.
   8. Confidence: base=80, 1 overlap→86, 2→92, 3+→100.
-  9. Cache result in cc.db (additive COALESCE upsert — never overwrites good existing IDs).
+  9. Cache result in rythmx.db (additive COALESCE upsert — never overwrites good existing IDs).
 
 Cross-reference: Last.fm ↔ iTunes only. SoulSync is not involved in identity.
 """
@@ -248,7 +248,7 @@ def resolve_artist(lastfm_name: str, force: bool = False) -> dict:
 
 
 def _write_cache(lastfm_name: str, result: dict, resolution_method: str = None):
-    """Persist resolution result to cc.db artist_identity_cache (additive COALESCE upsert)."""
+    """Persist resolution result to rythmx.db artist_identity_cache (additive COALESCE upsert)."""
     try:
         from app.db import rythmx_store
         rythmx_store.cache_artist(

@@ -53,15 +53,11 @@ def get_new_music_status():
     })
 
 
-def cc_status():
-    """Deprecated: Use get_new_music_status(). Target removal: Phase 3."""
-    return get_new_music_status()
-
 
 @new_music_bp.route("/api/cruise-control/config", methods=["GET"])
 def get_new_music_config():
     raw = rythmx_store.get_all_settings()
-    bool_keys = {"enabled", "auto_push_playlist", "dry_run", "cc_include_features"}
+    bool_keys = {"enabled", "auto_push_playlist", "dry_run", "include_features"}
     int_keys = {
         "min_listens", "lookback_days", "max_per_cycle", "cycle_hours",
         "max_playlist_tracks", "schedule_weekday", "schedule_hour",
@@ -70,7 +66,7 @@ def get_new_music_config():
     config_keys = bool_keys | int_keys | {
         "run_mode", "playlist_prefix", "period",
         "nr_ignore_keywords", "nr_ignore_artists",
-        "cc_release_kinds",
+        "release_kinds",
     }
     coerced = {}
     for k, v in raw.items():
@@ -103,15 +99,11 @@ def get_new_music_config():
         "nr_ignore_artists": "",
         "release_cache_refresh_weekday": 4,
         "release_cache_refresh_hour": 6,
-        "cc_include_features": True,
-        "cc_release_kinds": config.CC_RELEASE_KINDS,
+        "include_features": True,
+        "release_kinds": config.RELEASE_KINDS,
     }
     return jsonify({"status": "ok", "config": {**defaults, **coerced}})
 
-
-def cc_config_get():
-    """Deprecated: Use get_new_music_config(). Target removal: Phase 3."""
-    return get_new_music_config()
 
 
 @new_music_bp.route("/api/cruise-control/config", methods=["POST"])
@@ -124,17 +116,13 @@ def save_new_music_config():
         "max_playlist_tracks", "schedule_weekday", "schedule_hour",
         "dry_run", "nr_ignore_keywords", "nr_ignore_artists",
         "release_cache_refresh_weekday", "release_cache_refresh_hour",
-        "cc_include_features", "cc_release_kinds",
+        "include_features", "release_kinds",
     }
     for key, value in data.items():
         if key in allowed_keys:
             rythmx_store.set_setting(key, str(value))
     return jsonify({"status": "ok"})
 
-
-def cc_config_save():
-    """Deprecated: Use save_new_music_config(). Target removal: Phase 3."""
-    return save_new_music_config()
 
 
 @new_music_bp.route("/api/cruise-control/run-now", methods=["POST"])
@@ -157,10 +145,6 @@ def run_cycle_now():
     return jsonify({"status": "ok", "message": "cycle_started", "run_mode": run_mode})
 
 
-def cc_run_now():
-    """Deprecated: Use run_cycle_now(). Target removal: Phase 3."""
-    return run_cycle_now()
-
 
 @new_music_bp.route("/api/cruise-control/history")
 def get_cycle_history():
@@ -178,10 +162,6 @@ def get_cycle_history():
     ]
     return jsonify({"status": "ok", "history": history})
 
-
-def cc_history():
-    """Deprecated: Use get_cycle_history(). Target removal: Phase 3."""
-    return get_cycle_history()
 
 
 @new_music_bp.route("/api/release-cache/clear", methods=["POST"])

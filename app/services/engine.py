@@ -2,7 +2,7 @@
 engine.py — candidate scoring and selection logic.
 
 Pure functions: no DB access, no HTTP calls.
-Input comes from soulsync_reader + last_fm_client, output goes to cc_store.
+Input comes from library readers + last_fm_client, output goes to rythmx_store.
 """
 import logging
 from datetime import datetime

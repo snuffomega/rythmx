@@ -552,7 +552,7 @@ def get_new_releases_for_artist(
     Discover new releases for a single artist using the configured provider chain:
       Spotify → iTunes → Deezer  (MusicBrainz only when MUSIC_API_PROVIDER=musicbrainz)
 
-    Results are cached in cc.db for 7 days (release_cache table). Set force_refresh=True
+    Results are cached in rythmx.db for 7 days (release_cache table). Set force_refresh=True
     to bypass the cache and re-fetch from the provider.
 
     Returns (releases, resolved_ids) where resolved_ids contains any provider IDs
@@ -573,7 +573,7 @@ def get_new_releases_for_artist(
     cutoff_str = cutoff.strftime("%Y-%m-%d")
     ignore_kw = [k.strip().lower() for k in (ignore_keywords or [])]
     if allowed_kinds is None:
-        allowed_kinds = {k.strip().lower() for k in config.CC_RELEASE_KINDS.split(",") if k.strip()}
+        allowed_kinds = {k.strip().lower() for k in config.RELEASE_KINDS.split(",") if k.strip()}
     provider = config.MUSIC_API_PROVIDER
 
     # --- Release cache check (7-day TTL) ---

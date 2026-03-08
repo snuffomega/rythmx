@@ -171,7 +171,7 @@ export function CCConfigForm({
           </div>
           <div className="w-px h-8 bg-[#1a1a1a] self-center" />
           <div className="flex items-center gap-3">
-            <Toggle on={form.cc_include_features ?? true} onChange={v => update('cc_include_features', v)} />
+            <Toggle on={form.include_features ?? true} onChange={v => update('include_features', v)} />
             <div>
               <p className="text-text-primary text-sm font-medium">Include features &amp; collabs</p>
               <p className="text-[#444] text-xs">Include releases where this artist is featured</p>
@@ -206,11 +206,11 @@ export function CCConfigForm({
               <label className="label">Release Types</label>
               <div className="flex items-center gap-5 mt-1.5">
                 {(['album', 'single', 'ep'] as const).map(kind => {
-                  const kinds = (form.cc_release_kinds ?? 'album,single,ep').split(',').map(s => s.trim());
+                  const kinds = (form.release_kinds ?? 'album,single,ep').split(',').map(s => s.trim());
                   const checked = kinds.includes(kind);
                   const toggleKind = () => {
                     const next = checked ? kinds.filter(k => k !== kind) : [...kinds, kind];
-                    update('cc_release_kinds', next.join(','));
+                    update('release_kinds', next.join(','));
                   };
                   return (
                     <label key={kind} className="flex items-center gap-1.5 cursor-pointer text-sm text-text-muted hover:text-text-secondary transition-colors select-none">
