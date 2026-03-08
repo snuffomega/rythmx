@@ -216,7 +216,7 @@ def playlists_build(name):
                         "owned_count": sum(1 for t in tracks if t.get("plex_rating_key"))})
     except Exception as e:
         logger.error("Playlist build failed for '%s': %s", name, e)
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "message": "Playlist build failed"}), 500
 
 
 @playlists_bp.route("/api/playlists/<path:name>/rebuild", methods=["POST"])
@@ -230,7 +230,7 @@ def playlists_rebuild(name):
                         "owned_count": sum(1 for t in tracks if t.get("plex_rating_key"))})
     except Exception as e:
         logger.error("Playlist rebuild failed for '%s': %s", name, e)
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "message": "Playlist rebuild failed"}), 500
 
 
 def _sync_external(name: str, req_data: dict) -> tuple:

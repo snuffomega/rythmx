@@ -5,6 +5,7 @@ import { getImageUrl } from '../utils/imageUrl';
 import type { Period, Artist, Track, TopAlbum } from '../types';
 import { CollageGrid, normalizeItems } from '../components/CollageGrid';
 import type { ContentType, OverlayOptions } from '../components/CollageGrid';
+import { ApiErrorBanner } from '../components/common';
 
 const PERIODS: Array<{ key: Period; label: string }> = [
   { key: '7day', label: '7 Days' },
@@ -177,17 +178,20 @@ export function Stats() {
   const [overlays, setOverlays] = useState<OverlayOptions>(saved.overlays);
   const [data, setData] = useState<Artist[] | Track[] | TopAlbum[] | null>(null);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [seeMoreOpen, setSeeMoreOpen] = useState(false);
 
   const fetchData = useCallback(async (p: Period, ct: ContentType) => {
     setLoading(true);
+    setFetchError(null);
     try {
       let result: Artist[] | Track[] | TopAlbum[];
       if (ct === 'artists') result = await statsApi.getTopArtists(p, GRID_LIMIT);
       else if (ct === 'albums') result = await statsApi.getTopAlbums(p, GRID_LIMIT);
       else result = await statsApi.getTopTracks(p, GRID_LIMIT);
       setData(result);
-    } catch {
+    } catch (err) {
+      setFetchError(err instanceof Error ? err.message : 'Failed to load stats');
       setData([]);
     } finally {
       setLoading(false);
@@ -276,6 +280,10 @@ export function Stats() {
           />
         </div>
       </div>
+
+      {fetchError && (
+        <ApiErrorBanner error={fetchError} onRetry={() => fetchData(period, contentType)} />
+      )}
 
       <CollageGrid
         items={items}

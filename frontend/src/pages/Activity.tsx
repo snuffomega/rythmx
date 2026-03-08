@@ -3,7 +3,7 @@ import { Music2, RefreshCw } from 'lucide-react';
 import { useApi } from '../hooks/useApi';
 import { acquisitionApi } from '../services/api';
 import { StatusBadge } from '../components/StatusBadge';
-import { Spinner, EmptyState } from '../components/common';
+import { Spinner, EmptyState, ApiErrorBanner } from '../components/common';
 import type { QueueItem, AcquisitionStatus } from '../types';
 
 interface ActivityPageProps {
@@ -22,7 +22,7 @@ const STATUS_FILTERS: Array<{ value: AcquisitionStatus | 'all'; label: string }>
 export function ActivityPage({ toast }: ActivityPageProps) {
   const [filter, setFilter] = useState<AcquisitionStatus | 'all'>('all');
   const [checking, setChecking] = useState(false);
-  const { data: queue, loading, refetch } = useApi(() => acquisitionApi.getQueue(filter === 'all' ? undefined : filter), filter);
+  const { data: queue, loading, error: queueError, refetch } = useApi(() => acquisitionApi.getQueue(filter === 'all' ? undefined : filter), filter);
   const { data: stats } = useApi(() => acquisitionApi.getStats());
 
   const handleCheckNow = async () => {
@@ -88,7 +88,9 @@ export function ActivityPage({ toast }: ActivityPageProps) {
         ))}
       </div>
 
-      {loading ? (
+      {queueError ? (
+        <ApiErrorBanner error={queueError} onRetry={refetch} />
+      ) : loading ? (
         <div className="space-y-1">
           {Array.from({ length: 8 }).map((_, i) => (
             <div key={i} className="flex items-center gap-3 py-3 border-b border-[#111]">

@@ -61,4 +61,4 @@ def acquisition_check_now():
         return jsonify({"status": "ok", "message": "Acquisition worker run complete", **stats})
     except Exception as e:
         logger.warning("acquisition check-now failed: %s", e)
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "message": "Acquisition check failed"}), 500

@@ -4,6 +4,7 @@ import { useApi } from '../hooks/useApi';
 import { useImage } from '../hooks/useImage';
 import { statsApi, cruiseControlApi, acquisitionApi } from '../services/api';
 import { getImageUrl } from '../utils/imageUrl';
+import { ApiErrorBanner } from '../components/common';
 import type { Artist, Track, QueueItem } from '../types';
 
 interface DiscoveryProps {
@@ -279,7 +280,9 @@ export function Discovery({ onNavigate }: DiscoveryProps) {
           cta="View all"
           onCta={() => onNavigate('cruise-control')}
         />
-        {history.loading ? (
+        {history.error ? (
+          <ApiErrorBanner error={history.error} onRetry={history.refetch} />
+        ) : history.loading ? (
           <ShelfSkeleton count={7} size={160} />
         ) : !newReleases || newReleases.length === 0 ? (
           <EmptyShelf message="Run Cruise Control to populate new releases" />
@@ -300,7 +303,9 @@ export function Discovery({ onNavigate }: DiscoveryProps) {
           cta="See stats"
           onCta={() => onNavigate('stats')}
         />
-        {topTracks.loading ? (
+        {topTracks.error ? (
+          <ApiErrorBanner error={topTracks.error} onRetry={topTracks.refetch} />
+        ) : topTracks.loading ? (
           <TrackListSkeleton count={8} />
         ) : !topTracks.data || topTracks.data.length === 0 ? (
           <EmptyShelf message="Connect Last.fm in Settings to see trending tracks" />
@@ -321,7 +326,9 @@ export function Discovery({ onNavigate }: DiscoveryProps) {
           cta="Run discovery"
           onCta={() => onNavigate('cruise-control')}
         />
-        {lovedArtists.loading ? (
+        {lovedArtists.error ? (
+          <ApiErrorBanner error={lovedArtists.error} onRetry={lovedArtists.refetch} />
+        ) : lovedArtists.loading ? (
           <ShelfSkeleton count={6} size={144} />
         ) : !lovedArtists.data || lovedArtists.data.length === 0 ? (
           <EmptyShelf message="Love tracks on Last.fm or run Personal Discovery to see suggestions" />
@@ -342,7 +349,9 @@ export function Discovery({ onNavigate }: DiscoveryProps) {
           cta="View all"
           onCta={() => onNavigate('stats')}
         />
-        {topArtists.loading ? (
+        {topArtists.error ? (
+          <ApiErrorBanner error={topArtists.error} onRetry={topArtists.refetch} />
+        ) : topArtists.loading ? (
           <ShelfSkeleton count={6} size={144} />
         ) : !topArtists.data || topArtists.data.length === 0 ? (
           <EmptyShelf message="Connect Last.fm in Settings to see your top artists" />
