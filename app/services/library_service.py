@@ -11,6 +11,7 @@ The enrich stage is resumable: only processes albums where itunes_album_id IS NU
 AND deezer_id IS NULL, so interrupted runs pick up where they left off.
 """
 import logging
+import re
 import sqlite3
 import time
 from datetime import datetime
@@ -88,12 +89,11 @@ def _connect():
     return conn
 
 
-import re as _re
-_TITLE_SUFFIX_RE = _re.compile(
+_TITLE_SUFFIX_RE = re.compile(
     r'\s*[\(\[](single|ep|deluxe|deluxe\s+edition|explicit|remaster(ed)?|'
     r'expanded|anniversary\s+edition|bonus\s+track[s]?|special\s+edition|'
     r'reissue)[\s\w]*[\)\]]',
-    _re.IGNORECASE,
+    re.IGNORECASE,
 )
 
 def _strip_title_suffixes(title: str) -> str:
@@ -214,7 +214,7 @@ def sync_library() -> dict:
 
 
 def _write_enrichment_meta(conn, source: str, entity_type: str, entity_id: str,
-                           status: str, error_msg: str = None) -> None:
+                           status: str, error_msg: str | None = None) -> None:
     """Upsert a row into enrichment_meta. Silently ignores if table doesn't exist yet."""
     try:
         conn.execute(
@@ -405,8 +405,8 @@ def enrich_spotify(batch_size: int = 20) -> dict:
                 "error": "Spotify credentials not configured"}
 
     try:
-        import spotipy
-        from spotipy.oauth2 import SpotifyClientCredentials
+        import spotipy  # type: ignore[import]
+        from spotipy.oauth2 import SpotifyClientCredentials  # type: ignore[import]
         sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
             client_id=config.SPOTIFY_CLIENT_ID,
             client_secret=config.SPOTIFY_CLIENT_SECRET,
