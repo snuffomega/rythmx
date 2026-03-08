@@ -177,7 +177,7 @@ def library_enrich():
         if _enrich_thread is not None and _enrich_thread.is_alive():
             return jsonify({"status": "ok", "message": "Enrich already running"}), 202
 
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
         batch_size = int(data.get("batch_size", 50))
 
         def _run():
@@ -210,7 +210,7 @@ def library_enrich_spotify():
         if _spotify_enrich_thread is not None and _spotify_enrich_thread.is_alive():
             return jsonify({"status": "ok", "message": "Spotify enrich already running"}), 202
 
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
         batch_size = int(data.get("batch_size", 20))
 
         def _run():
@@ -245,7 +245,7 @@ def library_enrich_lastfm_tags():
         if _lastfm_tags_thread is not None and _lastfm_tags_thread.is_alive():
             return jsonify({"status": "ok", "message": "Last.fm tag enrich already running"}), 202
 
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
         batch_size = int(data.get("batch_size", 50))
 
         def _run():
@@ -280,7 +280,7 @@ def library_enrich_deezer_bpm():
         if _deezer_bpm_thread is not None and _deezer_bpm_thread.is_alive():
             return jsonify({"status": "ok", "message": "Deezer BPM enrich already running"}), 202
 
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
         batch_size = int(data.get("batch_size", 30))
 
         def _run():
@@ -301,7 +301,7 @@ def library_enrich_deezer_bpm():
 
 @settings_bp.route("/api/settings/library-backend", methods=["POST"])
 def settings_set_library_backend():
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
     backend = data.get("backend", "").lower()
     if backend not in {"soulsync", "plex", "navidrome", "jellyfin"}:
         return jsonify({"status": "error", "message": f"Invalid backend: {backend}"}), 400
