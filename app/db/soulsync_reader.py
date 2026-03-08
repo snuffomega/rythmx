@@ -29,6 +29,7 @@ No SoulSync Python imports. Pure sqlite3.
 """
 import sqlite3
 import logging
+import time
 from app import config
 
 logger = logging.getLogger(__name__)
@@ -586,10 +587,200 @@ def get_track_count() -> int:
         return 0
 
 
-def sync_library() -> dict:
-    """No-op for SoulSync backend — SoulSync manages its own DB.
+def _connect_rythmx():
+    """Return a WAL-mode write connection to rythmx.db."""
+    conn = sqlite3.connect(config.RYTHMX_DB)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    return conn
 
-    Present for interface parity with plex_reader and other backends.
+
+def _sync_soulsync_to_lib(conn_rythmx, conn_ssync) -> dict:
+    """Import SoulSync library into lib_* tables in rythmx.db.
+
+    Uses additive merge:
+      - INSERT OR IGNORE for new rows (sets match_confidence=95, source_backend='soulsync').
+      - UPDATE with COALESCE fills null ID columns from ssync values without overwriting
+        non-null values already written by Rythmx enrichment.
+      - Items removed from ssync.db are tombstoned (removed_at) not hard-deleted.
+
+    Micro-batched: commits every 50 artists.
     """
-    logger.info("sync_library() called on SoulSync backend — no action needed")
-    return {"message": "SoulSync manages its own library database"}
+    conn_ssync.row_factory = sqlite3.Row
+
+    start = time.time()
+    artist_count = 0
+    album_count = 0
+    track_count = 0
+
+    # Temp tables track which ss_* IDs were seen (for tombstoning removed items)
+    conn_rythmx.execute("CREATE TEMP TABLE IF NOT EXISTS _seen_ss_artists (id TEXT PRIMARY KEY)")
+    conn_rythmx.execute("CREATE TEMP TABLE IF NOT EXISTS _seen_ss_albums  (id TEXT PRIMARY KEY)")
+    conn_rythmx.execute("CREATE TEMP TABLE IF NOT EXISTS _seen_ss_tracks  (id TEXT PRIMARY KEY)")
+
+    artists = conn_ssync.execute(
+        "SELECT id, name, itunes_artist_id, deezer_id, spotify_artist_id, musicbrainz_id "
+        "FROM artists"
+    ).fetchall()
+
+    for i, artist in enumerate(artists):
+        lib_id = "ss_" + artist["id"]
+        name = artist["name"] or ""
+        it_aid = artist["itunes_artist_id"]
+        dz_aid = artist["deezer_id"]
+        sp_aid = artist["spotify_artist_id"]
+        mb_aid = artist["musicbrainz_id"]
+
+        conn_rythmx.execute(
+            "INSERT OR IGNORE INTO lib_artists "
+            "(id, name, name_lower, itunes_artist_id, deezer_id, spotify_artist_id, "
+            "musicbrainz_id, match_confidence, source_backend, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, 95, 'soulsync', CURRENT_TIMESTAMP)",
+            (lib_id, name, name.lower(), it_aid, dz_aid, sp_aid, mb_aid),
+        )
+        conn_rythmx.execute(
+            "UPDATE lib_artists SET "
+            "itunes_artist_id  = COALESCE(?, itunes_artist_id), "
+            "deezer_id         = COALESCE(?, deezer_id), "
+            "spotify_artist_id = COALESCE(?, spotify_artist_id), "
+            "musicbrainz_id    = COALESCE(?, musicbrainz_id), "
+            "match_confidence  = MAX(match_confidence, 95), "
+            "source_backend    = 'soulsync', "
+            "removed_at        = NULL, "
+            "updated_at        = CURRENT_TIMESTAMP "
+            "WHERE id = ?",
+            (it_aid, dz_aid, sp_aid, mb_aid, lib_id),
+        )
+        conn_rythmx.execute("INSERT OR IGNORE INTO _seen_ss_artists (id) VALUES (?)", (lib_id,))
+        artist_count += 1
+
+        albums = conn_ssync.execute(
+            "SELECT id, title, year, record_type, itunes_album_id, deezer_id, "
+            "spotify_album_id, musicbrainz_release_id "
+            "FROM albums WHERE artist_id = ?",
+            (artist["id"],),
+        ).fetchall()
+
+        for album in albums:
+            alb_id = "ss_" + album["id"]
+            title = album["title"] or ""
+            it_aid_alb = album["itunes_album_id"]
+            dz_id = album["deezer_id"]
+            sp_aid_alb = album["spotify_album_id"]
+            mb_rid = album["musicbrainz_release_id"]
+
+            conn_rythmx.execute(
+                "INSERT OR IGNORE INTO lib_albums "
+                "(id, artist_id, title, local_title, title_lower, year, record_type, "
+                "itunes_album_id, deezer_id, spotify_album_id, musicbrainz_release_id, "
+                "match_confidence, source_backend, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 95, 'soulsync', CURRENT_TIMESTAMP)",
+                (alb_id, lib_id, title, title, title.lower(),
+                 album["year"], album["record_type"],
+                 it_aid_alb, dz_id, sp_aid_alb, mb_rid),
+            )
+            conn_rythmx.execute(
+                "UPDATE lib_albums SET "
+                "itunes_album_id        = COALESCE(?, itunes_album_id), "
+                "deezer_id              = COALESCE(?, deezer_id), "
+                "spotify_album_id       = COALESCE(?, spotify_album_id), "
+                "musicbrainz_release_id = COALESCE(?, musicbrainz_release_id), "
+                "match_confidence       = MAX(match_confidence, 95), "
+                "source_backend         = 'soulsync', "
+                "removed_at             = NULL, "
+                "updated_at             = CURRENT_TIMESTAMP "
+                "WHERE id = ?",
+                (it_aid_alb, dz_id, sp_aid_alb, mb_rid, alb_id),
+            )
+            conn_rythmx.execute("INSERT OR IGNORE INTO _seen_ss_albums (id) VALUES (?)", (alb_id,))
+            album_count += 1
+
+            tracks = conn_ssync.execute(
+                "SELECT id, title, itunes_track_id, deezer_id, spotify_track_id "
+                "FROM tracks WHERE album_id = ?",
+                (album["id"],),
+            ).fetchall()
+
+            for track in tracks:
+                trk_id = "ss_" + track["id"]
+                trk_title = track["title"] or ""
+                it_tid = track["itunes_track_id"]
+                dz_tid = track["deezer_id"]
+                sp_tid = track["spotify_track_id"]
+
+                conn_rythmx.execute(
+                    "INSERT OR IGNORE INTO lib_tracks "
+                    "(id, album_id, artist_id, title, title_lower, "
+                    "itunes_track_id, deezer_id, spotify_track_id, "
+                    "match_confidence, source_backend, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 95, 'soulsync', CURRENT_TIMESTAMP)",
+                    (trk_id, alb_id, lib_id, trk_title, trk_title.lower(),
+                     it_tid, dz_tid, sp_tid),
+                )
+                conn_rythmx.execute(
+                    "UPDATE lib_tracks SET "
+                    "itunes_track_id  = COALESCE(?, itunes_track_id), "
+                    "deezer_id        = COALESCE(?, deezer_id), "
+                    "spotify_track_id = COALESCE(?, spotify_track_id), "
+                    "match_confidence = MAX(match_confidence, 95), "
+                    "source_backend   = 'soulsync', "
+                    "removed_at       = NULL, "
+                    "updated_at       = CURRENT_TIMESTAMP "
+                    "WHERE id = ?",
+                    (it_tid, dz_tid, sp_tid, trk_id),
+                )
+                conn_rythmx.execute(
+                    "INSERT OR IGNORE INTO _seen_ss_tracks (id) VALUES (?)", (trk_id,)
+                )
+                track_count += 1
+
+        # Micro-batch commit every 50 artists
+        if (i + 1) % 50 == 0:
+            conn_rythmx.commit()
+            logger.debug("sync_soulsync_to_lib: committed batch at artist %d", i + 1)
+
+    # Tombstone soulsync items no longer present in ssync.db
+    conn_rythmx.execute(
+        "UPDATE lib_tracks SET removed_at = CURRENT_TIMESTAMP "
+        "WHERE source_backend = 'soulsync' AND removed_at IS NULL "
+        "AND id NOT IN (SELECT id FROM _seen_ss_tracks)"
+    )
+    conn_rythmx.execute(
+        "UPDATE lib_albums SET removed_at = CURRENT_TIMESTAMP "
+        "WHERE source_backend = 'soulsync' AND removed_at IS NULL "
+        "AND id NOT IN (SELECT id FROM _seen_ss_albums)"
+    )
+    conn_rythmx.execute(
+        "UPDATE lib_artists SET removed_at = CURRENT_TIMESTAMP "
+        "WHERE source_backend = 'soulsync' AND removed_at IS NULL "
+        "AND id NOT IN (SELECT id FROM _seen_ss_artists)"
+    )
+
+    duration_s = round(time.time() - start, 1)
+    conn_rythmx.commit()
+
+    logger.info(
+        "soulsync_reader.sync_library: %d artists, %d albums, %d tracks in %.1fs",
+        artist_count, album_count, track_count, duration_s,
+    )
+    return {
+        "track_count": track_count,
+        "album_count": album_count,
+        "artist_count": artist_count,
+        "sync_duration_s": duration_s,
+    }
+
+
+def sync_library() -> dict:
+    """Import SoulSync library into lib_* tables in rythmx.db.
+
+    Replaces the former no-op. Calls _sync_soulsync_to_lib() which uses additive
+    merge so enrichment data (lastfm_tags_json, BPM, etc.) is never overwritten.
+    """
+    conn_ssync = _connect()
+    conn_rythmx = _connect_rythmx()
+    try:
+        return _sync_soulsync_to_lib(conn_rythmx, conn_ssync)
+    finally:
+        conn_rythmx.close()
+        conn_ssync.close()

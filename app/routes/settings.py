@@ -10,7 +10,9 @@ logger = logging.getLogger(__name__)
 
 settings_bp = Blueprint("settings", __name__)
 
-# Track background enrich thread state
+# Track background thread state
+_sync_thread: threading.Thread | None = None
+_sync_lock = threading.Lock()
 _enrich_thread: threading.Thread | None = None
 _enrich_lock = threading.Lock()
 _spotify_enrich_thread: threading.Thread | None = None
@@ -19,6 +21,29 @@ _lastfm_tags_thread: threading.Thread | None = None
 _lastfm_tags_lock = threading.Lock()
 _deezer_bpm_thread: threading.Thread | None = None
 _deezer_bpm_lock = threading.Lock()
+
+
+def _spawn_sync_thread() -> None:
+    """Start a background library sync if one isn't already running."""
+    global _sync_thread
+    with _sync_lock:
+        if _sync_thread is not None and _sync_thread.is_alive():
+            return
+
+        def _run():
+            from app.services import library_service as _lib_svc
+            try:
+                result = _lib_svc.sync_library()
+                rythmx_store.set_setting(
+                    "library_last_synced",
+                    datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+                )
+                logger.info("Background library sync complete: %s", result)
+            except Exception as e:
+                logger.error("Background library sync failed: %s", e)
+
+        _sync_thread = threading.Thread(target=_run, daemon=True, name="lib-sync")
+        _sync_thread.start()
 
 
 @settings_bp.route("/api/settings", methods=["GET"])
@@ -306,7 +331,25 @@ def settings_set_library_backend():
     if backend not in {"soulsync", "plex", "navidrome", "jellyfin"}:
         return jsonify({"status": "error", "message": f"Invalid backend: {backend}"}), 400
     rythmx_store.set_setting("library_backend", backend)
-    return jsonify({"status": "ok", "backend": backend})
+
+    # Auto-trigger an initial sync when soulsync backend is set and lib_* is empty.
+    # This imports SoulSync's pre-enriched IDs (confidence=95) so enrichment passes
+    # only need to fill the remaining gaps rather than starting from scratch.
+    auto_sync_started = False
+    if backend == "soulsync":
+        try:
+            from app.db import plex_reader as _pr
+            with _pr._connect() as _conn:
+                count = _conn.execute(
+                    "SELECT COUNT(*) FROM lib_artists WHERE source_backend = 'soulsync'"
+                ).fetchone()[0]
+            if count == 0:
+                _spawn_sync_thread()
+                auto_sync_started = True
+        except Exception as e:
+            logger.warning("Auto-sync check failed: %s", e)
+
+    return jsonify({"status": "ok", "backend": backend, "auto_sync_started": auto_sync_started})
 
 
 @settings_bp.route("/api/settings/clear-history", methods=["POST"])

@@ -40,7 +40,15 @@ def _connect():
 # ---------------------------------------------------------------------------
 
 def sync_library() -> dict:
-    """Walk the Plex music library and rebuild lib_* tables in rythmx.db.
+    """Walk the Plex music library and merge lib_* tables in rythmx.db.
+
+    Uses additive merge (INSERT OR IGNORE + targeted UPDATE) to preserve all
+    enrichment data (itunes_album_id, deezer_id, lastfm_tags_json, BPM, etc.)
+    across re-syncs. Only Plex-owned columns (title, year, thumb_url, file_path)
+    are updated on existing rows.
+
+    Items removed from Plex are soft-deleted (removed_at timestamp) rather than
+    hard-deleted, so CC pipeline owned-checks don't false-positive on stale data.
 
     Micro-batched: commits every 50 artists to keep WAL size manageable.
     Returns a dict with track_count, album_count, artist_count, sync_duration_s.
@@ -61,20 +69,34 @@ def sync_library() -> dict:
     track_count = 0
 
     with _connect() as conn:
+        # Temp tables to track which Plex IDs were seen this pass (for tombstoning).
+        # Tombstoning uses NOT IN (SELECT id FROM _seen_*) which handles any library size
+        # without hitting SQLite's variable limit.
+        conn.execute("CREATE TEMP TABLE IF NOT EXISTS _seen_artists (id TEXT PRIMARY KEY)")
+        conn.execute("CREATE TEMP TABLE IF NOT EXISTS _seen_albums  (id TEXT PRIMARY KEY)")
+        conn.execute("CREATE TEMP TABLE IF NOT EXISTS _seen_tracks  (id TEXT PRIMARY KEY)")
+
         all_artists = list(music.all())
 
         for i, plex_artist in enumerate(all_artists):
             artist_id = str(plex_artist.ratingKey)
             artist_name = plex_artist.title or ""
 
+            # Insert new artists only — enrichment columns untouched on existing rows
             conn.execute(
-                """
-                INSERT OR REPLACE INTO lib_artists
-                    (id, name, name_lower, updated_at)
-                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-                """,
+                "INSERT OR IGNORE INTO lib_artists "
+                "(id, name, name_lower, source_backend, updated_at) "
+                "VALUES (?, ?, ?, 'plex', CURRENT_TIMESTAMP)",
                 (artist_id, artist_name, artist_name.lower()),
             )
+            # Update ONLY Plex-owned columns; un-tombstone if previously removed
+            conn.execute(
+                "UPDATE lib_artists SET name = ?, name_lower = ?, "
+                "source_backend = 'plex', updated_at = CURRENT_TIMESTAMP, removed_at = NULL "
+                "WHERE id = ?",
+                (artist_name, artist_name.lower(), artist_id),
+            )
+            conn.execute("INSERT OR IGNORE INTO _seen_artists (id) VALUES (?)", (artist_id,))
             artist_count += 1
 
             for plex_album in plex_artist.albums():
@@ -82,22 +104,31 @@ def sync_library() -> dict:
                 album_title = plex_album.title or ""
                 album_year = getattr(plex_album, "year", None)
                 thumb_url = getattr(plex_album, "thumb", None) or ""
+                record_type = getattr(plex_album, "type", None) or ""
 
                 conn.execute(
-                    """
-                    INSERT OR REPLACE INTO lib_albums
-                        (id, artist_id, title, local_title, title_lower, year, thumb_url, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                    """,
+                    "INSERT OR IGNORE INTO lib_albums "
+                    "(id, artist_id, title, local_title, title_lower, year, thumb_url, "
+                    "source_backend, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, 'plex', CURRENT_TIMESTAMP)",
                     (album_id, artist_id, album_title, album_title,
                      album_title.lower(), album_year, thumb_url),
                 )
+                conn.execute(
+                    "UPDATE lib_albums SET title = ?, local_title = ?, title_lower = ?, "
+                    "year = ?, thumb_url = ?, record_type = ?, source_backend = 'plex', "
+                    "updated_at = CURRENT_TIMESTAMP, removed_at = NULL WHERE id = ?",
+                    (album_title, album_title, album_title.lower(),
+                     album_year, thumb_url, record_type, album_id),
+                )
+                conn.execute("INSERT OR IGNORE INTO _seen_albums (id) VALUES (?)", (album_id,))
                 album_count += 1
 
                 for plex_track in plex_album.tracks():
                     track_id = str(plex_track.ratingKey)
                     track_title = plex_track.title or ""
                     track_number = getattr(plex_track, "trackNumber", None)
+                    disc_number = getattr(plex_track, "discNumber", None)
                     duration = getattr(plex_track, "duration", None)
 
                     file_path = None
@@ -110,21 +141,46 @@ def sync_library() -> dict:
                             file_size = getattr(part, "size", None)
 
                     conn.execute(
-                        """
-                        INSERT OR REPLACE INTO lib_tracks
-                            (id, album_id, artist_id, title, title_lower,
-                             track_number, duration, file_path, file_size, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                        """,
+                        "INSERT OR IGNORE INTO lib_tracks "
+                        "(id, album_id, artist_id, title, title_lower, track_number, disc_number, "
+                        "duration, file_path, file_size, source_backend, updated_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'plex', CURRENT_TIMESTAMP)",
                         (track_id, album_id, artist_id, track_title, track_title.lower(),
-                         track_number, duration, file_path, file_size),
+                         track_number, disc_number, duration, file_path, file_size),
                     )
+                    conn.execute(
+                        "UPDATE lib_tracks SET title = ?, title_lower = ?, track_number = ?, "
+                        "disc_number = ?, duration = ?, file_path = ?, file_size = ?, "
+                        "source_backend = 'plex', updated_at = CURRENT_TIMESTAMP, removed_at = NULL "
+                        "WHERE id = ?",
+                        (track_title, track_title.lower(), track_number, disc_number,
+                         duration, file_path, file_size, track_id),
+                    )
+                    conn.execute("INSERT OR IGNORE INTO _seen_tracks (id) VALUES (?)", (track_id,))
                     track_count += 1
 
             # Micro-batch commit every 50 artists to keep WAL manageable
             if (i + 1) % 50 == 0:
                 conn.commit()
                 logger.debug("sync_library: committed batch at artist %d", i + 1)
+
+        # Tombstone Plex items not present in this sync (deleted from Plex).
+        # Only touches source_backend='plex' rows — SoulSync rows are unaffected.
+        conn.execute(
+            "UPDATE lib_tracks SET removed_at = CURRENT_TIMESTAMP "
+            "WHERE source_backend = 'plex' AND removed_at IS NULL "
+            "AND id NOT IN (SELECT id FROM _seen_tracks)"
+        )
+        conn.execute(
+            "UPDATE lib_albums SET removed_at = CURRENT_TIMESTAMP "
+            "WHERE source_backend = 'plex' AND removed_at IS NULL "
+            "AND id NOT IN (SELECT id FROM _seen_albums)"
+        )
+        conn.execute(
+            "UPDATE lib_artists SET removed_at = CURRENT_TIMESTAMP "
+            "WHERE source_backend = 'plex' AND removed_at IS NULL "
+            "AND id NOT IN (SELECT id FROM _seen_artists)"
+        )
 
         duration_s = round(time.time() - start, 1)
 
@@ -263,7 +319,7 @@ def check_album_owned(
 
             def _first_track(album_id: str) -> str | None:
                 row = conn.execute(
-                    "SELECT id FROM lib_tracks WHERE album_id = ? LIMIT 1",
+                    "SELECT id FROM lib_tracks WHERE album_id = ? AND removed_at IS NULL LIMIT 1",
                     (album_id,),
                 ).fetchone()
                 return row["id"] if row else None
@@ -271,7 +327,7 @@ def check_album_owned(
             # Tier 1a — iTunes album ID (filled by Enrich stage)
             if itunes_album_id:
                 row = conn.execute(
-                    "SELECT id FROM lib_albums WHERE itunes_album_id = ?",
+                    "SELECT id FROM lib_albums WHERE itunes_album_id = ? AND removed_at IS NULL",
                     (itunes_album_id,),
                 ).fetchone()
                 if row:
@@ -283,7 +339,7 @@ def check_album_owned(
             # Tier 1b — Deezer album ID (filled by Enrich stage)
             if deezer_album_id:
                 row = conn.execute(
-                    "SELECT id FROM lib_albums WHERE deezer_id = ?",
+                    "SELECT id FROM lib_albums WHERE deezer_id = ? AND removed_at IS NULL",
                     (deezer_album_id,),
                 ).fetchone()
                 if row:
@@ -295,7 +351,7 @@ def check_album_owned(
             # Tier 1c — Spotify album ID
             if spotify_album_id:
                 row = conn.execute(
-                    "SELECT id FROM lib_albums WHERE spotify_album_id = ?",
+                    "SELECT id FROM lib_albums WHERE spotify_album_id = ? AND removed_at IS NULL",
                     (spotify_album_id,),
                 ).fetchone()
                 if row:
@@ -307,7 +363,7 @@ def check_album_owned(
             # Tier 1d — MusicBrainz release ID
             if musicbrainz_release_id:
                 row = conn.execute(
-                    "SELECT id FROM lib_albums WHERE musicbrainz_release_id = ?",
+                    "SELECT id FROM lib_albums WHERE musicbrainz_release_id = ? AND removed_at IS NULL",
                     (musicbrainz_release_id,),
                 ).fetchone()
                 if row:
@@ -325,6 +381,9 @@ def check_album_owned(
                 JOIN lib_artists ar ON al.artist_id = ar.id
                 WHERE ar.name_lower = lower(?)
                   AND al.title_lower = lower(?)
+                  AND al.removed_at IS NULL
+                  AND ar.removed_at IS NULL
+                  AND t.removed_at IS NULL
                 LIMIT 1
                 """,
                 (artist_name, album_name),

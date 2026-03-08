@@ -749,12 +749,16 @@ def get_cached_releases(artist_name: str, max_age_days: int = 7):
         ]
 
 
-def save_releases_to_cache(artist_name: str, releases: list):
+def save_releases_to_cache(artist_name: str, releases: list, artist_lib_id: str = None):
     """
     Upsert a list of Release objects into release_cache (including upcoming).
     If releases is empty, writes a sentinel row (source='sentinel', album_title='')
     so that get_cached_releases() can distinguish "checked but found nothing" from
     "never checked" — preventing an API call on every re-run for quiet artists.
+
+    Also writes non-upcoming releases to lib_releases for permanent storage.
+    artist_lib_id is the lib_artists.id (e.g. Plex ratingKey or 'ss_*') — optional,
+    used to FK into lib_artists for future library page queries.
     """
     with _connect() as conn:
         if not releases:
@@ -792,14 +796,49 @@ def save_releases_to_cache(artist_name: str, releases: list):
                     r.artwork_url or "",
                 )
             )
+            # Also write to lib_releases for permanent history (skip upcoming releases)
+            if not r.is_upcoming:
+                dz_id = r.deezer_album_id or None
+                it_id = r.itunes_album_id or None
+                sp_id = r.spotify_album_id or None
+                kind = (r.kind or "album").strip()
+                rel_id = f"{kind}_{dz_id or it_id or sp_id or ''}".rstrip("_")
+                if rel_id and rel_id != kind:  # skip if no ID available
+                    conn.execute(
+                        """INSERT OR IGNORE INTO lib_releases
+                           (id, artist_id, artist_name, artist_name_lower, title, title_lower,
+                            release_date, kind, deezer_album_id, itunes_album_id,
+                            spotify_album_id, thumb_url, first_seen_at, last_checked_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+                        (rel_id, artist_lib_id, artist_name, artist_name.lower(),
+                         r.title, r.title.lower(), r.release_date, kind,
+                         dz_id, it_id, sp_id, r.artwork_url or None),
+                    )
+                    conn.execute(
+                        "UPDATE lib_releases SET last_checked_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        (rel_id,),
+                    )
 
 
 def get_release_itunes_album_id(artist_name: str, album_title: str) -> str | None:
     """
-    Return itunes_album_id from release_cache for a known artist+album, or None.
-    Used by image_service as Tier 0 for album art lookups — more reliable than name search.
+    Return itunes_album_id for a known artist+album, or None.
+    Checks lib_releases first (permanent store), then release_cache (TTL cache).
+    Used by image_service as Tier 0 for album art lookups.
     """
     with _connect() as conn:
+        # Check permanent store first
+        row = conn.execute(
+            """SELECT itunes_album_id FROM lib_releases
+               WHERE artist_name_lower = lower(?)
+                 AND title_lower = lower(?)
+                 AND itunes_album_id IS NOT NULL
+               LIMIT 1""",
+            (artist_name, album_title),
+        ).fetchone()
+        if row:
+            return row["itunes_album_id"]
+        # Fall back to TTL cache
         row = conn.execute(
             """SELECT itunes_album_id FROM release_cache
                WHERE lower(artist_name) = lower(?)
