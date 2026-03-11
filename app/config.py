@@ -91,14 +91,16 @@ def validate_plex():
 def log_config_summary():
     """Log a redacted config summary on startup (never log secret values)."""
     logger.info("Rythmx config loaded:")
-    logger.info("  SOULSYNC_DB: %s", SOULSYNC_DB)
     logger.info("  RYTHMX_DB: %s", RYTHMX_DB)
-    logger.info("  SOULSYNC_URL: %s", SOULSYNC_URL)
+    logger.info("  LIBRARY_BACKEND: %s", LIBRARY_BACKEND)
+    if LIBRARY_BACKEND == "soulsync":
+        logger.info("  SOULSYNC_DB: %s", SOULSYNC_DB)
+        logger.info("  SOULSYNC_URL: %s", SOULSYNC_URL)
+    if LIBRARY_BACKEND == "plex":
+        logger.info("  PLEX_URL: %s", PLEX_URL or "(not set)")
+        logger.info("  PLEX_TOKEN: %s", "set" if PLEX_TOKEN else "NOT SET")
     logger.info("  LASTFM_USERNAME: %s", LASTFM_USERNAME or "(not set)")
     logger.info("  LASTFM_API_KEY: %s", "set" if LASTFM_API_KEY else "NOT SET")
-    logger.info("  PLEX_URL: %s", PLEX_URL or "(not set)")
-    logger.info("  PLEX_TOKEN: %s", "set" if PLEX_TOKEN else "NOT SET")
     logger.info("  SPOTIFY_CLIENT_ID: %s", "set" if SPOTIFY_CLIENT_ID else "NOT SET")
     logger.info("  FANART_API_KEY: %s", "set" if FANART_API_KEY else "NOT SET (artist images fall back to iTunes)")
     logger.info("  SCHEDULER_ENABLED: %s", SCHEDULER_ENABLED)
-    logger.info("  LIBRARY_BACKEND: %s", LIBRARY_BACKEND)
