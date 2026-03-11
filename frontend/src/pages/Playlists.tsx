@@ -3,6 +3,7 @@ import { Plus, RefreshCw, Loader2, Trash2, ChevronDown, ChevronUp, Upload, Downl
 import { useApi } from '../hooks/useApi';
 import { playlistsApi } from '../services/api';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { ApiErrorBanner } from '../components/common';
 import type { PlaylistItem, PlaylistTrack, PlaylistSource } from '../types';
 
 interface PlaylistsProps {
@@ -114,6 +115,7 @@ function PlaylistCard({
   const [busy, setBusy] = useState<string | null>(null);
   const [tracks, setTracks] = useState<PlaylistTrack[] | null>(null);
   const [tracksLoading, setTracksLoading] = useState(false);
+  const [tracksError, setTracksError] = useState<string | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [renameVal, setRenameVal] = useState('');
   const renameInputRef = useRef<HTMLInputElement>(null);
@@ -121,9 +123,10 @@ function PlaylistCard({
   useEffect(() => {
     if (!expanded || tracks !== null) return;
     setTracksLoading(true);
+    setTracksError(null);
     playlistsApi.getTracks(playlist.name)
       .then(t => setTracks(t as PlaylistTrack[]))
-      .catch(() => setTracks([]))
+      .catch((err: unknown) => setTracksError(err instanceof Error ? err.message : 'Failed to load tracks'))
       .finally(() => setTracksLoading(false));
   }, [expanded, playlist.name, tracks]);
 
@@ -230,6 +233,8 @@ function PlaylistCard({
                   <div key={i} className="h-3 animate-pulse bg-[#141414] rounded-sm w-full" />
                 ))}
               </div>
+            ) : tracksError ? (
+              <p className="text-danger text-xs py-2">{tracksError}</p>
             ) : tracks && tracks.length > 0 ? (
               (tracks as PlaylistTrack[]).map((t, i) => (
                 <TrackRow key={t.row_id ?? i} track={t} playlistName={playlist.name} onRemoved={handleTrackRemoved} />
@@ -407,7 +412,7 @@ function NewPlaylistModal({ onClose, onCreate }: { onClose: () => void; onCreate
 }
 
 export function Playlists({ toast }: PlaylistsProps) {
-  const { data: playlists, loading, refetch } = useApi(() => playlistsApi.getAll());
+  const { data: playlists, loading, error: playlistsError, refetch } = useApi(() => playlistsApi.getAll());
   const [showModal, setShowModal] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
@@ -478,7 +483,9 @@ export function Playlists({ toast }: PlaylistsProps) {
         <div className="border-b border-[#1a1a1a] mt-4" />
       </div>
 
-      {loading ? (
+      {playlistsError ? (
+        <ApiErrorBanner error={playlistsError} onRetry={refetch} />
+      ) : loading ? (
         <div className="space-y-3">
           {Array.from({ length: 3 }).map((_, i) => (
             <div key={i} className="bg-[#0e0e0e] border border-[#1a1a1a] p-4 space-y-3">

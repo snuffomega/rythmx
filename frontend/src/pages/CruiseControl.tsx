@@ -5,6 +5,7 @@ import { cruiseControlApi, releaseCacheApi } from '../services/api';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { CCConfigForm, CCHistory } from '../components/cc';
 import { PersonalDiscovery } from './PersonalDiscovery';
+import { ApiErrorBanner } from '../components/common';
 import type { CruiseControlConfig } from '../types';
 
 type CCTab = 'new-music' | 'personal-discovery';
@@ -14,8 +15,8 @@ interface CruiseControlProps {
 }
 
 export function CruiseControl({ toast }: CruiseControlProps) {
-  const { data: config, loading: configLoading } = useApi(() => cruiseControlApi.getConfig());
-  const { data: history, loading: historyLoading } = useApi(() => cruiseControlApi.getHistory());
+  const { data: config, loading: configLoading, error: configError, refetch: refetchConfig } = useApi(() => cruiseControlApi.getConfig());
+  const { data: history, loading: historyLoading, error: historyError, refetch: refetchHistory } = useApi(() => cruiseControlApi.getHistory());
   const { data: statusData, refetch: refetchStatus } = useApi(() => cruiseControlApi.getStatus());
 
   const [tab, setTab] = useState<CCTab>('new-music');
@@ -123,7 +124,9 @@ export function CruiseControl({ toast }: CruiseControlProps) {
       {tab === 'personal-discovery' && <PersonalDiscovery toast={toast} />}
 
       {tab === 'new-music' && <>
-        {configLoading ? (
+        {configError ? (
+          <ApiErrorBanner error={configError} onRetry={refetchConfig} />
+        ) : configLoading ? (
           <div className="space-y-3">
             {Array.from({ length: 4 }).map((_, i) => (
               <div key={i} className="h-10 bg-[#1c1c1c] animate-pulse" />
@@ -143,7 +146,11 @@ export function CruiseControl({ toast }: CruiseControlProps) {
           />
         )}
 
-        <CCHistory history={history} loading={historyLoading} />
+        {historyError ? (
+          <ApiErrorBanner error={historyError} onRetry={refetchHistory} />
+        ) : (
+          <CCHistory history={history} loading={historyLoading} />
+        )}
 
         <ConfirmDialog
           open={confirmClear}
