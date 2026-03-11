@@ -8,6 +8,7 @@ IMPORTANT: api_key is never logged.
 import requests
 import logging
 from app import config
+from app.services.api_orchestrator import rate_limiter
 
 logger = logging.getLogger(__name__)
 
@@ -52,13 +53,18 @@ def _get(method: str, extra_params: dict = None) -> dict | None:
     if extra_params:
         params.update(extra_params)
 
+    rate_limiter.acquire("lastfm")
     try:
         resp = requests.get(BASE_URL, params=params, timeout=10)
+        if resp.status_code == 429:
+            rate_limiter.record_429("lastfm")
+            return None
         resp.raise_for_status()
         data = resp.json()
         if "error" in data:
             logger.error("Last.fm API error %s: %s", data.get("error"), data.get("message"))
             return None
+        rate_limiter.record_success("lastfm")
         return data
     except requests.RequestException as e:
         # Log exception type only — str(e) from requests includes the full request

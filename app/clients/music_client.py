@@ -23,12 +23,12 @@ import requests
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from app import config
+from app.services.api_orchestrator import rate_limiter
 
 logger = logging.getLogger(__name__)
 
 _ARTICLES = frozenset({"the", "a", "an"})
 _ITUNES_BASE = "https://itunes.apple.com"
-_ITUNES_RATE_INTERVAL = 3.1   # seconds between iTunes requests (20/min = 1 per 3s, add margin)
 _DEEZER_BASE = "https://api.deezer.com"
 _MB_BASE = "https://musicbrainz.org/ws/2"
 _MB_USER_AGENT = "rythmx/1.0 (https://github.com/snuffomega/rythmx)"
@@ -76,21 +76,20 @@ class Release:
 # iTunes Search API (no auth, 20 req/min)
 # ---------------------------------------------------------------------------
 
-_itunes_last_call: float = 0.0
 _itunes_session = requests.Session()
 _itunes_session.headers["Accept"] = "application/json"
 _itunes_session.headers["User-Agent"] = _MB_USER_AGENT
 
 
 def _itunes_get(path: str, params: dict = None) -> dict | None:
-    global _itunes_last_call
-    elapsed = time.monotonic() - _itunes_last_call
-    if elapsed < _ITUNES_RATE_INTERVAL:
-        time.sleep(_ITUNES_RATE_INTERVAL - elapsed)
-    _itunes_last_call = time.monotonic()
+    rate_limiter.acquire("itunes")
     try:
         resp = _itunes_session.get(f"{_ITUNES_BASE}{path}", params=params, timeout=15)
+        if resp.status_code == 429:
+            rate_limiter.record_429("itunes")
+            return None
         resp.raise_for_status()
+        rate_limiter.record_success("itunes")
         return resp.json()
     except requests.RequestException as e:
         logger.error("iTunes request failed (%s): %s", path, e)
@@ -254,13 +253,18 @@ _deezer_session.headers["Accept"] = "application/json"
 
 
 def _deezer_get(path: str, params: dict = None) -> dict | None:
+    rate_limiter.acquire("deezer")
     try:
         resp = _deezer_session.get(f"{_DEEZER_BASE}{path}", params=params, timeout=10)
+        if resp.status_code == 429:
+            rate_limiter.record_429("deezer")
+            return None
         resp.raise_for_status()
         data = resp.json()
         if "error" in data:
             logger.warning("Deezer API error on %s: %s", path, data["error"])
             return None
+        rate_limiter.record_success("deezer")
         return data
     except requests.RequestException as e:
         logger.error("Deezer request failed (%s): %s", path, e)

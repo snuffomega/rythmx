@@ -21,13 +21,13 @@ external service calls independently.
 """
 import re
 import threading
-import time
 import logging
 import requests
 from concurrent.futures import ThreadPoolExecutor
 
 from app import config
 from app.db import rythmx_store
+from app.services.api_orchestrator import rate_limiter
 
 logger = logging.getLogger(__name__)
 
@@ -36,35 +36,24 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _ITUNES_BASE = "https://itunes.apple.com"
-_IMG_RATE = 1.0  # seconds between image iTunes calls (~60/min)
-_img_lock = threading.Lock()
-_img_last_call = 0.0
 
 # ---------------------------------------------------------------------------
 # Fanart.tv
 # ---------------------------------------------------------------------------
 
 _FANART_BASE = "https://webservice.fanart.tv/v3/music"
-_fanart_lock = threading.Lock()
-_fanart_last_call = 0.0
 
 # ---------------------------------------------------------------------------
-# Deezer (artist photo lookup — free, no auth, 50 req/sec)
+# Deezer (artist photo lookup — free, no auth)
 # ---------------------------------------------------------------------------
 
 _DEEZER_BASE = "https://api.deezer.com"
-_deezer_img_lock = threading.Lock()
-_deezer_img_last_call = 0.0
-_DEEZER_IMG_RATE = 0.2  # 5/sec — well within Deezer's 50/sec limit
 
 # ---------------------------------------------------------------------------
 # MusicBrainz (for MBID lookups when not in artist_identity_cache)
 # ---------------------------------------------------------------------------
 
 _MB_ARTIST_URL = "https://musicbrainz.org/ws/2/artist"
-_MB_RATE = 1.1  # seconds between MB calls (their rate limit is 1/sec)
-_mb_img_lock = threading.Lock()
-_mb_img_last_call = 0.0
 
 # ---------------------------------------------------------------------------
 # Thread pool + in-flight tracking
@@ -86,16 +75,15 @@ _session.headers["User-Agent"] = "Rythmx/1.0 (music discovery tool)"
 # ---------------------------------------------------------------------------
 
 def _itunes_img_get(path: str, params: dict) -> dict | None:
-    """Rate-limited iTunes GET for image lookups only. Thread-safe."""
-    global _img_last_call
-    with _img_lock:
-        elapsed = time.monotonic() - _img_last_call
-        if elapsed < _IMG_RATE:
-            time.sleep(_IMG_RATE - elapsed)
-        _img_last_call = time.monotonic()
+    """Rate-limited iTunes GET for image lookups. Thread-safe via DomainRateLimiter."""
+    rate_limiter.acquire("itunes")
     try:
         resp = _session.get(f"{_ITUNES_BASE}{path}", params=params, timeout=10)
+        if resp.status_code == 429:
+            rate_limiter.record_429("itunes")
+            return None
         resp.raise_for_status()
+        rate_limiter.record_success("itunes")
         return resp.json()
     except requests.RequestException as e:
         logger.debug("Image iTunes request failed: %s", e)
@@ -139,14 +127,9 @@ def _fanart_get_artist(mbid: str) -> str:
     """
     Fetch artist thumbnail from Fanart.tv using a MusicBrainz ID.
     Returns image URL or "" if not found / not configured.
-    Rate-limited and thread-safe.
+    Rate-limited via DomainRateLimiter. Thread-safe.
     """
-    global _fanart_last_call
-    with _fanart_lock:
-        elapsed = time.monotonic() - _fanart_last_call
-        if elapsed < 0.5:
-            time.sleep(0.5 - elapsed)
-        _fanart_last_call = time.monotonic()
+    rate_limiter.acquire("fanart")
     try:
         resp = _session.get(
             f"{_FANART_BASE}/{mbid}",
@@ -174,15 +157,10 @@ def _fanart_get_artist(mbid: str) -> str:
 def _mb_lookup_mbid(artist_name: str) -> str | None:
     """
     Look up a MusicBrainz artist MBID by name.
-    Rate-limited to 1 req/sec (MB policy). Thread-safe.
+    Rate-limited to 1 req/sec (MB policy) via DomainRateLimiter. Thread-safe.
     Result is cached in artist_identity_cache by the caller.
     """
-    global _mb_img_last_call
-    with _mb_img_lock:
-        elapsed = time.monotonic() - _mb_img_last_call
-        if elapsed < _MB_RATE:
-            time.sleep(_MB_RATE - elapsed)
-        _mb_img_last_call = time.monotonic()
+    rate_limiter.acquire("musicbrainz")
     try:
         resp = _session.get(
             _MB_ARTIST_URL,
@@ -212,14 +190,9 @@ def _deezer_get_artist_photo(deezer_id: str) -> str:
     """
     Fetch artist photo URL from Deezer /artist/{id}.
     Returns picture_xl (1000px) or picture_big (500px), or "" if none available.
-    Rate-limited and thread-safe.
+    Rate-limited via DomainRateLimiter. Thread-safe.
     """
-    global _deezer_img_last_call
-    with _deezer_img_lock:
-        elapsed = time.monotonic() - _deezer_img_last_call
-        if elapsed < _DEEZER_IMG_RATE:
-            time.sleep(_DEEZER_IMG_RATE - elapsed)
-        _deezer_img_last_call = time.monotonic()
+    rate_limiter.acquire("deezer")
     try:
         resp = _session.get(f"{_DEEZER_BASE}/artist/{deezer_id}", timeout=10)
         if resp.status_code == 404:
@@ -240,14 +213,9 @@ def _deezer_search_album_art(artist: str, album_title: str) -> str:
     """
     Search Deezer for an album cover by artist + album title.
     Returns cover_xl (1000px) or cover_medium (250px), or "" if not found.
-    Reuses the Deezer rate-limit lock.
+    Rate-limited via DomainRateLimiter. Thread-safe.
     """
-    global _deezer_img_last_call
-    with _deezer_img_lock:
-        elapsed = time.monotonic() - _deezer_img_last_call
-        if elapsed < _DEEZER_IMG_RATE:
-            time.sleep(_DEEZER_IMG_RATE - elapsed)
-        _deezer_img_last_call = time.monotonic()
+    rate_limiter.acquire("deezer")
     try:
         resp = _session.get(
             f"{_DEEZER_BASE}/search/album",
@@ -268,12 +236,7 @@ def _deezer_search_album_art(artist: str, album_title: str) -> str:
 
 def _deezer_search_artist_id(name: str) -> str | None:
     """Search Deezer for an artist by name, return artist ID or None."""
-    global _deezer_img_last_call
-    with _deezer_img_lock:
-        elapsed = time.monotonic() - _deezer_img_last_call
-        if elapsed < _DEEZER_IMG_RATE:
-            time.sleep(_DEEZER_IMG_RATE - elapsed)
-        _deezer_img_last_call = time.monotonic()
+    rate_limiter.acquire("deezer")
     try:
         resp = _session.get(
             f"{_DEEZER_BASE}/search/artist",

@@ -17,6 +17,7 @@ import time
 from datetime import datetime
 from app import config
 from app.db import rythmx_store
+from app.services.api_orchestrator import rate_limiter
 
 logger = logging.getLogger(__name__)
 
@@ -73,8 +74,6 @@ ENRICH_SOURCES = [
 ]
 
 _ITUNES_BASE = "https://itunes.apple.com"
-_ITUNES_RATE_INTERVAL = 3.1  # seconds between calls (20/min limit + margin)
-_itunes_last_call: float = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -105,16 +104,11 @@ def _itunes_search_album(artist_name: str, album_title: str) -> dict | None:
     """
     Query iTunes Search API for a specific album.
     Returns a dict with itunes_album_id and api_title, or None on miss/error.
-    Rate-limited to 20 req/min (3.1s between calls).
+    Rate-limited via shared DomainRateLimiter (20 req/min).
     """
-    global _itunes_last_call
     import requests
 
-    elapsed = time.time() - _itunes_last_call
-    if elapsed < _ITUNES_RATE_INTERVAL:
-        time.sleep(_ITUNES_RATE_INTERVAL - elapsed)
-    _itunes_last_call = time.time()
-
+    rate_limiter.acquire("itunes")
     try:
         resp = requests.get(
             f"{_ITUNES_BASE}/search",
@@ -127,7 +121,11 @@ def _itunes_search_album(artist_name: str, album_title: str) -> dict | None:
             },
             timeout=10,
         )
+        if resp.status_code == 429:
+            rate_limiter.record_429("itunes")
+            return None
         resp.raise_for_status()
+        rate_limiter.record_success("itunes")
         results = resp.json().get("results", [])
     except Exception as e:
         logger.debug("iTunes search failed for '%s / %s': %s", artist_name, album_title, e)
@@ -167,17 +165,22 @@ def _deezer_search_album(artist_name: str, album_title: str) -> dict | None:
     """
     Query Deezer Search API for a specific album.
     Returns a dict with deezer_id and api_title, or None on miss/error.
-    No auth required. Free tier, no enforced rate limit.
+    Rate-limited via shared DomainRateLimiter (50 req/min).
     """
     import requests
 
+    rate_limiter.acquire("deezer")
     try:
         resp = requests.get(
             "https://api.deezer.com/search/album",
             params={"q": f'artist:"{artist_name}" album:"{album_title}"', "limit": 5},
             timeout=10,
         )
+        if resp.status_code == 429:
+            rate_limiter.record_429("deezer")
+            return None
         resp.raise_for_status()
+        rate_limiter.record_success("deezer")
         items = resp.json().get("data", [])
     except Exception as e:
         logger.debug("Deezer search failed for '%s / %s': %s", artist_name, album_title, e)
