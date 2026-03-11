@@ -19,7 +19,12 @@ def _connect():
 
 
 def _migrate_add_column(table: str, column: str, col_type: str):
-    """Add a column to an existing table if it doesn't already exist. No-op otherwise."""
+    """Add a column to an existing table if it doesn't already exist. No-op otherwise.
+
+    SQLite PRAGMA and ALTER TABLE do not support bound parameters — f-strings are
+    required here. All callers pass hardcoded string literals; no user input reaches
+    this function. Safe by construction.
+    """
     try:
         with _connect() as conn:
             cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
