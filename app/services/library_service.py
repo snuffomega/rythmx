@@ -469,8 +469,8 @@ def enrich_spotify(batch_size: int = 20) -> dict:
 
         try:
             # --- Search for artist ---
-            from app.clients.music_client import _spotify_rate_limit, norm
-            _spotify_rate_limit()
+            from app.clients.music_client import norm
+            rate_limiter.acquire("spotify")
             results = sp.search(q=f'artist:"{artist_name}"', type="artist", limit=5)
             items = results.get("artists", {}).get("items", [])
             if not items:
@@ -485,11 +485,11 @@ def enrich_spotify(batch_size: int = 20) -> dict:
             spotify_artist_id = match["id"]
 
             # --- Fetch full artist object (genres, popularity, images) ---
-            _spotify_rate_limit()
+            rate_limiter.acquire("spotify")
             artist_data = sp.artist(spotify_artist_id)
 
             # --- Fetch appears_on albums ---
-            _spotify_rate_limit()
+            rate_limiter.acquire("spotify")
             appears_on_data = sp.artist_albums(
                 spotify_artist_id, include_groups="appears_on", limit=20
             )
