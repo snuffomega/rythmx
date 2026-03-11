@@ -144,10 +144,13 @@ def create_app() -> Flask:
 
     scheduler.start()
 
-    # Trigger library pipeline on startup if the library has never been synced.
-    # On subsequent starts the scheduler handles the interval check.
+    # Trigger library pipeline on startup if:
+    #   (a) library has never been synced / is empty, OR
+    #   (b) the configured sync interval has already elapsed (avoids waiting up to 1h for
+    #       the scheduler's first tick when the app restarts after a long pause).
     try:
-        _last_synced = rythmx_store.get_setting("library_last_synced")
+        from app.runners.scheduler import _should_library_sync as _check_lib_sync
+        _startup_settings = rythmx_store.get_all_settings()
         _lib_empty = False
         try:
             from app.db.rythmx_store import _connect as _rc
@@ -155,7 +158,7 @@ def create_app() -> Flask:
                 _lib_empty = _c.execute("SELECT COUNT(*) FROM lib_artists").fetchone()[0] == 0
         except Exception:
             pass
-        if not _last_synced or _lib_empty:
+        if _lib_empty or _check_lib_sync(_startup_settings):
             import threading as _threading
             from app.services import library_service as _lib_svc
             _threading.Thread(
@@ -163,7 +166,7 @@ def create_app() -> Flask:
                 daemon=True,
                 name="lib-pipeline-startup",
             ).start()
-            logger.info("Library auto-pipeline triggered on startup (first run or empty library)")
+            logger.info("Library auto-pipeline triggered on startup")
     except Exception as _e:
         logger.warning("Startup library sync check failed (non-fatal): %s", _e)
 
