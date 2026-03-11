@@ -10,10 +10,10 @@ The SoulSync backend does not use this service (it manages its own DB).
 The enrich stage is resumable: only processes albums where itunes_album_id IS NULL
 AND deezer_id IS NULL, so interrupted runs pick up where they left off.
 """
+import concurrent.futures
 import logging
 import re
 import sqlite3
-import time
 from datetime import datetime
 from app import config
 from app.db import rythmx_store
@@ -818,23 +818,20 @@ def get_status() -> dict:
 
 _DEEZER_ALBUM_URL = "https://api.deezer.com/album/{album_id}/tracks"
 _DEEZER_TRACK_URL = "https://api.deezer.com/track/{track_id}"
-_DEEZER_BPM_RATE_INTERVAL = 1.2   # seconds between calls (~50/min, conservative)
-_deezer_bpm_last_call: float = 0.0
 
 
 def _deezer_rate_limited_get(url: str) -> dict | None:
-    """Single rate-limited GET to Deezer. Returns parsed JSON or None on error."""
-    global _deezer_bpm_last_call
+    """Single rate-limited GET to Deezer via shared DomainRateLimiter. Returns parsed JSON or None."""
     import requests
 
-    elapsed = time.time() - _deezer_bpm_last_call
-    if elapsed < _DEEZER_BPM_RATE_INTERVAL:
-        time.sleep(_DEEZER_BPM_RATE_INTERVAL - elapsed)
-    _deezer_bpm_last_call = time.time()
-
+    rate_limiter.acquire("deezer")
     try:
         resp = requests.get(url, timeout=10)
+        if resp.status_code == 429:
+            rate_limiter.record_429("deezer")
+            return None
         resp.raise_for_status()
+        rate_limiter.record_success("deezer")
         return resp.json()
     except Exception as e:
         logger.debug("Deezer request failed for %s: %s", url, e)
@@ -991,6 +988,135 @@ def enrich_deezer_bpm(batch_size: int = 30) -> dict:
         "skipped": skipped,
         "remaining": len(rows),
     }
+
+
+# ---------------------------------------------------------------------------
+# Auto-pipeline
+# ---------------------------------------------------------------------------
+
+_pipeline_running = False
+
+
+def run_auto_pipeline() -> dict:
+    """
+    Full automated library pipeline: sync → enrich IDs → tags + bonus Spotify → BPM.
+
+    Phase 1  — sync_library() (uncapped — always full library scan)
+    Phase 1b — loop enrich_library(50) until remaining=0 or lib_enrich_ids_batch processed
+    Phase 2a — enrich_lastfm_tags() always-on              } parallel via
+    Phase 2b — enrich_spotify()     bonus only              } ThreadPoolExecutor
+    Phase 3  — enrich_deezer_bpm()  capped at lib_enrich_bpm_batch tracks per run
+
+    Artist enrichment chain: iTunes (Phase 1) → Deezer fallback (Phase 1) → Last.fm (Phase 2a).
+    Spotify IDs are a bonus — nothing in the core pipeline depends on them.
+
+    All stages are resumable via enrichment_meta. Interrupted runs pick up exactly where
+    they left off on the next scheduled run. Returns a summary dict.
+    """
+    global _pipeline_running
+    if _pipeline_running:
+        logger.info("run_auto_pipeline: already running — skipping")
+        return {"status": "skipped", "reason": "already_running"}
+
+    _pipeline_running = True
+    logger.info("run_auto_pipeline: starting")
+    result: dict = {"status": "ok"}
+
+    try:
+        settings = rythmx_store.get_all_settings()
+
+        def _bool(key: str, default: bool = True) -> bool:
+            v = settings.get(key)
+            if v is None:
+                return default
+            return str(v).lower() not in ("false", "0", "no")
+
+        def _int(key: str, default: int) -> int:
+            try:
+                return int(settings.get(key, default))
+            except (TypeError, ValueError):
+                return default
+
+        # ---- Phase 1: Full library sync (uncapped) ----
+        sync_result = sync_library()
+        result["sync"] = sync_result
+        logger.info(
+            "run_auto_pipeline: sync complete — artists=%d albums=%d tracks=%d",
+            sync_result.get("artist_count", 0),
+            sync_result.get("album_count", 0),
+            sync_result.get("track_count", 0),
+        )
+
+        # ---- Phase 1b: ID enrichment loop (trickle-capped per run) ----
+        if _bool("lib_enrich_ids"):
+            batch_size = 50
+            per_run_cap = _int("lib_enrich_ids_batch", 500)
+            processed_this_run = 0
+            total_enriched = 0
+            total_failed = 0
+            remaining = -1
+            while processed_this_run < per_run_cap:
+                r = enrich_library(batch_size=min(batch_size, per_run_cap - processed_this_run))
+                batch_processed = r.get("enriched", 0) + r.get("skipped", 0) + r.get("failed", 0)
+                total_enriched += r.get("enriched", 0)
+                total_failed += r.get("failed", 0)
+                remaining = r.get("remaining", 0)
+                if batch_processed == 0:
+                    break  # nothing fetched — all done or all excluded by enrichment_meta
+                processed_this_run += batch_processed
+            result["enrich_ids"] = {
+                "enriched": total_enriched,
+                "failed": total_failed,
+                "processed_this_run": processed_this_run,
+                "remaining": remaining,
+            }
+            logger.info(
+                "run_auto_pipeline: ID enrichment — enriched=%d failed=%d processed=%d remaining=%d",
+                total_enriched, total_failed, processed_this_run, remaining,
+            )
+
+        # ---- Phase 2: Last.fm tags (always-on) + bonus Spotify (parallel) ----
+        phase2_tasks: dict[str, concurrent.futures.Future] = {}
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix="lib-enrich"
+        ) as pool:
+            if _bool("lib_enrich_lastfm"):
+                lastfm_batch = _int("lib_enrich_lastfm_batch", 100)
+                phase2_tasks["lastfm"] = pool.submit(enrich_lastfm_tags, lastfm_batch)
+            if _bool("lib_enrich_spotify"):
+                spotify_batch = _int("lib_enrich_spotify_batch", 50)
+                phase2_tasks["spotify"] = pool.submit(enrich_spotify, spotify_batch)
+
+        for key, future in phase2_tasks.items():
+            try:
+                result[f"enrich_{key}"] = future.result()
+            except Exception as e:
+                logger.warning("run_auto_pipeline: phase 2 %s raised: %s", key, e)
+                result[f"enrich_{key}"] = {"status": "error", "error": str(e)}
+
+        # ---- Phase 3: Deezer BPM (requires deezer_id from Phase 1) ----
+        if _bool("lib_enrich_bpm"):
+            bpm_batch = _int("lib_enrich_bpm_batch", 200)
+            bpm_result = enrich_deezer_bpm(batch_size=bpm_batch)
+            result["enrich_bpm"] = bpm_result
+            logger.info(
+                "run_auto_pipeline: BPM — tracks=%d albums=%d failed=%d",
+                bpm_result.get("enriched_tracks", 0),
+                bpm_result.get("enriched_albums", 0),
+                bpm_result.get("failed", 0),
+            )
+
+        rythmx_store.set_setting("library_last_synced", datetime.utcnow().isoformat())
+        logger.info("run_auto_pipeline: complete")
+
+    except Exception as e:
+        logger.exception("run_auto_pipeline: unhandled error: %s", e)
+        result["status"] = "error"
+        result["error"] = str(e)
+    finally:
+        _pipeline_running = False
+
+    return result
 
 
 def get_deezer_bpm_status() -> dict:

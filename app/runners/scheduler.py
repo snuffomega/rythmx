@@ -633,6 +633,28 @@ def _should_run_cc(settings: dict) -> bool:
     return (now - last).total_seconds() >= cycle_hours * 3600
 
 
+def _should_library_sync(settings: dict) -> bool:
+    """
+    Return True if it's time to run the library auto-pipeline.
+    Checks: lib_auto_sync enabled, interval elapsed, not already running.
+    """
+    from app.services.library_service import _pipeline_running
+    if _pipeline_running:
+        return False
+    auto_sync = settings.get("lib_auto_sync")
+    if auto_sync is not None and str(auto_sync).lower() in ("false", "0", "no"):
+        return False
+    last_synced = settings.get("library_last_synced")
+    if not last_synced:
+        return True  # never synced
+    try:
+        interval_hours = int(settings.get("lib_sync_interval_hours", 24))
+        last = datetime.fromisoformat(last_synced)
+        return (datetime.utcnow() - last).total_seconds() >= interval_hours * 3600
+    except (TypeError, ValueError):
+        return True
+
+
 def _loop():
     """Background loop — checks every hour whether a CC cycle should run."""
     while not _stop_event.is_set():
@@ -651,6 +673,18 @@ def _loop():
                 run_cycle(run_mode=mode, force_refresh=force)
                 rythmx_store.set_setting("last_run", datetime.now().isoformat())
                 ran_cc = True
+            # Library auto-pipeline — runs independently of CC cycle
+            if _should_library_sync(settings):
+                try:
+                    from app.services import library_service
+                    threading.Thread(
+                        target=library_service.run_auto_pipeline,
+                        daemon=True,
+                        name="lib-pipeline",
+                    ).start()
+                    logger.info("Library auto-pipeline triggered by scheduler")
+                except Exception as e:
+                    logger.warning("Library auto-pipeline launch failed: %s", e)
         # Run acquisition worker every loop regardless of whether CC ran
         try:
             from app.services import acquisition
