@@ -18,7 +18,7 @@ _STAGE_MAP = {
 }
 
 
-@new_music_bp.route("/api/cruise-control/status")
+@new_music_bp.route("/cruise-control/status")
 def get_new_music_status():
     raw = scheduler.get_status()
     is_running = raw.get("is_running", False)
@@ -54,7 +54,7 @@ def get_new_music_status():
 
 
 
-@new_music_bp.route("/api/cruise-control/config", methods=["GET"])
+@new_music_bp.route("/cruise-control/config", methods=["GET"])
 def get_new_music_config():
     raw = rythmx_store.get_all_settings()
     bool_keys = {"enabled", "auto_push_playlist", "dry_run", "include_features"}
@@ -106,7 +106,7 @@ def get_new_music_config():
 
 
 
-@new_music_bp.route("/api/cruise-control/config", methods=["POST"])
+@new_music_bp.route("/cruise-control/config", methods=["POST"])
 def save_new_music_config():
     data = request.get_json(silent=True) or {}
     allowed_keys = {
@@ -125,7 +125,7 @@ def save_new_music_config():
 
 
 
-@new_music_bp.route("/api/cruise-control/run-now", methods=["POST"])
+@new_music_bp.route("/cruise-control/run-now", methods=["POST"])
 def run_cycle_now():
     if scheduler.get_status()["is_running"]:
         return jsonify({"status": "error", "message": "A cycle is already running"}), 409
@@ -146,7 +146,7 @@ def run_cycle_now():
 
 
 
-@new_music_bp.route("/api/cruise-control/history")
+@new_music_bp.route("/cruise-control/history")
 def get_cycle_history():
     limit = min(int(request.args.get("limit", 100)), 500)
     rows = rythmx_store.get_history(limit=limit)
@@ -164,7 +164,7 @@ def get_cycle_history():
 
 
 
-@new_music_bp.route("/api/release-cache/clear", methods=["POST"])
+@new_music_bp.route("/release-cache/clear", methods=["POST"])
 def release_cache_clear():
     rythmx_store.clear_release_cache()
     return jsonify({"status": "ok", "message": "release cache cleared"})

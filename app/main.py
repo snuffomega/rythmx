@@ -108,7 +108,7 @@ def create_app() -> Flask:
 
     for bp in (dash_bp, new_music_bp, acquisition_bp, playlists_bp,
                stats_bp, settings_bp, images_bp, personal_discovery_bp):
-        app.register_blueprint(bp)
+        app.register_blueprint(bp, url_prefix="/api/v1")
 
     # -------------------------------------------------------------------------
     # Health check

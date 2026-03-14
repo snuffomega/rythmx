@@ -24,7 +24,7 @@ import type {
   PersonalDiscoveryResult,
 } from '../types';
 
-const BASE_URL = '/api';
+const BASE_URL = '/api/v1';
 
 // Thrown when the backend returns { status: 'error', error/message: '...' }.
 // Catch blocks can use `instanceof ApiError` to distinguish API vs network errors.

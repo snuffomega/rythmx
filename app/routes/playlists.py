@@ -94,13 +94,13 @@ def _shape_imported_tracks(result: dict) -> list[dict]:
     ]
 
 
-@playlists_bp.route("/api/playlists", methods=["GET"])
+@playlists_bp.route("/playlists", methods=["GET"])
 def playlists_list():
     playlists = rythmx_store.list_playlists()
     return jsonify({"status": "ok", "playlists": playlists})
 
 
-@playlists_bp.route("/api/playlists", methods=["POST"])
+@playlists_bp.route("/playlists", methods=["POST"])
 def playlists_create():
     data = request.get_json(silent=True) or {}
     name = (data.get("name") or "").strip()
@@ -150,13 +150,13 @@ def playlists_create():
                     "track_count": track_count, "owned_count": owned_count})
 
 
-@playlists_bp.route("/api/playlists/<path:name>", methods=["DELETE"])
+@playlists_bp.route("/playlists/<path:name>", methods=["DELETE"])
 def playlists_delete(name):
     rythmx_store.delete_playlist(name)
     return jsonify({"status": "ok"})
 
 
-@playlists_bp.route("/api/playlists/<path:name>/tracks", methods=["GET"])
+@playlists_bp.route("/playlists/<path:name>/tracks", methods=["GET"])
 def playlists_tracks(name):
     rows = rythmx_store.get_playlist(playlist_name=name)
     tracks = [
@@ -181,7 +181,7 @@ def playlists_tracks(name):
     return jsonify({"status": "ok", "tracks": tracks})
 
 
-@playlists_bp.route("/api/playlists/<path:name>", methods=["PATCH"])
+@playlists_bp.route("/playlists/<path:name>", methods=["PATCH"])
 def playlists_update(name):
     """Update playlist metadata (auto_sync, mode, max_tracks, source_url, new_name)."""
     data = request.get_json(silent=True) or {}
@@ -199,14 +199,14 @@ def playlists_update(name):
     return jsonify({"status": "ok"})
 
 
-@playlists_bp.route("/api/playlists/<path:name>/tracks/<int:row_id>", methods=["DELETE"])
+@playlists_bp.route("/playlists/<path:name>/tracks/<int:row_id>", methods=["DELETE"])
 def playlists_remove_track(name, row_id):
     """Remove a single track row from a playlist by playlist_tracks.id."""
     rythmx_store.remove_playlist_row(row_id)
     return jsonify({"status": "ok"})
 
 
-@playlists_bp.route("/api/playlists/<path:name>/build", methods=["POST"])
+@playlists_bp.route("/playlists/<path:name>/build", methods=["POST"])
 def playlists_build(name):
     if not rythmx_store.get_playlist_meta(name):
         rythmx_store.create_playlist_meta(name, source="taste")
@@ -219,7 +219,7 @@ def playlists_build(name):
         return jsonify({"status": "error", "message": "Playlist build failed"}), 500
 
 
-@playlists_bp.route("/api/playlists/<path:name>/rebuild", methods=["POST"])
+@playlists_bp.route("/playlists/<path:name>/rebuild", methods=["POST"])
 def playlists_rebuild(name):
     """Alias for /build — rebuild a taste-based playlist."""
     if not rythmx_store.get_playlist_meta(name):
@@ -248,7 +248,7 @@ def _sync_external(name: str, req_data: dict) -> tuple:
     return result, None, None
 
 
-@playlists_bp.route("/api/playlists/<path:name>/import", methods=["POST"])
+@playlists_bp.route("/playlists/<path:name>/import", methods=["POST"])
 def playlists_import(name):
     result, err_resp, err_code = _sync_external(name, request.get_json(silent=True) or {})
     if err_resp:
@@ -257,7 +257,7 @@ def playlists_import(name):
                     "owned_count": result["owned_count"]})
 
 
-@playlists_bp.route("/api/playlists/<path:name>/sync", methods=["POST"])
+@playlists_bp.route("/playlists/<path:name>/sync", methods=["POST"])
 def playlists_sync(name):
     """Alias for /import — re-import playlist from external source."""
     result, err_resp, err_code = _sync_external(name, request.get_json(silent=True) or {})
@@ -267,7 +267,7 @@ def playlists_sync(name):
                     "owned_count": result["owned_count"]})
 
 
-@playlists_bp.route("/api/playlists/<path:name>/publish", methods=["POST"])
+@playlists_bp.route("/playlists/<path:name>/publish", methods=["POST"])
 def playlists_publish(name):
     tracks = rythmx_store.get_playlist(playlist_name=name)
     rating_keys = [t["track_id"] for t in tracks if t.get("track_id") and t.get("is_owned", 1)]
@@ -280,7 +280,7 @@ def playlists_publish(name):
     return jsonify({"status": "error", "message": "Plex push failed — check logs"}), 500
 
 
-@playlists_bp.route("/api/playlists/<path:name>/export", methods=["POST"])
+@playlists_bp.route("/playlists/<path:name>/export", methods=["POST"])
 def playlists_export(name):
     tracks = rythmx_store.get_playlist(playlist_name=name)
     if not tracks:
@@ -295,7 +295,7 @@ def playlists_export(name):
                     "filename": f"{safe_name}.m3u"})
 
 
-@playlists_bp.route("/api/playlists/<path:name>/settings", methods=["POST"])
+@playlists_bp.route("/playlists/<path:name>/settings", methods=["POST"])
 def playlists_settings(name):
     """Update auto_sync / mode for a playlist."""
     data = request.get_json(silent=True) or {}

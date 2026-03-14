@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 dash_bp = Blueprint("dash", __name__)
 
 
-@dash_bp.route("/api/discovery/candidates")
+@dash_bp.route("/discovery/candidates")
 def discovery_candidates():
     from app.db import get_library_reader
     from app.services import engine
@@ -24,13 +24,13 @@ def discovery_candidates():
     return jsonify({"status": "ok", "candidates": scored})
 
 
-@dash_bp.route("/api/discovery/playlist", methods=["GET"])
+@dash_bp.route("/discovery/playlist", methods=["GET"])
 def discovery_playlist():
     tracks = rythmx_store.get_playlist()
     return jsonify({"status": "ok", "playlist": tracks})
 
 
-@dash_bp.route("/api/discovery/playlist", methods=["POST"])
+@dash_bp.route("/discovery/playlist", methods=["POST"])
 def discovery_playlist_add():
     data = request.get_json(silent=True) or {}
     if not data.get("track_id") and not data.get("spotify_track_id"):
@@ -39,13 +39,13 @@ def discovery_playlist_add():
     return jsonify({"status": "ok"})
 
 
-@dash_bp.route("/api/discovery/playlist/<path:track_id>", methods=["DELETE"])
+@dash_bp.route("/discovery/playlist/<path:track_id>", methods=["DELETE"])
 def discovery_playlist_remove(track_id):
     rythmx_store.remove_from_playlist(track_id)
     return jsonify({"status": "ok"})
 
 
-@dash_bp.route("/api/discovery/download", methods=["POST"])
+@dash_bp.route("/discovery/download", methods=["POST"])
 def discovery_download():
     data = request.get_json(silent=True) or {}
     track = {
@@ -60,7 +60,7 @@ def discovery_download():
     return jsonify(result)
 
 
-@dash_bp.route("/api/discovery/publish", methods=["POST"])
+@dash_bp.route("/discovery/publish", methods=["POST"])
 def discovery_publish():
     tracks = rythmx_store.get_playlist()
     rating_keys = [t["track_id"] for t in tracks if t.get("track_id")]
@@ -74,7 +74,7 @@ def discovery_publish():
     return jsonify({"status": "error", "message": "Plex push failed — check logs"}), 500
 
 
-@dash_bp.route("/api/discovery/export", methods=["POST"])
+@dash_bp.route("/discovery/export", methods=["POST"])
 def discovery_export():
     tracks = rythmx_store.get_playlist()
     if not tracks:

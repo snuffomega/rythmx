@@ -35,7 +35,7 @@ export function useImage(
     }
 
     const fetchImage = (attempt = 0) => {
-      fetch('/api/images/resolve', {
+      fetch('/api/v1/images/resolve', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type, name: safeName, artist: safeArtist }),

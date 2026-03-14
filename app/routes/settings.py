@@ -46,7 +46,7 @@ def _spawn_sync_thread() -> None:
         _sync_thread.start()
 
 
-@settings_bp.route("/api/settings", methods=["GET"])
+@settings_bp.route("/settings", methods=["GET"])
 def settings_get():
     from app.db import get_library_reader
     lr = get_library_reader()
@@ -67,7 +67,7 @@ def settings_get():
     })
 
 
-@settings_bp.route("/api/settings/test-lastfm", methods=["POST"])
+@settings_bp.route("/settings/test-lastfm", methods=["POST"])
 def settings_test_lastfm():
     result = last_fm_client.test_connection()
     ok = result.get("status") == "ok"
@@ -75,14 +75,14 @@ def settings_test_lastfm():
     return jsonify({"connected": ok, "message": msg})
 
 
-@settings_bp.route("/api/settings/test-plex", methods=["POST"])
+@settings_bp.route("/settings/test-plex", methods=["POST"])
 def settings_test_plex():
     result = plex_push.test_connection()
     ok = result.get("status") == "ok"
     return jsonify({"connected": ok, "message": result.get("message") if not ok else None})
 
 
-@settings_bp.route("/api/settings/test-soulsync", methods=["POST"])
+@settings_bp.route("/settings/test-soulsync", methods=["POST"])
 def settings_test_soulsync():
     active_backend = rythmx_store.get_setting("library_backend") or "soulsync"
 
@@ -123,7 +123,7 @@ def settings_test_soulsync():
     return jsonify({"connected": ok, "message": msg})
 
 
-@settings_bp.route("/api/settings/test-spotify", methods=["POST"])
+@settings_bp.route("/settings/test-spotify", methods=["POST"])
 def settings_test_spotify():
     if not config.SPOTIFY_CLIENT_ID or not config.SPOTIFY_CLIENT_SECRET:
         return jsonify({"connected": False,
@@ -141,7 +141,7 @@ def settings_test_spotify():
         return jsonify({"connected": False, "message": str(e)})
 
 
-@settings_bp.route("/api/settings/test-fanart", methods=["POST"])
+@settings_bp.route("/settings/test-fanart", methods=["POST"])
 def settings_test_fanart():
     if not config.FANART_API_KEY:
         return jsonify({"connected": False, "message": "FANART_API_KEY not set — add to .env"})
@@ -161,14 +161,14 @@ def settings_test_fanart():
         return jsonify({"connected": False, "message": str(e)})
 
 
-@settings_bp.route("/api/library/status", methods=["GET"])
+@settings_bp.route("/library/status", methods=["GET"])
 def library_status():
     from app.services import library_service
     status = library_service.get_status()
     return jsonify({"status": "ok", **status})
 
 
-@settings_bp.route("/api/library/sync", methods=["POST"])
+@settings_bp.route("/library/sync", methods=["POST"])
 def library_sync():
     from app.db import get_library_reader
     try:
@@ -186,7 +186,7 @@ def library_sync():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-@settings_bp.route("/api/library/enrich-status", methods=["GET"])
+@settings_bp.route("/library/enrich-status", methods=["GET"])
 def library_enrich_status():
     from app.services import library_service
     global _enrich_thread
@@ -195,7 +195,7 @@ def library_enrich_status():
     return jsonify({"status": "ok", "enrich_running": running, **status})
 
 
-@settings_bp.route("/api/library/enrich", methods=["POST"])
+@settings_bp.route("/library/enrich", methods=["POST"])
 def library_enrich():
     global _enrich_thread
     with _enrich_lock:
@@ -219,7 +219,7 @@ def library_enrich():
     return jsonify({"status": "ok", "message": "Enrich started"}), 202
 
 
-@settings_bp.route("/api/library/spotify-status", methods=["GET"])
+@settings_bp.route("/library/spotify-status", methods=["GET"])
 def library_spotify_status():
     from app.services import library_service
     global _spotify_enrich_thread
@@ -228,7 +228,7 @@ def library_spotify_status():
     return jsonify({"status": "ok", "enrich_running": running, **status})
 
 
-@settings_bp.route("/api/library/enrich-spotify", methods=["POST"])
+@settings_bp.route("/library/enrich-spotify", methods=["POST"])
 def library_enrich_spotify():
     global _spotify_enrich_thread
     with _spotify_enrich_lock:
@@ -254,7 +254,7 @@ def library_enrich_spotify():
     return jsonify({"status": "ok", "message": "Spotify enrich started"}), 202
 
 
-@settings_bp.route("/api/library/lastfm-tags-status", methods=["GET"])
+@settings_bp.route("/library/lastfm-tags-status", methods=["GET"])
 def library_lastfm_tags_status():
     from app.services import library_service
     global _lastfm_tags_thread
@@ -263,7 +263,7 @@ def library_lastfm_tags_status():
     return jsonify({"status": "ok", "enrich_running": running, **status})
 
 
-@settings_bp.route("/api/library/enrich-lastfm-tags", methods=["POST"])
+@settings_bp.route("/library/enrich-lastfm-tags", methods=["POST"])
 def library_enrich_lastfm_tags():
     global _lastfm_tags_thread
     with _lastfm_tags_lock:
@@ -289,7 +289,7 @@ def library_enrich_lastfm_tags():
     return jsonify({"status": "ok", "message": "Last.fm tag enrich started"}), 202
 
 
-@settings_bp.route("/api/library/deezer-bpm-status", methods=["GET"])
+@settings_bp.route("/library/deezer-bpm-status", methods=["GET"])
 def library_deezer_bpm_status():
     from app.services import library_service
     global _deezer_bpm_thread
@@ -298,7 +298,7 @@ def library_deezer_bpm_status():
     return jsonify({"status": "ok", "enrich_running": running, **status})
 
 
-@settings_bp.route("/api/library/enrich-deezer-bpm", methods=["POST"])
+@settings_bp.route("/library/enrich-deezer-bpm", methods=["POST"])
 def library_enrich_deezer_bpm():
     global _deezer_bpm_thread
     with _deezer_bpm_lock:
@@ -324,7 +324,7 @@ def library_enrich_deezer_bpm():
     return jsonify({"status": "ok", "message": "Deezer BPM enrich started"}), 202
 
 
-@settings_bp.route("/api/settings/library-backend", methods=["POST"])
+@settings_bp.route("/settings/library-backend", methods=["POST"])
 def settings_set_library_backend():
     data = request.get_json(silent=True) or {}
     backend = data.get("backend", "").lower()
@@ -352,19 +352,19 @@ def settings_set_library_backend():
     return jsonify({"status": "ok", "backend": backend, "auto_sync_started": auto_sync_started})
 
 
-@settings_bp.route("/api/settings/clear-history", methods=["POST"])
+@settings_bp.route("/settings/clear-history", methods=["POST"])
 def settings_clear_history():
     rythmx_store.clear_history()
     return jsonify({"status": "ok"})
 
 
-@settings_bp.route("/api/settings/reset-db", methods=["POST"])
+@settings_bp.route("/settings/reset-db", methods=["POST"])
 def settings_reset_db():
     rythmx_store.reset_db()
     return jsonify({"status": "ok"})
 
 
-@settings_bp.route("/api/settings/clear-image-cache", methods=["POST"])
+@settings_bp.route("/settings/clear-image-cache", methods=["POST"])
 def settings_clear_image_cache():
     rythmx_store.clear_image_cache()
     return jsonify({"status": "ok", "message": "Image cache cleared"})

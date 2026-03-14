@@ -3,7 +3,7 @@ from flask import Blueprint, jsonify, request
 images_bp = Blueprint("images", __name__)
 
 
-@images_bp.route("/api/images/resolve", methods=["POST"])
+@images_bp.route("/images/resolve", methods=["POST"])
 def images_resolve():
     from app.services import image_service
     body = request.get_json(silent=True) or {}
@@ -16,7 +16,7 @@ def images_resolve():
     return jsonify({"image_url": url, "pending": pending})
 
 
-@images_bp.route("/api/images/warm-cache", methods=["POST"])
+@images_bp.route("/images/warm-cache", methods=["POST"])
 def warm_cache():
     from app.services import image_service
     data = request.get_json(silent=True) or {}

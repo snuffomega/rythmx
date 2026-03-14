@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 acquisition_bp = Blueprint("acquisition", __name__)
 
 
-@acquisition_bp.route("/api/acquisition/queue", methods=["GET"])
+@acquisition_bp.route("/acquisition/queue", methods=["GET"])
 def acquisition_queue_get():
     status = request.args.get("status")
     playlist = request.args.get("playlist")
@@ -28,7 +28,7 @@ def acquisition_queue_get():
     return jsonify({"status": "ok", "items": items})
 
 
-@acquisition_bp.route("/api/acquisition/queue", methods=["POST"])
+@acquisition_bp.route("/acquisition/queue", methods=["POST"])
 def acquisition_queue_add():
     data = request.get_json() or {}
     artist = data.get("artist_name", "").strip()
@@ -45,13 +45,13 @@ def acquisition_queue_add():
     return jsonify({"status": "ok", "queue_id": queue_id})
 
 
-@acquisition_bp.route("/api/acquisition/stats", methods=["GET"])
+@acquisition_bp.route("/acquisition/stats", methods=["GET"])
 def acquisition_stats():
     stats = rythmx_store.get_queue_stats()
     return jsonify({"status": "ok", **stats})
 
 
-@acquisition_bp.route("/api/acquisition/check-now", methods=["POST"])
+@acquisition_bp.route("/acquisition/check-now", methods=["POST"])
 def acquisition_check_now():
     """Trigger the acquisition worker immediately (re-check submitted items)."""
     try:

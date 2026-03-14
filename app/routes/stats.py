@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 stats_bp = Blueprint("stats", __name__)
 
 
-@stats_bp.route("/api/stats/top-artists")
+@stats_bp.route("/stats/top-artists")
 def stats_top_artists():
     period = request.args.get("period", "6month")
     limit = min(int(request.args.get("limit", 50)), 200)
@@ -16,7 +16,7 @@ def stats_top_artists():
     return jsonify({"status": "ok", "artists": ranked, "period": period})
 
 
-@stats_bp.route("/api/stats/top-tracks")
+@stats_bp.route("/stats/top-tracks")
 def stats_top_tracks():
     period = request.args.get("period", "6month")
     limit = min(int(request.args.get("limit", 50)), 200)
@@ -24,7 +24,7 @@ def stats_top_tracks():
     return jsonify({"status": "ok", "tracks": tracks, "period": period})
 
 
-@stats_bp.route("/api/stats/top-albums")
+@stats_bp.route("/stats/top-albums")
 def stats_top_albums():
     period = request.args.get("period", "6month")
     limit = min(int(request.args.get("limit", 50)), 200)
@@ -32,13 +32,13 @@ def stats_top_albums():
     return jsonify({"status": "ok", "albums": albums, "period": period})
 
 
-@stats_bp.route("/api/stats/summary")
+@stats_bp.route("/stats/summary")
 def stats_summary():
     summary = rythmx_store.get_history_summary()
     return jsonify({"status": "ok", "summary": summary})
 
 
-@stats_bp.route("/api/stats/loved-artists")
+@stats_bp.route("/stats/loved-artists")
 def stats_loved_artists():
     loved = last_fm_client.get_loved_artist_names()
     artists = [{"name": name} for name in sorted(loved)]
