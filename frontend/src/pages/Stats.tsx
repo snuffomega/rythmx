@@ -111,7 +111,10 @@ function StatsModal({ open, onClose, contentType, period }: StatsModalProps) {
 
   if (!open) return null;
 
-  const items = data ? normalizeItems(data, contentType) : [];
+  const items = !data ? [] :
+    contentType === 'artists' ? normalizeItems(data as Artist[], 'artists') :
+    contentType === 'albums'  ? normalizeItems(data as TopAlbum[], 'albums') :
+                                normalizeItems(data as Track[], 'tracks');
   const label = CONTENT_TYPES.find(c => c.key === contentType)?.label ?? '';
 
   return (
@@ -216,7 +219,10 @@ export function Stats() {
     setOverlays(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
-  const items = data ? normalizeItems(data, contentType) : [];
+  const items = !data ? [] :
+    contentType === 'artists' ? normalizeItems(data as Artist[], 'artists') :
+    contentType === 'albums'  ? normalizeItems(data as TopAlbum[], 'albums') :
+                                normalizeItems(data as Track[], 'tracks');
 
   return (
     <div className="py-8 space-y-6">

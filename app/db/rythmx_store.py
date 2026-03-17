@@ -178,6 +178,32 @@ def init_db():
     logger.info("rythmx.db initialized at %s", config.RYTHMX_DB)
 
 
+# --- API Key ---
+
+def get_api_key() -> str | None:
+    """Return the active API key, or None if not yet generated."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT key FROM api_keys ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        return row["key"] if row else None
+
+
+def _set_api_key(key: str) -> None:
+    """Replace the active API key (internal — callers use generate_new_api_key)."""
+    with _connect() as conn:
+        conn.execute("DELETE FROM api_keys")
+        conn.execute("INSERT INTO api_keys (key) VALUES (?)", (key,))
+
+
+def generate_new_api_key() -> str:
+    """Generate a cryptographically random 64-char hex API key, persist it, and return it."""
+    import secrets
+    key = secrets.token_hex(32)
+    _set_api_key(key)
+    return key
+
+
 # --- Image Cache ---
 
 def get_image_cache(entity_type: str, entity_key: str) -> str | None:

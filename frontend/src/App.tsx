@@ -8,6 +8,7 @@ import { Stats } from './pages/Stats';
 import { SettingsPage } from './pages/Settings';
 import { ToastContainer } from './components/ToastContainer';
 import { useToast } from './hooks/useToast';
+import { initApiKey } from './services/api';
 
 type Page = 'discovery' | 'cruise-control' | 'playlists' | 'activity' | 'stats' | 'settings';
 
@@ -27,6 +28,10 @@ export default function App() {
   const sidebarRef = useRef<HTMLDivElement>(null);
 
   const toast = { success, error };
+
+  // Seed the API key from the bootstrap endpoint on first load.
+  // All subsequent api.ts calls will include X-Api-Key automatically.
+  useEffect(() => { initApiKey(); }, []);
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {

@@ -1,0 +1,1883 @@
+openapi: 3.1.0
+
+info:
+  title: Rythmx API
+  version: 1.0.0
+  description: >
+    Self-hosted music automation and library management API.
+    All endpoints under `/api/v1/` follow a standard envelope:
+    success responses include `"status": "ok"` plus payload fields;
+    error responses include `"status": "error"` and `"message"`.
+    Background-triggering endpoints return HTTP 202 with `"is_alive": bool`.
+
+servers:
+  - url: /
+    description: Rythmx server (all paths are absolute)
+
+# All endpoints require an API key (X-Api-Key header) except /health
+security:
+  - ApiKeyAuth: []
+
+tags:
+  - name: health
+    description: Server health check
+  - name: discovery
+    description: Music discovery pool and playlist management
+  - name: cruise-control
+    description: Cruise Control pipeline — automated new release acquisition
+  - name: release-cache
+    description: Release cache management
+  - name: acquisition
+    description: Acquisition queue — tracks pending download
+  - name: images
+    description: Image resolution and cache warming
+  - name: playlists
+    description: Playlist CRUD, build, import, publish, and export
+  - name: stats
+    description: Last.fm listening statistics
+  - name: settings
+    description: Application settings and library enrichment operations
+
+paths:
+
+  # ── Health ────────────────────────────────────────────────────────────────
+
+  /health:
+    get:
+      tags: [health]
+      summary: Server health check
+      operationId: getHealth
+      security: []  # Public — no auth required
+      responses:
+        '200':
+          description: Server is up
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, db_connected, wal_mode]
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+                  db_connected:
+                    type: boolean
+                  wal_mode:
+                    type: boolean
+
+  # ── Auth ──────────────────────────────────────────────────────────────────
+
+  /api/v1/auth/bootstrap:
+    get:
+      tags: [health]
+      summary: Bootstrap API key for the web UI
+      description: >
+        Public endpoint — no authentication required. Returns the active API key
+        so the browser-based web UI can seed its X-Api-Key header on startup.
+        All subsequent API calls from the UI will include the key automatically.
+      operationId: bootstrapApiKey
+      security: []
+      responses:
+        '200':
+          description: Active API key
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiSuccess'
+                  - type: object
+                    required: [api_key]
+                    properties:
+                      api_key:
+                        type: string
+        '503':
+          description: API key not yet initialized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
+  # ── Discovery ─────────────────────────────────────────────────────────────
+
+  /api/v1/discovery/candidates:
+    get:
+      tags: [discovery]
+      summary: Get discovery pool candidates
+      operationId: getDiscoveryCandidates
+      parameters:
+        - name: period
+          in: query
+          schema:
+            $ref: '#/components/schemas/Period'
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        '200':
+          description: Scored candidate tracks
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiSuccess'
+                  - type: object
+                    properties:
+                      candidates:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Track'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/discovery/playlist:
+    get:
+      tags: [discovery]
+      summary: Get current discovery playlist tracks
+      operationId: getDiscoveryPlaylist
+      responses:
+        '200':
+          description: Discovery playlist tracks
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiSuccess'
+                  - type: object
+                    properties:
+                      tracks:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Track'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [discovery]
+      summary: Add a track to the discovery playlist
+      operationId: addDiscoveryTrack
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, artist]
+              properties:
+                name:
+                  type: string
+                artist:
+                  type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/discovery/playlist/{track_id}:
+    delete:
+      tags: [discovery]
+      summary: Remove a track from the discovery playlist
+      operationId: deleteDiscoveryTrack
+      parameters:
+        - name: track_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/discovery/download:
+    post:
+      tags: [discovery]
+      summary: Queue a discovery track for download via SoulSync
+      operationId: downloadDiscoveryTrack
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, artist]
+              properties:
+                name:
+                  type: string
+                artist:
+                  type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/discovery/publish:
+    post:
+      tags: [discovery]
+      summary: Publish discovery playlist to Plex
+      operationId: publishDiscoveryPlaylist
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/discovery/export:
+    post:
+      tags: [discovery]
+      summary: Export discovery playlist as M3U file
+      operationId: exportDiscoveryPlaylist
+      responses:
+        '200':
+          description: M3U playlist file download
+          content:
+            audio/x-mpegurl:
+              schema:
+                type: string
+                format: binary
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  # ── Cruise Control ────────────────────────────────────────────────────────
+
+  /api/v1/cruise-control/status:
+    get:
+      tags: [cruise-control]
+      summary: Get Cruise Control pipeline run status
+      operationId: getCruiseControlStatus
+      responses:
+        '200':
+          description: Current CC pipeline status
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiSuccess'
+                  - $ref: '#/components/schemas/CruiseControlStatus'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/cruise-control/config:
+    get:
+      tags: [cruise-control]
+      summary: Get Cruise Control configuration
+      operationId: getCruiseControlConfig
+      responses:
+        '200':
+          description: CC configuration with defaults
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiSuccess'
+                  - $ref: '#/components/schemas/CruiseControlConfig'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [cruise-control]
+      summary: Save Cruise Control configuration
+      operationId: saveCruiseControlConfig
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CruiseControlConfig'
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/cruise-control/run-now:
+    post:
+      tags: [cruise-control]
+      summary: Trigger a Cruise Control cycle immediately
+      operationId: runCruiseControlNow
+      responses:
+        '202':
+          $ref: '#/components/responses/Accepted'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/cruise-control/history:
+    get:
+      tags: [cruise-control]
+      summary: Get Cruise Control run history
+      operationId: getCruiseControlHistory
+      responses:
+        '200':
+          description: CC run history entries
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiSuccess'
+                  - type: object
+                    properties:
+                      history:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/HistoryItem'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  # ── Release Cache ─────────────────────────────────────────────────────────
+
+  /api/v1/release-cache/clear:
+    post:
+      tags: [release-cache]
+      summary: Clear the release cache
+      operationId: clearReleaseCache
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  # ── Acquisition ───────────────────────────────────────────────────────────
+
+  /api/v1/acquisition/queue:
+    get:
+      tags: [acquisition]
+      summary: Get acquisition queue
+      operationId: getAcquisitionQueue
+      parameters:
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/AcquisitionStatus'
+        - name: playlist
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Acquisition queue items
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiSuccess'
+                  - type: object
+                    properties:
+                      queue:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/QueueItem'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [acquisition]
+      summary: Add an item to the acquisition queue
+      operationId: addAcquisitionItem
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [artist, album, kind]
+              properties:
+                artist:
+                  type: string
+                album:
+                  type: string
+                kind:
+                  $ref: '#/components/schemas/ReleaseKind'
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/acquisition/stats:
+    get:
+      tags: [acquisition]
+      summary: Get acquisition queue statistics
+      operationId: getAcquisitionStats
+      responses:
+        '200':
+          description: Queue counts by status
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiSuccess'
+                  - $ref: '#/components/schemas/AcquisitionStats'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/acquisition/check-now:
+    post:
+      tags: [acquisition]
+      summary: Trigger the acquisition worker immediately
+      operationId: checkAcquisitionNow
+      responses:
+        '202':
+          $ref: '#/components/responses/Accepted'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  # ── Images ────────────────────────────────────────────────────────────────
+
+  /api/v1/images/resolve:
+    post:
+      tags: [images]
+      summary: Resolve image URL for a music entity
+      operationId: resolveImage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, name]
+              properties:
+                type:
+                  $ref: '#/components/schemas/ImageType'
+                name:
+                  type: string
+                artist:
+                  type: string
+      responses:
+        '200':
+          description: Resolved or pending image URL
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiSuccess'
+                  - $ref: '#/components/schemas/ImageResolveResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/images/warm-cache:
+    post:
+      tags: [images]
+      summary: Proactively warm the image cache
+      operationId: warmImageCache
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  items:
+                    type: object
+                    required: [type, name]
+                    properties:
+                      type:
+                        $ref: '#/components/schemas/ImageType'
+                      name:
+                        type: string
+                      artist:
+                        type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  # ── Playlists ─────────────────────────────────────────────────────────────
+
+  /api/v1/playlists:
+    get:
+      tags: [playlists]
+      summary: List all playlists
+      operationId: listPlaylists
+      responses:
+        '200':
+          description: All playlists
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiSuccess'
+                  - type: object
+                    properties:
+                      playlists:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/PlaylistItem'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [playlists]
+      summary: Create a new playlist
+      operationId: createPlaylist
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, source]
+              properties:
+                name:
+                  type: string
+                source:
+                  $ref: '#/components/schemas/PlaylistSource'
+                mode:
+                  type: string
+                max_tracks:
+                  type: integer
+                auto_sync:
+                  type: boolean
+                source_url:
+                  type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/playlists/{name}:
+    delete:
+      tags: [playlists]
+      summary: Delete a playlist
+      operationId: deletePlaylist
+      parameters:
+        - $ref: '#/components/parameters/PlaylistName'
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    patch:
+      tags: [playlists]
+      summary: Update playlist metadata
+      operationId: updatePlaylist
+      parameters:
+        - $ref: '#/components/parameters/PlaylistName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                auto_sync:
+                  type: boolean
+                mode:
+                  type: string
+                max_tracks:
+                  type: integer
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/playlists/{name}/tracks:
+    get:
+      tags: [playlists]
+      summary: Get tracks in a playlist
+      operationId: getPlaylistTracks
+      parameters:
+        - $ref: '#/components/parameters/PlaylistName'
+      responses:
+        '200':
+          description: Playlist tracks
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiSuccess'
+                  - type: object
+                    properties:
+                      tracks:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/PlaylistTrack'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/playlists/{name}/tracks/{row_id}:
+    delete:
+      tags: [playlists]
+      summary: Remove a single track from a playlist
+      operationId: deletePlaylistTrack
+      parameters:
+        - $ref: '#/components/parameters/PlaylistName'
+        - name: row_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/playlists/{name}/build:
+    post:
+      tags: [playlists]
+      summary: Build or rebuild a taste-based playlist
+      operationId: buildPlaylist
+      parameters:
+        - $ref: '#/components/parameters/PlaylistName'
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/playlists/{name}/rebuild:
+    post:
+      tags: [playlists]
+      summary: Rebuild playlist (alias for /build)
+      operationId: rebuildPlaylist
+      parameters:
+        - $ref: '#/components/parameters/PlaylistName'
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/playlists/{name}/import:
+    post:
+      tags: [playlists]
+      summary: Import tracks from an external source (Spotify / Last.fm / Deezer)
+      operationId: importPlaylist
+      parameters:
+        - $ref: '#/components/parameters/PlaylistName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source]
+              properties:
+                source:
+                  $ref: '#/components/schemas/PlaylistSource'
+                url:
+                  type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/playlists/{name}/sync:
+    post:
+      tags: [playlists]
+      summary: Sync playlist from external source (alias for /import)
+      operationId: syncPlaylist
+      parameters:
+        - $ref: '#/components/parameters/PlaylistName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source]
+              properties:
+                source:
+                  $ref: '#/components/schemas/PlaylistSource'
+                url:
+                  type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/playlists/{name}/publish:
+    post:
+      tags: [playlists]
+      summary: Publish playlist to Plex
+      operationId: publishPlaylist
+      parameters:
+        - $ref: '#/components/parameters/PlaylistName'
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/playlists/{name}/export:
+    post:
+      tags: [playlists]
+      summary: Export playlist as M3U file
+      operationId: exportPlaylist
+      parameters:
+        - $ref: '#/components/parameters/PlaylistName'
+      responses:
+        '200':
+          description: M3U playlist file download
+          content:
+            audio/x-mpegurl:
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/playlists/{name}/settings:
+    post:
+      tags: [playlists]
+      summary: Update playlist auto_sync and mode settings
+      operationId: updatePlaylistSettings
+      parameters:
+        - $ref: '#/components/parameters/PlaylistName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                auto_sync:
+                  type: boolean
+                mode:
+                  type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  # ── Stats ─────────────────────────────────────────────────────────────────
+
+  /api/v1/stats/top-artists:
+    get:
+      tags: [stats]
+      summary: Get top artists from Last.fm
+      operationId: getTopArtists
+      parameters:
+        - $ref: '#/components/parameters/Period'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Top artists
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiSuccess'
+                  - type: object
+                    properties:
+                      artists:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Artist'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/stats/top-tracks:
+    get:
+      tags: [stats]
+      summary: Get top tracks from Last.fm
+      operationId: getTopTracks
+      parameters:
+        - $ref: '#/components/parameters/Period'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Top tracks
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiSuccess'
+                  - type: object
+                    properties:
+                      tracks:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Track'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/stats/top-albums:
+    get:
+      tags: [stats]
+      summary: Get top albums from Last.fm
+      operationId: getTopAlbums
+      parameters:
+        - $ref: '#/components/parameters/Period'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Top albums
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiSuccess'
+                  - type: object
+                    properties:
+                      albums:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/TopAlbum'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/stats/summary:
+    get:
+      tags: [stats]
+      summary: Get listening history summary
+      operationId: getStatsSummary
+      responses:
+        '200':
+          description: Stats summary
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiSuccess'
+                  - $ref: '#/components/schemas/StatsSummary'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/stats/loved-artists:
+    get:
+      tags: [stats]
+      summary: Get loved artist names from Last.fm
+      operationId: getLovedArtists
+      responses:
+        '200':
+          description: Loved artist names
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiSuccess'
+                  - type: object
+                    properties:
+                      artists:
+                        type: array
+                        items:
+                          type: string
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  # ── Settings ──────────────────────────────────────────────────────────────
+
+  /api/v1/settings:
+    get:
+      tags: [settings]
+      summary: Get all application settings
+      operationId: getSettings
+      responses:
+        '200':
+          description: Current settings (sensitive keys are masked)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiSuccess'
+                  - $ref: '#/components/schemas/Settings'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/settings/test-lastfm:
+    post:
+      tags: [settings]
+      summary: Test Last.fm connection
+      operationId: testLastfm
+      responses:
+        '200':
+          description: Connection test result
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiSuccess'
+                  - $ref: '#/components/schemas/ConnectionStatus'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/settings/test-plex:
+    post:
+      tags: [settings]
+      summary: Test Plex connection
+      operationId: testPlex
+      responses:
+        '200':
+          description: Connection test result
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiSuccess'
+                  - $ref: '#/components/schemas/ConnectionStatus'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/settings/test-soulsync:
+    post:
+      tags: [settings]
+      summary: Test SoulSync connection
+      operationId: testSoulsync
+      responses:
+        '200':
+          description: Connection test result
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiSuccess'
+                  - $ref: '#/components/schemas/ConnectionStatus'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/settings/test-spotify:
+    post:
+      tags: [settings]
+      summary: Test Spotify API credentials
+      operationId: testSpotify
+      responses:
+        '200':
+          description: Connection test result
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiSuccess'
+                  - $ref: '#/components/schemas/ConnectionStatus'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/settings/test-fanart:
+    post:
+      tags: [settings]
+      summary: Test Fanart.tv API key
+      operationId: testFanart
+      responses:
+        '200':
+          description: Connection test result
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiSuccess'
+                  - $ref: '#/components/schemas/ConnectionStatus'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/settings/library-backend:
+    post:
+      tags: [settings]
+      summary: Set the library platform backend
+      operationId: setLibraryBackend
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [backend]
+              properties:
+                backend:
+                  $ref: '#/components/schemas/LibraryBackend'
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/settings/clear-history:
+    post:
+      tags: [settings]
+      summary: Clear Cruise Control run history
+      operationId: clearHistory
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/settings/reset-db:
+    post:
+      tags: [settings]
+      summary: Reset the entire Rythmx database
+      operationId: resetDb
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/settings/clear-image-cache:
+    post:
+      tags: [settings]
+      summary: Clear the image resolution cache
+      operationId: clearImageCache
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/settings/api-key:
+    get:
+      tags: [settings]
+      summary: Get the current API key
+      operationId: getApiKey
+      responses:
+        '200':
+          description: Current API key
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiSuccess'
+                  - type: object
+                    required: [api_key]
+                    properties:
+                      api_key:
+                        type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/settings/regenerate-api-key:
+    post:
+      tags: [settings]
+      summary: Regenerate the API key
+      description: >
+        Generates a new cryptographically random API key and replaces the existing one.
+        The caller must update their stored key — the old key is immediately invalidated.
+      operationId: regenerateApiKey
+      responses:
+        '200':
+          description: Newly generated API key
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiSuccess'
+                  - type: object
+                    required: [api_key]
+                    properties:
+                      api_key:
+                        type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/library/status:
+    get:
+      tags: [settings]
+      summary: Get library sync status
+      operationId: getLibraryStatus
+      responses:
+        '200':
+          description: Library sync status
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiSuccess'
+                  - $ref: '#/components/schemas/LibraryStatus'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/library/sync:
+    post:
+      tags: [settings]
+      summary: Trigger library sync
+      operationId: syncLibrary
+      responses:
+        '202':
+          $ref: '#/components/responses/Accepted'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/library/enrich-status:
+    get:
+      tags: [settings]
+      summary: Get library enrichment status
+      operationId: getLibraryEnrichStatus
+      responses:
+        '200':
+          description: Library enrichment status
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiSuccess'
+                  - $ref: '#/components/schemas/LibraryEnrichStatus'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/library/enrich:
+    post:
+      tags: [settings]
+      summary: Start library metadata enrichment
+      operationId: enrichLibrary
+      parameters:
+        - name: batch_size
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        '202':
+          $ref: '#/components/responses/Accepted'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/library/spotify-status:
+    get:
+      tags: [settings]
+      summary: Get Spotify enrichment status
+      operationId: getSpotifyEnrichStatus
+      responses:
+        '200':
+          description: Spotify enrichment status
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiSuccess'
+                  - $ref: '#/components/schemas/SpotifyEnrichStatus'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/library/enrich-spotify:
+    post:
+      tags: [settings]
+      summary: Start Spotify metadata enrichment
+      operationId: enrichSpotify
+      responses:
+        '202':
+          $ref: '#/components/responses/Accepted'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/library/lastfm-tags-status:
+    get:
+      tags: [settings]
+      summary: Get Last.fm tags enrichment status
+      operationId: getLastfmTagsStatus
+      responses:
+        '200':
+          description: Last.fm tags enrichment status
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiSuccess'
+                  - $ref: '#/components/schemas/LastfmTagsStatus'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/library/enrich-lastfm-tags:
+    post:
+      tags: [settings]
+      summary: Start Last.fm tags enrichment
+      operationId: enrichLastfmTags
+      responses:
+        '202':
+          $ref: '#/components/responses/Accepted'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/library/deezer-bpm-status:
+    get:
+      tags: [settings]
+      summary: Get Deezer BPM enrichment status
+      operationId: getDeezerBpmStatus
+      responses:
+        '200':
+          description: Deezer BPM enrichment status
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiSuccess'
+                  - $ref: '#/components/schemas/DeezerBpmStatus'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/library/enrich-deezer-bpm:
+    post:
+      tags: [settings]
+      summary: Start Deezer BPM enrichment
+      operationId: enrichDeezerBpm
+      responses:
+        '202':
+          $ref: '#/components/responses/Accepted'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  # ── Personal Discovery ────────────────────────────────────────────────────
+
+  /api/v1/personal-discovery/run:
+    post:
+      tags: [discovery]
+      summary: Run personal discovery (stub — not yet implemented)
+      operationId: runPersonalDiscovery
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PersonalDiscoveryConfig'
+      responses:
+        '200':
+          description: Discovery results
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiSuccess'
+                  - type: object
+                    properties:
+                      results:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/PersonalDiscoveryResult'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+# ── Components ───────────────────────────────────────────────────────────────
+
+components:
+
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-Api-Key
+      description: >
+        Auto-generated API key. View or regenerate in Settings.
+        Included as `X-Api-Key: <key>` on every request.
+
+  parameters:
+
+    PlaylistName:
+      name: name
+      in: path
+      required: true
+      description: Playlist name (URL-encoded; may contain spaces and special characters)
+      schema:
+        type: string
+
+    Period:
+      name: period
+      in: query
+      schema:
+        $ref: '#/components/schemas/Period'
+
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        default: 50
+
+  responses:
+
+    Unauthorized:
+      description: Missing or invalid API key
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+
+    Ok:
+      description: Operation succeeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiSuccess'
+
+    Accepted:
+      description: Background operation triggered
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ApiSuccess'
+              - type: object
+                required: [is_alive]
+                properties:
+                  is_alive:
+                    type: boolean
+
+    BadRequest:
+      description: Invalid request body or parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+
+    Conflict:
+      description: Operation already in progress or resource conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+
+    ServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+
+  schemas:
+
+    # ── Primitives / Enums ──────────────────────────────────────────────────
+
+    Period:
+      type: string
+      enum: [7day, 1month, 3month, 6month, 12month, overall]
+
+    AcquisitionStatus:
+      type: string
+      enum: [pending, submitted, found, failed, skipped]
+
+    ReleaseKind:
+      type: string
+      enum: [album, ep, single, compilation]
+
+    LibraryBackend:
+      type: string
+      enum: [soulsync, plex, jellyfin, navidrome]
+
+    PlaylistSource:
+      type: string
+      enum: [taste, lastfm, spotify, deezer, empty, new_music]
+
+    ImageType:
+      type: string
+      enum: [artist, album, track]
+
+    # ── Envelope ────────────────────────────────────────────────────────────
+
+    ApiSuccess:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+
+    ApiError:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [error]
+        message:
+          type: string
+        error:
+          type: string
+
+    # ── Music Entities ───────────────────────────────────────────────────────
+
+    Artist:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        image:
+          type: string
+        playcount:
+          type: integer
+        url:
+          type: string
+
+    TopAlbum:
+      type: object
+      required: [artist, title]
+      properties:
+        artist:
+          type: string
+        title:
+          type: string
+        image:
+          type: string
+        playcount:
+          type: integer
+
+    Track:
+      type: object
+      required: [name, artist]
+      properties:
+        name:
+          type: string
+        artist:
+          type: string
+        album:
+          type: string
+        image:
+          type: string
+        playcount:
+          type: integer
+        duration:
+          type: integer
+          description: Duration in seconds
+        is_owned:
+          type: boolean
+        score:
+          type: number
+          format: float
+        rank:
+          type: integer
+
+    # ── Acquisition ──────────────────────────────────────────────────────────
+
+    QueueItem:
+      type: object
+      required: [id, artist, album, kind, status]
+      properties:
+        id:
+          oneOf:
+            - type: string
+            - type: integer
+        artist:
+          type: string
+        album:
+          type: string
+        kind:
+          $ref: '#/components/schemas/ReleaseKind'
+        status:
+          $ref: '#/components/schemas/AcquisitionStatus'
+        requested_by:
+          type: string
+        requested_at:
+          type: string
+          format: date-time
+        release_date:
+          type: string
+
+    AcquisitionStats:
+      type: object
+      required: [pending, submitted, found, failed, skipped, total]
+      properties:
+        pending:
+          type: integer
+        submitted:
+          type: integer
+        found:
+          type: integer
+        failed:
+          type: integer
+        skipped:
+          type: integer
+        total:
+          type: integer
+
+    # ── Playlists ────────────────────────────────────────────────────────────
+
+    PlaylistItem:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        source:
+          $ref: '#/components/schemas/PlaylistSource'
+        last_synced:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        mode:
+          type: string
+        auto_sync:
+          type: boolean
+        track_count:
+          type: integer
+        owned_count:
+          type: integer
+        max_tracks:
+          type: integer
+        source_url:
+          type: string
+
+    PlaylistTrack:
+      type: object
+      required: [name, artist, is_owned]
+      properties:
+        row_id:
+          type: integer
+        name:
+          type: string
+        artist:
+          type: string
+        album:
+          type: string
+        image:
+          type: string
+        is_owned:
+          type: boolean
+        score:
+          type: number
+          format: float
+        acquisition_status:
+          $ref: '#/components/schemas/AcquisitionStatus'
+
+    # ── Cruise Control ───────────────────────────────────────────────────────
+
+    CruiseControlConfig:
+      type: object
+      properties:
+        run_mode:
+          type: string
+          enum: [build, fetch]
+        playlist_prefix:
+          type: string
+        min_listens:
+          type: integer
+        period:
+          $ref: '#/components/schemas/Period'
+        lookback_days:
+          type: integer
+        max_per_cycle:
+          type: integer
+        max_playlist_tracks:
+          type: integer
+        auto_push_playlist:
+          type: boolean
+        schedule_weekday:
+          type: integer
+          minimum: 0
+          maximum: 6
+        schedule_hour:
+          type: integer
+          minimum: 0
+          maximum: 23
+        enabled:
+          type: boolean
+        dry_run:
+          type: boolean
+        release_cache_refresh_weekday:
+          type: integer
+          minimum: 0
+          maximum: 6
+        release_cache_refresh_hour:
+          type: integer
+          minimum: 0
+          maximum: 23
+        nr_ignore_keywords:
+          type: string
+        nr_ignore_artists:
+          type: string
+        include_features:
+          type: boolean
+        release_kinds:
+          type: string
+          description: Comma-separated list of ReleaseKind values to include
+
+    CruiseControlStatus:
+      type: object
+      required: [state]
+      properties:
+        state:
+          type: string
+          enum: [idle, running, error, completed]
+        stage:
+          type: integer
+        stage_label:
+          type: string
+        total_stages:
+          type: integer
+        last_run:
+          type: string
+          format: date-time
+        summary:
+          type: object
+          properties:
+            artists_checked:
+              type: integer
+            new_releases:
+              type: integer
+            owned:
+              type: integer
+            queued:
+              type: integer
+        error:
+          type: string
+
+    HistoryItem:
+      type: object
+      required: [artist, album, status, date]
+      properties:
+        artist:
+          type: string
+        album:
+          type: string
+        status:
+          type: string
+          enum: [owned, queued, skipped]
+        reason:
+          type: string
+        date:
+          type: string
+          format: date-time
+
+    # ── Images ───────────────────────────────────────────────────────────────
+
+    ImageResolveResponse:
+      type: object
+      properties:
+        image_url:
+          type: string
+        pending:
+          type: boolean
+
+    # ── Stats ────────────────────────────────────────────────────────────────
+
+    StatsSummary:
+      type: object
+      required: [top_artist, total_artists]
+      properties:
+        top_artist:
+          type: string
+        total_artists:
+          type: integer
+        total_plays:
+          type: integer
+
+    # ── Settings ─────────────────────────────────────────────────────────────
+
+    Settings:
+      type: object
+      required: [library_backend]
+      properties:
+        lastfm_username:
+          type: string
+        lastfm_api_key:
+          type: string
+        plex_url:
+          type: string
+        plex_token:
+          type: string
+        soulsync_url:
+          type: string
+        spotify_client_id:
+          type: string
+        spotify_client_secret:
+          type: string
+        library_backend:
+          $ref: '#/components/schemas/LibraryBackend'
+
+    ConnectionStatus:
+      type: object
+      required: [connected]
+      properties:
+        connected:
+          type: boolean
+        message:
+          type: string
+
+    # ── Library Enrichment ───────────────────────────────────────────────────
+
+    LibraryStatus:
+      type: object
+      required: [backend, track_count]
+      properties:
+        backend:
+          $ref: '#/components/schemas/LibraryBackend'
+        track_count:
+          type: integer
+        last_synced:
+          type: string
+          format: date-time
+        synced:
+          type: boolean
+        total_albums:
+          type: integer
+        enriched_albums:
+          type: integer
+        enrich_pct:
+          type: number
+          format: float
+
+    LibraryEnrichStatus:
+      allOf:
+        - $ref: '#/components/schemas/LibraryStatus'
+        - type: object
+          required: [enrich_running]
+          properties:
+            enrich_running:
+              type: boolean
+
+    SpotifyEnrichStatus:
+      type: object
+      required: [enrich_running, enriched_artists, total_artists, spotify_available]
+      properties:
+        enrich_running:
+          type: boolean
+        enriched_artists:
+          type: integer
+        total_artists:
+          type: integer
+        last_run:
+          type: [string, 'null']
+          format: date-time
+        spotify_available:
+          type: boolean
+
+    LastfmTagsStatus:
+      type: object
+      required: [enrich_running, enriched_artists, total_artists, enriched_albums, total_albums, lastfm_available]
+      properties:
+        enrich_running:
+          type: boolean
+        enriched_artists:
+          type: integer
+        total_artists:
+          type: integer
+        enriched_albums:
+          type: integer
+        total_albums:
+          type: integer
+        last_run:
+          type: [string, 'null']
+          format: date-time
+        lastfm_available:
+          type: boolean
+
+    DeezerBpmStatus:
+      type: object
+      required: [enrich_running, enriched_albums, total_albums, enriched_tracks, total_tracks]
+      properties:
+        enrich_running:
+          type: boolean
+        enriched_albums:
+          type: integer
+        total_albums:
+          type: integer
+        enriched_tracks:
+          type: integer
+        total_tracks:
+          type: integer
+        last_run:
+          type: [string, 'null']
+          format: date-time
+
+    # ── Discovery ────────────────────────────────────────────────────────────
+
+    PersonalDiscoveryConfig:
+      type: object
+      properties:
+        closeness:
+          type: number
+          format: float
+        seed_period:
+          $ref: '#/components/schemas/Period'
+        min_scrobbles:
+          type: integer
+        max_tracks:
+          type: integer
+
+    PersonalDiscoveryResult:
+      type: object
+      required: [artist]
+      properties:
+        artist:
+          type: string
+        image:
+          type: string
+        reason:
+          type: string
+        similarity:
+          type: number
+          format: float
+        tags:
+          type: array
+          items:
+            type: string

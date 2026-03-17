@@ -26,6 +26,30 @@ import type {
 
 const BASE_URL = '/api/v1';
 
+// ── API key management ────────────────────────────────────────────────────────
+// Seeded from /auth/bootstrap on app load, then injected into every request.
+// Stored in localStorage so it survives page refreshes without a round-trip.
+
+let _apiKey = '';
+try { _apiKey = localStorage.getItem('rythmx_api_key') ?? ''; } catch { /* private mode */ }
+
+export function setApiKey(key: string): void {
+  _apiKey = key;
+  try { localStorage.setItem('rythmx_api_key', key); } catch { /* ignore */ }
+}
+
+export async function initApiKey(): Promise<void> {
+  if (_apiKey) return; // already have it (localStorage hit)
+  try {
+    const res = await fetch(`${BASE_URL}/auth/bootstrap`);
+    if (!res.ok) return;
+    const data = await res.json() as { status: string; api_key?: string };
+    if (data.status === 'ok' && data.api_key) setApiKey(data.api_key);
+  } catch { /* network down / dev mode — proceed unauthenticated */ }
+}
+
+// ── Error class ───────────────────────────────────────────────────────────────
+
 // Thrown when the backend returns { status: 'error', error/message: '...' }.
 // Catch blocks can use `instanceof ApiError` to distinguish API vs network errors.
 export class ApiError extends Error {
@@ -40,7 +64,11 @@ export class ApiError extends Error {
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(_apiKey ? { 'X-Api-Key': _apiKey } : {}),
+      ...options?.headers,
+    },
     ...options,
   });
   if (!res.ok) {
@@ -212,6 +240,12 @@ export const settingsApi = {
     request<{ status: string }>('/settings/reset-db', { method: 'POST' }),
   clearImageCache: () =>
     request<{ status: string }>('/settings/clear-image-cache', { method: 'POST' }),
+  getApiKey: () =>
+    request<{ status: string; api_key: string }>('/settings/api-key')
+      .then(r => r.api_key),
+  regenerateApiKey: () =>
+    request<{ status: string; api_key: string }>('/settings/regenerate-api-key', { method: 'POST' })
+      .then(r => r.api_key),
 };
 
 export const libraryApi = {

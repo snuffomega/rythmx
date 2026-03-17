@@ -368,3 +368,18 @@ def settings_reset_db():
 def settings_clear_image_cache():
     rythmx_store.clear_image_cache()
     return jsonify({"status": "ok", "message": "Image cache cleared"})
+
+
+@settings_bp.route("/settings/api-key", methods=["GET"])
+def settings_get_api_key():
+    """Return the current API key (authenticated — requires X-Api-Key header)."""
+    key = rythmx_store.get_api_key()
+    return jsonify({"status": "ok", "api_key": key})
+
+
+@settings_bp.route("/settings/regenerate-api-key", methods=["POST"])
+def settings_regenerate_api_key():
+    """Generate and persist a new API key. The caller must update their stored key."""
+    new_key = rythmx_store.generate_new_api_key()
+    logger.info("API key regenerated")
+    return jsonify({"status": "ok", "api_key": new_key})

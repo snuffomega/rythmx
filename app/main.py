@@ -5,8 +5,9 @@ Registers blueprints and handles the health check, SPA serving, and startup.
 All API routes live in app/routes/.
 Never log secret values.
 """
+import hmac
 import logging
-from flask import Flask, jsonify, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory
 from flask_talisman import Talisman
 from app import config
 from app.runners import scheduler
@@ -93,10 +94,29 @@ def create_app() -> Flask:
     # --- Init DB ---
     rythmx_store.init_db()
 
+    # --- Ensure API key exists (auto-generate on first boot) ---
+    if not rythmx_store.get_api_key():
+        rythmx_store.generate_new_api_key()
+        logger.info("API key generated (first boot) — retrieve it from Settings > Security")
+
+    # --- API key enforcement ---
+    # All /api/v1/ routes require X-Api-Key. Exempt: /auth/bootstrap (web UI seeding).
+    @app.before_request
+    def _require_api_key():
+        if not request.path.startswith('/api/v1/'):
+            return  # SPA routes and /health pass through
+        if request.path == '/api/v1/auth/bootstrap':
+            return  # public seeding endpoint
+        provided = request.headers.get('X-Api-Key', '')
+        stored = rythmx_store.get_api_key() or ''
+        if not hmac.compare_digest(provided, stored):
+            return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
+
     # --- Log config summary (redacted) ---
     config.log_config_summary()
 
     # --- Register blueprints ---
+    from app.routes.auth import auth_bp
     from app.routes.dash import dash_bp
     from app.routes.new_music import new_music_bp
     from app.routes.acquisition import acquisition_bp
@@ -106,7 +126,7 @@ def create_app() -> Flask:
     from app.routes.images import images_bp
     from app.routes.personal_discovery import personal_discovery_bp
 
-    for bp in (dash_bp, new_music_bp, acquisition_bp, playlists_bp,
+    for bp in (auth_bp, dash_bp, new_music_bp, acquisition_bp, playlists_bp,
                stats_bp, settings_bp, images_bp, personal_discovery_bp):
         app.register_blueprint(bp, url_prefix="/api/v1")
 
