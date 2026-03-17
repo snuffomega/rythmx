@@ -62,6 +62,20 @@ export interface AcquisitionStats {
   total: number;
 }
 
+export type ImageType = 'artist' | 'album' | 'track';
+
+export interface ImageResolveResponse {
+  image_url?: string;
+  pending?: boolean;
+}
+
+export interface CollageItem {
+  name: string;
+  artist?: string;
+  image?: string;
+  playcount?: number;
+}
+
 export type PlaylistSource = 'taste' | 'lastfm' | 'spotify' | 'deezer' | 'empty' | 'new_music';
 
 export interface PlaylistItem {

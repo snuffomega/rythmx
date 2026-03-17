@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
+import type { ImageType, ImageResolveResponse } from '../types';
 
 // Module-level JS cache — survives page/tab switches without re-fetching.
 // Keys: "type:name:artist" (lowercased). Values: resolved image URL.
 const _resolved = new Map<string, string>();
 
 export function useImage(
-  type: 'artist' | 'album' | 'track',
+  type: ImageType,
   name: string,
   artist = '',
   skip = false
@@ -29,18 +30,13 @@ export function useImage(
     let cancelled = false;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
-    interface ResolveResponse {
-      image_url?: string;
-      pending?: boolean;
-    }
-
     const fetchImage = (attempt = 0) => {
       fetch('/api/v1/images/resolve', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type, name: safeName, artist: safeArtist }),
       })
-        .then(r => r.json() as Promise<ResolveResponse>)
+        .then(r => r.json() as Promise<ImageResolveResponse>)
         .then(data => {
           if (cancelled) return;
           if (data.image_url) {

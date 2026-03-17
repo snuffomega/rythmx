@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect } from 'react';
 import { Users, Disc3 } from 'lucide-react';
-import type { Artist, Track, TopAlbum } from '../types';
+import type { Artist, Track, TopAlbum, CollageItem } from '../types';
 import { useImage } from '../hooks/useImage';
 import { getImageUrl } from '../utils/imageUrl';
 
@@ -10,13 +10,6 @@ export interface OverlayOptions {
   showArtist: boolean;
   showAlbum: boolean;
   showPlaycount: boolean;
-}
-
-interface CollageItem {
-  name: string;
-  artist?: string;
-  image?: string;
-  playcount?: number;
 }
 
 interface CollageGridProps {
@@ -57,8 +50,11 @@ function FallbackIcon({ type }: { type: ContentType }) {
   return <Disc3 size={28} className={cls} />;
 }
 
+export function normalizeItems(data: Artist[], type: 'artists'): CollageItem[];
+export function normalizeItems(data: TopAlbum[], type: 'albums'): CollageItem[];
+export function normalizeItems(data: Track[], type: 'tracks'): CollageItem[];
 export function normalizeItems(
-  data: Artist[] | Track[] | TopAlbum[],
+  data: Artist[] | TopAlbum[] | Track[],
   type: ContentType
 ): CollageItem[] {
   if (type === 'artists') {
