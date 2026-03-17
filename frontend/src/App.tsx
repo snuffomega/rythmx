@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { Compass, Zap, ListMusic, Activity, BarChart2, Settings, ChevronRight, Menu } from 'lucide-react';
+import { Compass, Zap, ListMusic, Activity, BarChart2, Settings, ChevronRight, Menu, Library } from 'lucide-react';
 import { Discovery } from './pages/Discovery';
+import { Library as LibraryPage } from './pages/Library';
 import { CruiseControl } from './pages/CruiseControl';
 import { Playlists } from './pages/Playlists';
 import { ActivityPage } from './pages/Activity';
@@ -10,10 +11,11 @@ import { ToastContainer } from './components/ToastContainer';
 import { useToast } from './hooks/useToast';
 import { initApiKey } from './services/api';
 
-type Page = 'discovery' | 'cruise-control' | 'playlists' | 'activity' | 'stats' | 'settings';
+type Page = 'discovery' | 'library' | 'cruise-control' | 'playlists' | 'activity' | 'stats' | 'settings';
 
 const NAV_ITEMS: Array<{ id: Page; label: string; icon: typeof Compass }> = [
   { id: 'discovery', label: 'Discovery', icon: Compass },
+  { id: 'library', label: 'Library', icon: Library },
   { id: 'cruise-control', label: 'Cruise Control', icon: Zap },
   { id: 'playlists', label: 'Playlists', icon: ListMusic },
   { id: 'activity', label: 'Activity', icon: Activity },
@@ -51,6 +53,7 @@ export default function App() {
   const renderPage = () => {
     switch (page) {
       case 'discovery': return <Discovery onNavigate={navigate} />;
+      case 'library': return <LibraryPage />;
       case 'cruise-control': return <CruiseControl toast={toast} />;
       case 'playlists': return <Playlists toast={toast} />;
       case 'activity': return <ActivityPage toast={toast} />;

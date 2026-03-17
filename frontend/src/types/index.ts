@@ -229,3 +229,53 @@ export interface Toast {
   type: 'success' | 'error' | 'warning' | 'info';
   message: string;
 }
+
+// ---------------------------------------------------------------------------
+// Library browse — lib_* table shapes
+// ---------------------------------------------------------------------------
+
+export interface LibArtist {
+  id: string;
+  name: string;
+  album_count: number;
+  match_confidence: number;
+  source_backend: string | null;
+  lastfm_tags_json: string | null;
+}
+
+export interface LibAlbum {
+  id: string;
+  artist_id: string;
+  artist_name: string;
+  title: string;
+  year: number | null;
+  record_type: string | null;
+  match_confidence: number;
+  needs_verification: number;
+  source_backend: string | null;
+}
+
+export interface LibTrack {
+  id: string;
+  album_id: string;
+  artist_id: string;
+  title: string;
+  track_number: number | null;
+  disc_number: number | null;
+  duration: number | null;
+  rating: number;
+  play_count: number;
+  album_title?: string;
+  artist_name?: string;
+}
+
+export interface LibArtistDetail {
+  artist: LibArtist;
+  albums: LibAlbum[];
+  top_tracks: LibTrack[];
+}
+
+export interface LibAlbumDetail {
+  album: LibAlbum;
+  tracks: LibTrack[];
+}

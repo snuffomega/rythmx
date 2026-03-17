@@ -22,6 +22,11 @@ import type {
   ReleaseKind,
   PersonalDiscoveryConfig,
   PersonalDiscoveryResult,
+  LibArtist,
+  LibAlbum,
+  LibTrack,
+  LibArtistDetail,
+  LibAlbumDetail,
 } from '../types';
 
 const BASE_URL = '/api/v1';
@@ -303,5 +308,35 @@ export const imageServiceApi = {
     request<{ status: string; submitted: number }>('/images/warm-cache', {
       method: 'POST',
       body: JSON.stringify({ max_items: maxItems }),
+    }),
+};
+
+export const libraryBrowseApi = {
+  getArtists: (p: { q?: string; page?: number; per_page?: number; backend?: string } = {}) => {
+    const qs = new URLSearchParams(
+      Object.entries({ per_page: '50', ...p }).filter(([, v]) => v != null) as [string, string][]
+    ).toString();
+    return request<{ status: string; artists: LibArtist[]; total: number; page: number }>(`/library/artists?${qs}`);
+  },
+  getArtist: (id: string) =>
+    request<{ status: string } & LibArtistDetail>(`/library/artists/${encodeURIComponent(id)}`),
+  getAlbums: (p: { q?: string; page?: number; per_page?: number; backend?: string; record_type?: string } = {}) => {
+    const qs = new URLSearchParams(
+      Object.entries({ per_page: '50', ...p }).filter(([, v]) => v != null) as [string, string][]
+    ).toString();
+    return request<{ status: string; albums: LibAlbum[]; total: number; page: number }>(`/library/albums?${qs}`);
+  },
+  getAlbum: (id: string) =>
+    request<{ status: string } & LibAlbumDetail>(`/library/albums/${encodeURIComponent(id)}`),
+  getTracks: (p: { q?: string; page?: number; per_page?: number } = {}) => {
+    const qs = new URLSearchParams(
+      Object.entries({ per_page: '100', ...p }).filter(([, v]) => v != null) as [string, string][]
+    ).toString();
+    return request<{ status: string; tracks: LibTrack[]; total: number; page: number }>(`/library/tracks?${qs}`);
+  },
+  rateTrack: (id: string, rating: number) =>
+    request<{ status: string; track_id: string; rating: number }>(`/library/tracks/${encodeURIComponent(id)}/rating`, {
+      method: 'PATCH',
+      body: JSON.stringify({ rating }),
     }),
 };
