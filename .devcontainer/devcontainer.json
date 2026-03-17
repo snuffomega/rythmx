@@ -1,0 +1,43 @@
+{
+  "name": "Rythmx Dev",
+  "build": {
+    "context": "..",
+    "dockerfile": "Dockerfile.dev"
+  },
+  "workspaceFolder": "/workspace",
+  "mounts": [
+    "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached"
+  ],
+  "forwardPorts": [8009, 5173],
+  "portsAttributes": {
+    "8009": { "label": "Flask API", "onAutoForward": "notify" },
+    "5173": { "label": "Vite Dev Server", "onAutoForward": "openBrowser" }
+  },
+  // Re-install deps in case requirements.txt or package.json changed since image build
+  "postCreateCommand": "pip install -r requirements.txt && cd frontend && npm install",
+  "remoteEnv": {
+    "FLASK_ENV": "development",
+    "FLASK_DEBUG": "true"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.pylance",
+        "ms-vscode.vscode-typescript-next",
+        "qwtel.sqlite-viewer",
+        "humao.rest-client",
+        "esbenp.prettier-vscode",
+        "bradlc.vscode-tailwindcss"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "[python]": {
+          "editor.defaultFormatter": "ms-python.python"
+        }
+      }
+    }
+  }
+}

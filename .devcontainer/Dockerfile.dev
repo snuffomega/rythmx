@@ -1,0 +1,20 @@
+FROM python:3.11-slim
+
+# System deps + Node.js 20 + sqlite3 CLI
+RUN apt-get update && apt-get install -y curl gnupg git sqlite3 && \
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y nodejs && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+
+# Pre-cache Python deps (invalidated only when requirements.txt changes)
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Pre-cache Node deps (invalidated only when package.json changes)
+COPY frontend/package*.json ./frontend/
+RUN cd frontend && npm install
+
+# Source code is mounted at runtime via devcontainer.json — no COPY of app code here.
+# This keeps the image lean and changes to .py / .ts files don't require a rebuild.
