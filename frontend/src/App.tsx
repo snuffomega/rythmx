@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { Compass, Zap, ListMusic, Activity, BarChart2, Settings, ChevronRight, Menu, Library } from 'lucide-react';
+import { Compass, Zap, ListMusic, Activity, BarChart2, Settings, ChevronRight, Menu, Library, Play } from 'lucide-react';
 import { Discovery } from './pages/Discovery';
 import { Library as LibraryPage } from './pages/Library';
 import { CruiseControl } from './pages/CruiseControl';
@@ -8,10 +8,13 @@ import { ActivityPage } from './pages/Activity';
 import { Stats } from './pages/Stats';
 import { SettingsPage } from './pages/Settings';
 import { ToastContainer } from './components/ToastContainer';
+import { PlayerBar } from './components/PlayerBar';
+import { FullPagePlayer } from './components/FullPagePlayer';
 import { useToast } from './hooks/useToast';
 import { initApiKey } from './services/api';
 
 type Page = 'discovery' | 'library' | 'cruise-control' | 'playlists' | 'activity' | 'stats' | 'settings';
+type PlayerState = 'hidden' | 'mini' | 'fullpage';
 
 const NAV_ITEMS: Array<{ id: Page; label: string; icon: typeof Compass }> = [
   { id: 'discovery', label: 'Discovery', icon: Compass },
@@ -26,6 +29,8 @@ const NAV_ITEMS: Array<{ id: Page; label: string; icon: typeof Compass }> = [
 export default function App() {
   const [page, setPage] = useState<Page>('discovery');
   const [expanded, setExpanded] = useState(false);
+  const [playerState, setPlayerState] = useState<PlayerState>('hidden');
+  const [isPlaying, setIsPlaying] = useState(false);
   const { toasts, success, error, dismiss } = useToast();
   const sidebarRef = useRef<HTMLDivElement>(null);
 
@@ -50,10 +55,26 @@ export default function App() {
     setExpanded(false);
   }, []);
 
+  // Called from Library (and future pages) when user clicks play on a track/album.
+  const handlePlay = useCallback(() => {
+    setPlayerState('mini');
+    setIsPlaying(true);
+  }, []);
+
+  const handleNowPlayingClick = useCallback(() => {
+    setPlayerState(p => p === 'hidden' ? 'mini' : p === 'mini' ? 'hidden' : 'mini');
+  }, []);
+
+  const handleNowPlayingDblClick = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setPlayerState('fullpage');
+    setIsPlaying(true);
+  }, []);
+
   const renderPage = () => {
     switch (page) {
       case 'discovery': return <Discovery onNavigate={navigate} />;
-      case 'library': return <LibraryPage />;
+      case 'library': return <LibraryPage onPlay={handlePlay} />;
       case 'cruise-control': return <CruiseControl toast={toast} />;
       case 'playlists': return <Playlists toast={toast} />;
       case 'activity': return <ActivityPage toast={toast} />;
@@ -120,7 +141,29 @@ export default function App() {
           })}
         </nav>
 
-        <div className="h-14 border-t border-border flex-shrink-0 flex items-center overflow-hidden">
+        {/* Now Playing sidebar button */}
+        <button
+          onClick={handleNowPlayingClick}
+          onDoubleClick={handleNowPlayingDblClick}
+          title={!expanded ? 'Now Playing' : undefined}
+          className={`w-full flex items-center h-11 transition-colors border-t border-border ${
+            playerState !== 'hidden'
+              ? 'text-accent'
+              : 'text-text-muted hover:text-text-secondary'
+          }`}
+        >
+          <span className="w-16 flex items-center justify-center flex-shrink-0">
+            <Play
+              size={16}
+              fill={playerState !== 'hidden' && isPlaying ? 'currentColor' : 'none'}
+            />
+          </span>
+          {expanded && (
+            <span className="text-sm font-medium whitespace-nowrap">Now Playing</span>
+          )}
+        </button>
+
+        <div className="h-10 border-t border-border flex-shrink-0 flex items-center overflow-hidden">
           <span className="w-16 flex items-center justify-center flex-shrink-0">
             <Zap size={14} className="text-accent" />
           </span>
@@ -130,10 +173,29 @@ export default function App() {
         </div>
       </aside>
 
-      <main className="flex-1 min-w-0 pl-16">
-        <div className="max-w-screen-xl mx-auto px-8 xl:px-12 pt-6">
-          {renderPage()}
-        </div>
+      <main className="flex-1 min-w-0 pl-16 flex flex-col min-h-screen">
+        {playerState === 'fullpage' ? (
+          <FullPagePlayer
+            isPlaying={isPlaying}
+            onPlayPause={() => setIsPlaying(p => !p)}
+            onMinimize={() => setPlayerState('mini')}
+          />
+        ) : (
+          <div className="flex-1 min-h-0 overflow-auto">
+            <div className="max-w-screen-xl mx-auto px-8 xl:px-12 pt-6">
+              {renderPage()}
+            </div>
+          </div>
+        )}
+
+        {playerState === 'mini' && (
+          <PlayerBar
+            isPlaying={isPlaying}
+            onPlayPause={() => setIsPlaying(p => !p)}
+            onExpand={() => setPlayerState('fullpage')}
+            onMinimize={() => setPlayerState('hidden')}
+          />
+        )}
       </main>
 
       <ToastContainer toasts={toasts} onDismiss={dismiss} />

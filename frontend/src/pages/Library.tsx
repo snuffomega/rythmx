@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Loader2, Search, Grid3X3, List, RefreshCw,
   Library as LibraryIcon, ChevronLeft, Star,
-  ListPlus, MoreHorizontal, User, Disc,
+  ListPlus, MoreHorizontal, User, Disc, Play,
 } from 'lucide-react';
 import { libraryBrowseApi, libraryApi } from '../services/api';
 import { useImage } from '../hooks/useImage';
@@ -222,9 +222,10 @@ interface ArtistDetailProps {
   artistId: string;
   onAlbumClick: (albumId: string, artistId: string) => void;
   onBack: () => void;
+  onPlay?: () => void;
 }
 
-function ArtistDetail({ artistId, onAlbumClick, onBack }: ArtistDetailProps) {
+function ArtistDetail({ artistId, onAlbumClick, onBack, onPlay }: ArtistDetailProps) {
   const [data, setData] = useState<LibArtistDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -282,11 +283,18 @@ function ArtistDetail({ artistId, onAlbumClick, onBack }: ArtistDetailProps) {
           <h2 className="text-xs font-mono font-semibold text-text-muted uppercase tracking-widest mb-3">Popular Tracks</h2>
           <div>
             {top_tracks.map((t, i) => (
-              <div key={t.id} className="group grid grid-cols-[2rem_1fr_1fr_3.5rem] gap-3 items-center py-2 px-2 hover:bg-[#111] rounded-sm transition-colors">
+              <div key={t.id} className="group grid grid-cols-[2rem_1fr_1fr_3.5rem_auto] gap-3 items-center py-2 px-2 hover:bg-[#111] rounded-sm transition-colors">
                 <span className="font-mono text-xs text-text-muted tabular-nums text-right">{i + 1}</span>
                 <span className="text-sm text-text-primary truncate">{t.title}</span>
                 <span className="font-mono text-xs text-text-muted truncate">{t.album_title}</span>
                 <span className="font-mono text-xs text-text-muted tabular-nums text-right">{formatDuration(t.duration)}</span>
+                <button
+                  onClick={() => onPlay?.()}
+                  className="text-text-muted opacity-0 group-hover:opacity-100 hover:text-accent transition-all"
+                  aria-label="Play"
+                >
+                  <Play size={14} />
+                </button>
               </div>
             ))}
           </div>
@@ -324,9 +332,10 @@ interface AlbumDetailProps {
   onArtistClick: (artistId: string) => void;
   onBack: () => void;
   onLibrary: () => void;
+  onPlay?: () => void;
 }
 
-function AlbumDetail({ albumId, onArtistClick, onBack, onLibrary }: AlbumDetailProps) {
+function AlbumDetail({ albumId, onArtistClick, onBack, onLibrary, onPlay }: AlbumDetailProps) {
   const [data, setData] = useState<LibAlbumDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -409,22 +418,30 @@ function AlbumDetail({ albumId, onArtistClick, onBack, onLibrary }: AlbumDetailP
 
       {/* Track list */}
       <div className="px-8 py-5">
-        <div className="grid grid-cols-[2rem_1fr_6rem_3.5rem_auto_auto] gap-3 items-center px-2 py-1.5 border-b border-[#1a1a1a] mb-1">
+        <div className="grid grid-cols-[2rem_1fr_6rem_3.5rem_auto_auto_auto] gap-3 items-center px-2 py-1.5 border-b border-[#1a1a1a] mb-1">
           <span className="font-mono text-[10px] text-text-muted uppercase tracking-widest text-right">#</span>
           <span className="font-mono text-[10px] text-text-muted uppercase tracking-widest">Title</span>
           <span className="font-mono text-[10px] text-text-muted uppercase tracking-widest">Rating</span>
           <span className="font-mono text-[10px] text-text-muted uppercase tracking-widest text-right">Dur</span>
           <span />
           <span />
+          <span />
         </div>
         {tracks.map(t => (
-          <div key={t.id} className="group grid grid-cols-[2rem_1fr_6rem_3.5rem_auto_auto] gap-3 items-center px-2 py-2 hover:bg-[#111] rounded-sm transition-colors">
+          <div key={t.id} className="group grid grid-cols-[2rem_1fr_6rem_3.5rem_auto_auto_auto] gap-3 items-center px-2 py-2 hover:bg-[#111] rounded-sm transition-colors">
             <span className="font-mono text-xs text-text-muted tabular-nums text-right">
               {String(t.track_number ?? 0).padStart(2, '0')}
             </span>
             <span className="text-sm text-text-primary truncate">{t.title}</span>
             <StarRating value={ratings[t.id] ?? 0} onChange={v => handleRate(t.id, v)} size={12} />
             <span className="font-mono text-xs text-text-muted tabular-nums text-right">{formatDuration(t.duration)}</span>
+            <button
+              onClick={() => onPlay?.()}
+              className="text-text-muted opacity-0 group-hover:opacity-100 hover:text-accent transition-all"
+              aria-label="Play"
+            >
+              <Play size={14} />
+            </button>
             <button className="text-text-muted opacity-0 group-hover:opacity-100 hover:text-accent transition-all" title="Add to playlist">
               <ListPlus size={14} />
             </button>
@@ -444,7 +461,11 @@ function AlbumDetail({ albumId, onArtistClick, onBack, onLibrary }: AlbumDetailP
 // Library page (root)
 // ---------------------------------------------------------------------------
 
-export function Library() {
+interface LibraryProps {
+  onPlay?: () => void;
+}
+
+export function Library({ onPlay }: LibraryProps) {
   const [tab, setTab] = useState<Tab>('artists');
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [search, setSearch] = useState('');
@@ -594,6 +615,7 @@ export function Library() {
           artistId={drillArtistId}
           onAlbumClick={(aid, artId) => goToAlbum(aid, artId)}
           onBack={goRoot}
+          onPlay={onPlay}
         />
       </div>
     );
@@ -607,6 +629,7 @@ export function Library() {
           onArtistClick={goToArtist}
           onBack={goBack}
           onLibrary={goRoot}
+          onPlay={onPlay}
         />
       </div>
     );
