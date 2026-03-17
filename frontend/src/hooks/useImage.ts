@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import type { ImageType, ImageResolveResponse } from '../types';
+import { getApiKey } from '../services/api';
 
 // Module-level JS cache — survives page/tab switches without re-fetching.
 // Keys: "type:name:artist" (lowercased). Values: resolved image URL.
@@ -33,7 +34,7 @@ export function useImage(
     const fetchImage = (attempt = 0) => {
       fetch('/api/v1/images/resolve', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Api-Key': getApiKey() },
         body: JSON.stringify({ type, name: safeName, artist: safeArtist }),
       })
         .then(r => r.json() as Promise<ImageResolveResponse>)

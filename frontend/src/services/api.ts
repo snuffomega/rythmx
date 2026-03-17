@@ -33,6 +33,8 @@ const BASE_URL = '/api/v1';
 let _apiKey = '';
 try { _apiKey = localStorage.getItem('rythmx_api_key') ?? ''; } catch { /* private mode */ }
 
+export function getApiKey(): string { return _apiKey; }
+
 export function setApiKey(key: string): void {
   _apiKey = key;
   try { localStorage.setItem('rythmx_api_key', key); } catch { /* ignore */ }
