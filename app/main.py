@@ -190,8 +190,17 @@ def create_app() -> Flask:
         if _lib_empty or _check_lib_sync(_startup_settings):
             import threading as _threading
             from app.services import library_service as _lib_svc
+
+            def _startup_pipeline():
+                _lib_svc.run_auto_pipeline()
+                # After sync completes, fire EnrichmentOrchestrator (30s delay)
+                import time as _time
+                _time.sleep(30)
+                from app.services.api_orchestrator import EnrichmentOrchestrator
+                EnrichmentOrchestrator.get().run_full()
+
             _threading.Thread(
-                target=_lib_svc.run_auto_pipeline,
+                target=_startup_pipeline,
                 daemon=True,
                 name="lib-pipeline-startup",
             ).start()
