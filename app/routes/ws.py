@@ -106,9 +106,11 @@ def ws_handler(ws) -> None:
     On disconnect: remove from registry.
     """
     # --- Origin check (SHRTA Section 3) ---
+    # Empty allowed_origins list = allow any origin (default for self-hosted LAN deployments).
+    # Set WS_ALLOWED_ORIGINS env var to restrict (e.g. "mysite.example.com").
     origin = ws.environ.get("HTTP_ORIGIN", "")
-    allowed_origins: list[str] = current_app.config.get("WS_ALLOWED_ORIGINS", ["localhost", "127.0.0.1"])
-    if origin and not any(o in origin for o in allowed_origins):
+    allowed_origins: list[str] = current_app.config.get("WS_ALLOWED_ORIGINS", [])
+    if allowed_origins and origin and not any(o in origin for o in allowed_origins):
         logger.warning("ws: rejected connection from disallowed origin '%s'", origin)
         ws.close(1008, "Origin not allowed")
         return
