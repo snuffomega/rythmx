@@ -11,6 +11,7 @@ The enrich stage is resumable: only processes albums where itunes_album_id IS NU
 AND deezer_id IS NULL, so interrupted runs pick up where they left off.
 """
 import concurrent.futures
+import difflib
 import logging
 import re
 import sqlite3
@@ -201,6 +202,165 @@ def _deezer_search_album(artist_name: str, album_title: str) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
+# Universal artist validation helpers (Phase 14 — Artist ID Registry)
+# ---------------------------------------------------------------------------
+
+def _match_album_title(lib_title: str, api_title: str) -> float:
+    """
+    Score how well a lib_album title matches an API catalog title.
+    Normalizes both sides via norm() + _strip_title_suffixes() before comparing.
+    Returns 1.0 for exact normalized match; SequenceMatcher ratio otherwise.
+    Threshold for a 'match' in callers is ≥ 0.82.
+    """
+    from app.clients.music_client import norm
+    a = norm(_strip_title_suffixes(lib_title))
+    b = norm(_strip_title_suffixes(api_title))
+    if not a or not b:
+        return 0.0
+    if a == b:
+        return 1.0
+    return difflib.SequenceMatcher(None, a, b).ratio()
+
+
+def _name_similarity_bonus(norm_target: str, norm_candidate: str) -> int:
+    """Return a name similarity score bonus for use in _validate_artist scoring."""
+    if norm_target == norm_candidate:
+        return 1000
+    if norm_target in norm_candidate or norm_candidate in norm_target:
+        return 500
+    # Partial match: first half of one appears in the other (avoids noise on short names)
+    half = len(norm_target) // 2
+    if half > 2 and norm_target[:half] in norm_candidate:
+        return 300
+    return 0
+
+
+def _validate_artist(artist_name: str, lib_album_titles: list[str], source: str) -> dict | None:
+    """
+    Validate artist identity by scoring album catalog overlap against the user's library.
+
+    Same logic applied across all sources:
+      1. Search the API for artist name → up to 5 candidates
+      2. For each candidate (top 3): fetch album catalog + count title overlaps
+      3. score = name_similarity_bonus + (overlap_count × 300)
+      4. Confidence: 0 overlaps = 70 (name-only), 1–2 = 85 (medium), 3+ = 95 (high)
+      5. If no name similarity at all → reject (returns None)
+
+    Returns {artist_id, confidence, album_catalog} or None.
+      - artist_id: the source-specific ID to store (itunes_artist_id / deezer_artist_id / etc.)
+      - confidence: 70 / 85 / 95
+      - album_catalog: list of {id, title} dicts from the API (kept in memory for album matching)
+    """
+    from app.clients.music_client import (
+        norm,
+        search_artist_candidates_itunes,
+        get_artist_albums_itunes,
+        search_artist_candidates_deezer,
+        get_artist_albums_deezer,
+    )
+
+    norm_name = norm(artist_name)
+
+    # --- Fetch candidates per source ---
+    if source == "itunes":
+        raw_candidates = search_artist_candidates_itunes(artist_name)
+        # [{name, id}]
+        candidates = [{"name": c["name"], "id": c["id"]} for c in raw_candidates]
+    elif source == "deezer":
+        raw_candidates = search_artist_candidates_deezer(artist_name)
+        candidates = [{"name": c["name"], "id": c["id"]} for c in raw_candidates]
+    elif source == "lastfm":
+        from app.clients.last_fm_client import (
+            search_artist_candidates_lastfm,
+            get_artist_top_albums_lastfm,
+        )
+        raw_candidates = search_artist_candidates_lastfm(artist_name)
+        candidates = [{"name": c["name"], "id": c.get("mbid", ""), "mbid": c.get("mbid", "")}
+                      for c in raw_candidates]
+    else:
+        logger.debug("_validate_artist: unsupported source '%s'", source)
+        return None
+
+    if not candidates:
+        logger.debug("_validate_artist: no candidates for '%s' on %s", artist_name, source)
+        return None
+
+    # --- Score each candidate ---
+    best: dict | None = None
+    best_score = -1
+
+    for candidate in candidates[:3]:
+        name_bonus = _name_similarity_bonus(norm_name, norm(candidate["name"]))
+        if name_bonus == 0:
+            continue  # skip candidates with no name similarity at all
+
+        # Fetch album catalog for this candidate
+        if source == "itunes":
+            catalog = get_artist_albums_itunes(candidate["id"])
+            catalog_titles = [c["title"] for c in catalog]
+        elif source == "deezer":
+            catalog = get_artist_albums_deezer(candidate["id"])
+            catalog_titles = [c["title"] for c in catalog]
+        elif source == "lastfm":
+            mbid_or_name = candidate.get("mbid") or candidate["name"]
+            use_mbid = bool(candidate.get("mbid"))
+            catalog_titles = get_artist_top_albums_lastfm(mbid_or_name, use_mbid=use_mbid)
+            catalog = [{"title": t} for t in catalog_titles]
+        else:
+            catalog = []
+            catalog_titles = []
+
+        # Count lib_album title overlaps against catalog
+        overlap = 0
+        for lib_title in lib_album_titles:
+            for api_title in catalog_titles:
+                if _match_album_title(lib_title, api_title) >= 0.82:
+                    overlap += 1
+                    break  # count each lib album once
+
+        score = name_bonus + (overlap * 300)
+        if score > best_score:
+            best_score = score
+            best = {
+                "candidate": candidate,
+                "catalog": catalog,
+                "overlap": overlap,
+                "name_bonus": name_bonus,
+            }
+
+    if best is None:
+        logger.debug("_validate_artist: no name-similar candidates for '%s' on %s",
+                     artist_name, source)
+        return None
+
+    # Confidence based on album overlap count
+    overlap = best["overlap"]
+    if overlap >= 3:
+        confidence = 95
+    elif overlap >= 1:
+        confidence = 85
+    else:
+        confidence = 70  # name-only match
+
+    artist_id = best["candidate"].get("id") or best["candidate"].get("mbid", "")
+    if not artist_id:
+        # Last.fm may not return an MBID for all artists — still usable at low confidence
+        logger.debug("_validate_artist: '%s' on %s — no ID in candidate, skipping",
+                     artist_name, source)
+        return None
+
+    logger.debug(
+        "_validate_artist: '%s' on %s → id=%s overlap=%d confidence=%d",
+        artist_name, source, artist_id, overlap, confidence,
+    )
+    return {
+        "artist_id": artist_id,
+        "confidence": confidence,
+        "album_catalog": best["catalog"],
+    }
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -233,16 +393,17 @@ def _prune_old_releases() -> None:
 
 
 def _write_enrichment_meta(conn, source: str, entity_type: str, entity_id: str,
-                           status: str, error_msg: str | None = None) -> None:
+                           status: str, error_msg: str | None = None,
+                           confidence: int | None = None) -> None:
     """Upsert a row into enrichment_meta. Silently ignores if table doesn't exist yet."""
     try:
         conn.execute(
             """
             INSERT OR REPLACE INTO enrichment_meta
-                (source, entity_type, entity_id, status, enriched_at, error_msg)
-            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+                (source, entity_type, entity_id, status, enriched_at, error_msg, confidence)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
             """,
-            (source, entity_type, entity_id, status, error_msg),
+            (source, entity_type, entity_id, status, error_msg, confidence),
         )
     except Exception as e:
         logger.debug("enrichment_meta write skipped: %s", e)
@@ -250,146 +411,269 @@ def _write_enrichment_meta(conn, source: str, entity_type: str, entity_id: str,
 
 def enrich_library(batch_size: int = 50) -> dict:
     """
-    Stage 2: For each lib_album missing iTunes + Deezer IDs, query iTunes then Deezer.
-    Resumable: skips albums already marked not_found in enrichment_meta.
-    Micro-batched: fetches batch_size albums, commits after each batch.
+    Stage 2 — Primary ID Workers: artist-first confidence loop for iTunes + Deezer.
+
+    Batches by artist (not album). For each artist:
+      FAST PATH  — stored artist ID at confidence ≥ 85: skip validation, fetch catalog directly.
+      VALIDATION — no stored ID: run _validate_artist() for iTunes + Deezer independently.
+                   Both always run — writes both itunes_album_id AND deezer_id when found.
+                   This fixes the BPM-blocked bug where iTunes hit → Deezer skipped → deezer_id NULL.
+
+    Album matching uses pre-fetched catalog + _match_album_title() threshold ≥ 0.82.
+
+    Resumable: skips artists where both sources are already 'found'/'not_found' for all albums.
     Returns {enriched, failed, skipped, remaining}.
     """
     enriched = 0
     failed = 0
     skipped = 0
 
+    # Load artists that still have albums needing iTunes or Deezer IDs
     try:
         with _connect() as conn:
-            rows = conn.execute(
+            artist_rows = conn.execute(
                 """
-                SELECT la.id, la.title, la.artist_id, la.local_title,
-                       ar.name AS artist_name
-                FROM lib_albums la
-                JOIN lib_artists ar ON la.artist_id = ar.id
-                WHERE la.itunes_album_id IS NULL
-                  AND la.deezer_id IS NULL
-                  AND la.id NOT IN (
-                      SELECT entity_id FROM enrichment_meta
-                      WHERE entity_type = 'album'
-                        AND status = 'not_found'
-                        AND source IN ('itunes', 'deezer')
-                      GROUP BY entity_id
-                      HAVING COUNT(DISTINCT source) >= 2
-                  )
+                SELECT DISTINCT ar.id, ar.name,
+                       ar.itunes_artist_id, ar.deezer_artist_id
+                FROM lib_artists ar
+                JOIN lib_albums la ON la.artist_id = ar.id
+                WHERE la.removed_at IS NULL
+                  AND (la.itunes_album_id IS NULL OR la.deezer_id IS NULL)
                 LIMIT ?
                 """,
                 (batch_size,),
             ).fetchall()
     except Exception as e:
-        logger.error("enrich_library: could not read lib_albums: %s", e)
+        logger.error("enrich_library: could not read lib_artists: %s", e)
         return {"enriched": 0, "failed": 0, "skipped": 0, "remaining": -1, "error": str(e)}
 
-    if not rows:
+    if not artist_rows:
         logger.info("enrich_library: nothing to enrich — all albums have IDs")
         return {"enriched": 0, "failed": 0, "skipped": 0, "remaining": 0}
 
-    for album in rows:
-        album_id = album["id"]
-        artist_name = album["artist_name"]
-        album_title = _strip_title_suffixes(album["local_title"] or album["title"])
+    for artist in artist_rows:
+        artist_id = artist["id"]
+        artist_name = artist["name"]
 
-        itunes_result = _itunes_search_album(artist_name, album_title)
-        if itunes_result:
-            try:
-                with _connect() as conn:
-                    conn.execute(
-                        """
-                        UPDATE lib_albums
-                        SET itunes_album_id = ?,
-                            api_title = ?,
-                            match_confidence = 90,
-                            updated_at = CURRENT_TIMESTAMP
-                        WHERE id = ?
-                        """,
-                        (itunes_result["itunes_album_id"],
-                         itunes_result.get("api_title", ""),
-                         album_id),
-                    )
-                    # Back-fill itunes_artist_id on lib_artists if not set
-                    if itunes_result.get("itunes_artist_id"):
+        # Load this artist's albums that still need IDs
+        try:
+            with _connect() as conn:
+                album_rows = conn.execute(
+                    """
+                    SELECT id, title, local_title, itunes_album_id, deezer_id
+                    FROM lib_albums
+                    WHERE artist_id = ? AND removed_at IS NULL
+                      AND (itunes_album_id IS NULL OR deezer_id IS NULL)
+                    """,
+                    (artist_id,),
+                ).fetchall()
+        except Exception as e:
+            logger.warning("enrich_library: could not load albums for '%s': %s", artist_name, e)
+            failed += 1
+            continue
+
+        if not album_rows:
+            continue
+
+        lib_titles = [_strip_title_suffixes(r["local_title"] or r["title"]) for r in album_rows]
+
+        # --- iTunes: fast path or validation ---
+        itunes_catalog: list[dict] = []
+        itunes_artist_id = artist["itunes_artist_id"]
+
+        if itunes_artist_id:
+            # Fast path: stored ID — fetch catalog directly, skip validation
+            from app.clients.music_client import get_artist_albums_itunes
+            itunes_catalog = get_artist_albums_itunes(itunes_artist_id)
+            logger.debug("enrich_library: iTunes fast path for '%s' (id=%s, %d albums)",
+                         artist_name, itunes_artist_id, len(itunes_catalog))
+        else:
+            # Validation path: search + album overlap scoring
+            val = _validate_artist(artist_name, lib_titles, "itunes")
+            if val:
+                itunes_artist_id = val["artist_id"]
+                itunes_catalog = val["album_catalog"]
+                try:
+                    with _connect() as conn:
                         conn.execute(
                             """
                             UPDATE lib_artists
-                            SET itunes_artist_id = ?, updated_at = CURRENT_TIMESTAMP
+                            SET itunes_artist_id = ?, match_confidence = ?,
+                                updated_at = CURRENT_TIMESTAMP
                             WHERE id = ? AND itunes_artist_id IS NULL
                             """,
-                            (itunes_result["itunes_artist_id"], album["artist_id"]),
+                            (itunes_artist_id, val["confidence"], artist_id),
                         )
-                    _write_enrichment_meta(conn, "itunes", "album", album_id, "found")
-                enriched += 1
-                logger.debug(
-                    "Enrich: iTunes hit for '%s / %s' → id=%s",
-                    artist_name, album_title, itunes_result["itunes_album_id"],
-                )
-                continue
-            except Exception as e:
-                logger.warning("Enrich: DB write failed for '%s / %s': %s",
-                               artist_name, album_title, e)
-                failed += 1
-                continue
-
-        # iTunes miss — record it so we don't hammer the API again
-        try:
-            with _connect() as conn:
-                _write_enrichment_meta(conn, "itunes", "album", album_id, "not_found")
-        except Exception:
-            pass
-
-        # iTunes miss → try Deezer
-        deezer_result = _deezer_search_album(artist_name, album_title)
-        if deezer_result:
-            try:
-                with _connect() as conn:
-                    conn.execute(
-                        """
-                        UPDATE lib_albums
-                        SET deezer_id = ?,
-                            api_title = ?,
-                            match_confidence = 75,
-                            updated_at = CURRENT_TIMESTAMP
-                        WHERE id = ?
-                        """,
-                        (deezer_result["deezer_id"],
-                         deezer_result.get("api_title", ""),
-                         album_id),
+                        _write_enrichment_meta(conn, "itunes_artist", "artist", artist_id,
+                                               "found", confidence=val["confidence"])
+                    logger.debug(
+                        "enrich_library: iTunes validated '%s' → id=%s conf=%d",
+                        artist_name, itunes_artist_id, val["confidence"],
                     )
-                    _write_enrichment_meta(conn, "deezer", "album", album_id, "found")
-                enriched += 1
-                logger.debug(
-                    "Enrich: Deezer hit for '%s / %s' → id=%s",
-                    artist_name, album_title, deezer_result["deezer_id"],
-                )
-                continue
-            except Exception as e:
-                logger.warning("Enrich: DB write failed for '%s / %s': %s",
-                               artist_name, album_title, e)
-                failed += 1
-                continue
+                except Exception as e:
+                    logger.warning("enrich_library: iTunes artist write failed for '%s': %s",
+                                   artist_name, e)
+            else:
+                try:
+                    with _connect() as conn:
+                        _write_enrichment_meta(conn, "itunes_artist", "artist", artist_id,
+                                               "not_found")
+                except Exception:
+                    pass
 
-        # Both misses — record not_found for Deezer; album excluded from future runs
-        try:
-            with _connect() as conn:
-                conn.execute(
-                    """
-                    UPDATE lib_albums
-                    SET match_confidence = 0,
-                        needs_verification = 1,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                    """,
-                    (album_id,),
+        # --- Deezer: fast path or validation ---
+        deezer_catalog: list[dict] = []
+        deezer_artist_id = artist["deezer_artist_id"]
+
+        if deezer_artist_id:
+            # Fast path: stored ID
+            from app.clients.music_client import get_artist_albums_deezer
+            deezer_catalog = get_artist_albums_deezer(deezer_artist_id)
+            logger.debug("enrich_library: Deezer fast path for '%s' (id=%s, %d albums)",
+                         artist_name, deezer_artist_id, len(deezer_catalog))
+        else:
+            val = _validate_artist(artist_name, lib_titles, "deezer")
+            if val:
+                deezer_artist_id = val["artist_id"]
+                deezer_catalog = val["album_catalog"]
+                try:
+                    with _connect() as conn:
+                        conn.execute(
+                            """
+                            UPDATE lib_artists
+                            SET deezer_artist_id = ?, match_confidence = ?,
+                                updated_at = CURRENT_TIMESTAMP
+                            WHERE id = ? AND deezer_artist_id IS NULL
+                            """,
+                            (deezer_artist_id, val["confidence"], artist_id),
+                        )
+                        _write_enrichment_meta(conn, "deezer_artist", "artist", artist_id,
+                                               "found", confidence=val["confidence"])
+                except Exception as e:
+                    logger.warning("enrich_library: Deezer artist write failed for '%s': %s",
+                                   artist_name, e)
+            else:
+                try:
+                    with _connect() as conn:
+                        _write_enrichment_meta(conn, "deezer_artist", "artist", artist_id,
+                                               "not_found")
+                except Exception:
+                    pass
+
+        # --- Album matching against pre-fetched catalogs ---
+        itunes_titles = {c["title"]: c["id"] for c in itunes_catalog if c.get("title")}
+        deezer_titles = {c["title"]: c.get("id", "") for c in deezer_catalog if c.get("title")}
+
+        for album in album_rows:
+            album_id = album["id"]
+            album_title = _strip_title_suffixes(album["local_title"] or album["title"])
+            album_enriched = False
+
+            # iTunes album match
+            if album["itunes_album_id"] is None and itunes_titles:
+                best_itunes = max(
+                    ((t, _match_album_title(album_title, t)) for t in itunes_titles),
+                    key=lambda x: x[1],
+                    default=(None, 0.0),
                 )
-                _write_enrichment_meta(conn, "deezer", "album", album_id, "not_found")
-        except Exception:
-            pass
-        skipped += 1
-        logger.debug("Enrich: no match for '%s / %s'", artist_name, album_title)
+                if best_itunes[1] >= 0.82:
+                    matched_id = itunes_titles[best_itunes[0]]
+                    try:
+                        with _connect() as conn:
+                            conn.execute(
+                                """
+                                UPDATE lib_albums
+                                SET itunes_album_id = ?,
+                                    api_title = ?,
+                                    match_confidence = 90,
+                                    updated_at = CURRENT_TIMESTAMP
+                                WHERE id = ? AND itunes_album_id IS NULL
+                                """,
+                                (matched_id, best_itunes[0], album_id),
+                            )
+                            _write_enrichment_meta(conn, "itunes", "album", album_id,
+                                                   "found", confidence=90)
+                        album_enriched = True
+                        logger.debug(
+                            "enrich_library: iTunes album hit '%s / %s' → id=%s (score=%.2f)",
+                            artist_name, album_title, matched_id, best_itunes[1],
+                        )
+                    except Exception as e:
+                        logger.warning("enrich_library: iTunes album write failed '%s / %s': %s",
+                                       artist_name, album_title, e)
+                        failed += 1
+                        continue
+                else:
+                    try:
+                        with _connect() as conn:
+                            _write_enrichment_meta(conn, "itunes", "album", album_id,
+                                                   "not_found", confidence=0)
+                    except Exception:
+                        pass
+
+            # Deezer album match (always runs — not a fallback)
+            if album["deezer_id"] is None and deezer_titles:
+                best_deezer = max(
+                    ((t, _match_album_title(album_title, t)) for t in deezer_titles),
+                    key=lambda x: x[1],
+                    default=(None, 0.0),
+                )
+                if best_deezer[1] >= 0.82:
+                    matched_id = deezer_titles[best_deezer[0]]
+                    try:
+                        with _connect() as conn:
+                            conn.execute(
+                                """
+                                UPDATE lib_albums
+                                SET deezer_id = ?,
+                                    match_confidence = CASE
+                                        WHEN itunes_album_id IS NOT NULL THEN 95
+                                        ELSE 75
+                                    END,
+                                    updated_at = CURRENT_TIMESTAMP
+                                WHERE id = ? AND deezer_id IS NULL
+                                """,
+                                (matched_id, album_id),
+                            )
+                            conf = 95 if album["itunes_album_id"] or album_enriched else 75
+                            _write_enrichment_meta(conn, "deezer", "album", album_id,
+                                                   "found", confidence=conf)
+                        album_enriched = True
+                        logger.debug(
+                            "enrich_library: Deezer album hit '%s / %s' → id=%s (score=%.2f)",
+                            artist_name, album_title, matched_id, best_deezer[1],
+                        )
+                    except Exception as e:
+                        logger.warning("enrich_library: Deezer album write failed '%s / %s': %s",
+                                       artist_name, album_title, e)
+                        failed += 1
+                        continue
+                else:
+                    try:
+                        with _connect() as conn:
+                            _write_enrichment_meta(conn, "deezer", "album", album_id,
+                                                   "not_found", confidence=0)
+                    except Exception:
+                        pass
+
+            # Album with no artist catalog match at all → flag for review
+            if not album_enriched and not itunes_titles and not deezer_titles:
+                try:
+                    with _connect() as conn:
+                        conn.execute(
+                            """
+                            UPDATE lib_albums
+                            SET match_confidence = 0, needs_verification = 1,
+                                updated_at = CURRENT_TIMESTAMP
+                            WHERE id = ?
+                            """,
+                            (album_id,),
+                        )
+                except Exception:
+                    pass
+                skipped += 1
+            elif album_enriched:
+                enriched += 1
 
     # Count remaining unenriched albums
     try:
@@ -442,13 +726,12 @@ def enrich_spotify(batch_size: int = 20) -> dict:
         with _connect() as conn:
             rows = conn.execute(
                 """
-                SELECT id, name FROM lib_artists
-                WHERE spotify_artist_id IS NULL
-                  AND id NOT IN (
-                      SELECT entity_id FROM enrichment_meta
-                      WHERE entity_type = 'artist' AND source = 'spotify'
-                        AND status IN ('found', 'not_found')
-                  )
+                SELECT id, name, spotify_artist_id FROM lib_artists
+                WHERE id NOT IN (
+                    SELECT entity_id FROM enrichment_meta
+                    WHERE entity_type = 'artist' AND source = 'spotify'
+                      AND status IN ('found', 'not_found')
+                )
                 LIMIT ?
                 """,
                 (batch_size,),
@@ -466,25 +749,78 @@ def enrich_spotify(batch_size: int = 20) -> dict:
     for artist in rows:
         artist_id = artist["id"]
         artist_name = artist["name"]
+        stored_spotify_id = artist["spotify_artist_id"]
 
         try:
-            # --- Search for artist ---
             from app.clients.music_client import norm
-            rate_limiter.acquire("spotify")
-            results = sp.search(q=f'artist:"{artist_name}"', type="artist", limit=5)
-            items = results.get("artists", {}).get("items", [])
-            if not items:
-                logger.debug("enrich_spotify: no Spotify match for '%s'", artist_name)
-                with _connect() as conn:
-                    _write_enrichment_meta(conn, "spotify", "artist", artist_id, "not_found")
-                skipped += 1
-                continue
 
-            norm_name = norm(artist_name)
-            match = next((a for a in items if norm(a["name"]) == norm_name), items[0])
-            spotify_artist_id = match["id"]
+            spotify_artist_id = stored_spotify_id
+            validation_confidence: int | None = None
 
-            # --- Fetch full artist object (genres, popularity, images) ---
+            if not spotify_artist_id:
+                # Validation path: name search + album overlap scoring
+                # Load lib_album titles for this artist to score candidates
+                try:
+                    with _connect() as conn:
+                        lib_titles = [
+                            _strip_title_suffixes(r["local_title"] or r["title"])
+                            for r in conn.execute(
+                                "SELECT title, local_title FROM lib_albums WHERE artist_id = ? AND removed_at IS NULL",
+                                (artist_id,),
+                            ).fetchall()
+                        ]
+                except Exception:
+                    lib_titles = []
+
+                # Use spotipy search to get candidates, then validate with album overlap
+                rate_limiter.acquire("spotify")
+                results = sp.search(q=f'artist:"{artist_name}"', type="artist", limit=5)
+                items = results.get("artists", {}).get("items", [])
+
+                if not items:
+                    logger.debug("enrich_spotify: no Spotify match for '%s'", artist_name)
+                    with _connect() as conn:
+                        _write_enrichment_meta(conn, "spotify", "artist", artist_id,
+                                               "not_found", confidence=0)
+                    skipped += 1
+                    continue
+
+                norm_name = norm(artist_name)
+                best_candidate = None
+                best_score = -1
+                best_conf = 0
+
+                for candidate in items[:3]:
+                    name_bonus = _name_similarity_bonus(norm_name, norm(candidate["name"]))
+                    if name_bonus == 0:
+                        continue
+                    # Fetch this candidate's album catalog for overlap scoring
+                    rate_limiter.acquire("spotify")
+                    albums_resp = sp.artist_albums(
+                        candidate["id"], include_groups="album,single", limit=50
+                    )
+                    catalog_titles = [a["name"] for a in albums_resp.get("items", [])]
+                    overlap = sum(
+                        1 for lt in lib_titles
+                        if any(_match_album_title(lt, ct) >= 0.82 for ct in catalog_titles)
+                    )
+                    score = name_bonus + (overlap * 300)
+                    if score > best_score:
+                        best_score = score
+                        best_candidate = candidate
+                        best_conf = 95 if overlap >= 3 else (85 if overlap >= 1 else 70)
+
+                if best_candidate is None:
+                    with _connect() as conn:
+                        _write_enrichment_meta(conn, "spotify", "artist", artist_id,
+                                               "not_found", confidence=0)
+                    skipped += 1
+                    continue
+
+                spotify_artist_id = best_candidate["id"]
+                validation_confidence = best_conf
+
+            # --- Fetch full artist object (genres, popularity) ---
             rate_limiter.acquire("spotify")
             artist_data = sp.artist(spotify_artist_id)
 
@@ -516,23 +852,26 @@ def enrich_spotify(batch_size: int = 20) -> dict:
                 # --- Extract + write columns ---
                 genres_json = json.dumps(artist_data.get("genres", []))
                 popularity = artist_data.get("popularity")
+                needs_verification = 1 if (validation_confidence and validation_confidence < 85) else 0
                 conn.execute(
                     """
                     UPDATE lib_artists
                     SET spotify_artist_id = ?,
                         genres_json = ?,
                         popularity = ?,
+                        needs_verification = CASE WHEN ? = 1 THEN 1 ELSE needs_verification END,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                     """,
-                    (spotify_artist_id, genres_json, popularity, artist_id),
+                    (spotify_artist_id, genres_json, popularity, needs_verification, artist_id),
                 )
-                _write_enrichment_meta(conn, "spotify", "artist", artist_id, "found")
+                _write_enrichment_meta(conn, "spotify", "artist", artist_id, "found",
+                                       confidence=validation_confidence)
 
             enriched += 1
             logger.debug(
-                "enrich_spotify: hit for '%s' → id=%s genres=%s popularity=%s",
-                artist_name, spotify_artist_id,
+                "enrich_spotify: hit for '%s' → id=%s conf=%s genres=%s popularity=%s",
+                artist_name, spotify_artist_id, validation_confidence,
                 artist_data.get("genres", [])[:3], popularity,
             )
 
@@ -621,7 +960,7 @@ def enrich_lastfm_tags(batch_size: int = 50) -> dict:
         with _connect() as conn:
             artist_rows = conn.execute(
                 """
-                SELECT id, name FROM lib_artists
+                SELECT id, name, lastfm_mbid FROM lib_artists
                 WHERE lastfm_tags_json IS NULL
                   AND id NOT IN (
                       SELECT entity_id FROM enrichment_meta
@@ -638,9 +977,51 @@ def enrich_lastfm_tags(batch_size: int = 50) -> dict:
                 "failed": 0, "remaining_artists": -1, "remaining_albums": -1, "error": str(e)}
 
     for artist in artist_rows:
-        artist_id, artist_name = artist["id"], artist["name"]
+        artist_id = artist["id"]
+        artist_name = artist["name"]
+        stored_mbid = artist["lastfm_mbid"]
+
         try:
+            # Determine which MBID / name to use for tag lookup
+            mbid_for_tags = stored_mbid
+
+            if not mbid_for_tags:
+                # Validation path: search + album overlap to confirm correct artist
+                try:
+                    with _connect() as conn:
+                        lib_titles = [
+                            _strip_title_suffixes(r["local_title"] or r["title"])
+                            for r in conn.execute(
+                                "SELECT title, local_title FROM lib_albums WHERE artist_id = ? AND removed_at IS NULL",
+                                (artist_id,),
+                            ).fetchall()
+                        ]
+                except Exception:
+                    lib_titles = []
+
+                val = _validate_artist(artist_name, lib_titles, "lastfm")
+                if val and val["confidence"] >= 70:
+                    mbid_for_tags = val["artist_id"]
+                    try:
+                        with _connect() as conn:
+                            conn.execute(
+                                """
+                                UPDATE lib_artists
+                                SET lastfm_mbid = ?,
+                                    needs_verification = CASE WHEN ? < 85 THEN 1 ELSE needs_verification END,
+                                    updated_at = CURRENT_TIMESTAMP
+                                WHERE id = ? AND lastfm_mbid IS NULL
+                                """,
+                                (mbid_for_tags, val["confidence"], artist_id),
+                            )
+                    except Exception as e:
+                        logger.warning("enrich_lastfm_tags: MBID write failed for '%s': %s",
+                                       artist_name, e)
+
+            # Fetch tags — get_artist_tags uses autocorrect, works fine for name lookup.
+            # Stored MBID helps with future fast-path; tag call itself still uses name.
             tags = get_artist_tags(artist_name)
+
             tags_json = json.dumps(tags)
             status = "found" if tags else "not_found"
             with _connect() as conn:

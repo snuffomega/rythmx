@@ -279,3 +279,31 @@ export interface LibAlbumDetail {
   album: LibAlbum;
   tracks: LibTrack[];
 }
+
+// ---------------------------------------------------------------------------
+// Library Audit
+// ---------------------------------------------------------------------------
+
+export interface AuditEnrichmentMeta {
+  status: 'found' | 'not_found' | 'error' | 'fallback' | 'pending';
+  confidence: number | null;
+}
+
+export interface AuditItem {
+  artist_id: string;
+  artist_name: string;
+  album_id: string;
+  album_title: string;
+  match_confidence: number | null;
+  needs_verification: boolean;
+  itunes_album_id: string | null;
+  deezer_id: string | null;
+  enrichment: Record<string, AuditEnrichmentMeta>;
+}
+
+export interface AuditResponse {
+  status: 'ok';
+  items: AuditItem[];
+  total: number;
+  page: number;
+}

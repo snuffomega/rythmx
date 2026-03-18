@@ -27,6 +27,7 @@ import type {
   LibTrack,
   LibArtistDetail,
   LibAlbumDetail,
+  AuditResponse,
 } from '../types';
 
 const BASE_URL = '/api/v1';
@@ -338,5 +339,21 @@ export const libraryBrowseApi = {
     request<{ status: string; track_id: string; rating: number }>(`/library/tracks/${encodeURIComponent(id)}/rating`, {
       method: 'PATCH',
       body: JSON.stringify({ rating }),
+    }),
+  getAudit: (p: { page?: number; per_page?: number } = {}) => {
+    const qs = new URLSearchParams(
+      Object.entries({ per_page: '50', ...p }).filter(([, v]) => v != null) as [string, string][]
+    ).toString();
+    return request<AuditResponse>(`/library/audit?${qs}`);
+  },
+  confirmAuditItem: (body: { entity_type: string; entity_id: string; source: string; confirmed_id: string }) =>
+    request<{ status: string }>('/library/audit/confirm', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  rejectAuditItem: (body: { entity_type: string; entity_id: string; source: string }) =>
+    request<{ status: string }>('/library/audit/reject', {
+      method: 'POST',
+      body: JSON.stringify(body),
     }),
 };

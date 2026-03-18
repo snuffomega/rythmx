@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { CheckCircle, XCircle, Loader2, RefreshCw, Database, Radio, ChevronDown, ChevronUp, Key, Eye, EyeOff, Copy } from 'lucide-react';
 import { useApi } from '../hooks/useApi';
-import { settingsApi, libraryApi, imageServiceApi, setApiKey } from '../services/api';
+import { settingsApi, libraryApi, libraryBrowseApi, imageServiceApi, setApiKey } from '../services/api';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import type { LibraryPlatform, LibraryEnrichStatus, SpotifyEnrichStatus, LastfmTagsStatus, DeezerBpmStatus } from '../types';
 
@@ -114,6 +114,7 @@ export function SettingsPage({ toast }: SettingsPageProps) {
   const [enrichingDeezerBpm, setEnrichingDeezerBpm] = useState(false);
   const [liveDeezerBpmStatus, setLiveDeezerBpmStatus] = useState<DeezerBpmStatus | null>(null);
   const [switchingBackend, setSwitchingBackend] = useState(false);
+  const [auditTotal, setAuditTotal] = useState(0);
   const [warmingCache, setWarmingCache] = useState(false);
   const [confirmClearHistory, setConfirmClearHistory] = useState(false);
   const [confirmClearImageCache, setConfirmClearImageCache] = useState(false);
@@ -126,6 +127,12 @@ export function SettingsPage({ toast }: SettingsPageProps) {
 
   useEffect(() => {
     settingsApi.getApiKey().then(setApiKeyState).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    libraryBrowseApi.getAudit({ per_page: 1 })
+      .then(r => setAuditTotal(r.total))
+      .catch(() => {});
   }, []);
 
   const handlePlatformChange = async (p: LibraryPlatform) => {
@@ -564,6 +571,19 @@ export function SettingsPage({ toast }: SettingsPageProps) {
                 {enrichingDeezerBpm ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
                 Enrich BPM
               </button>
+            </div>
+          )}
+
+          {auditTotal > 0 && (
+            <div className="pt-2">
+              <p className="text-xs text-[#666]">
+                <span className="inline-flex items-center gap-1.5 text-amber-500 font-medium">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block" />
+                  {auditTotal} item{auditTotal !== 1 ? 's' : ''} need review
+                </span>
+                {' '}— low-confidence matches flagged for manual confirmation.{' '}
+                <span className="text-[#444]">Audit UI coming in Phase 13c.</span>
+              </p>
             </div>
           )}
         </div>

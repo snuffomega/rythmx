@@ -220,6 +220,29 @@ def search_artist_candidates_itunes(name: str, limit: int = 5) -> list[dict]:
     return results
 
 
+def get_artist_albums_itunes(itunes_artist_id: str) -> list[dict]:
+    """
+    Return the full album catalog for an iTunes artist ID as [{id, title}].
+    Returns up to 200 albums (covers essentially all discographies).
+    Used by _validate_artist() to score album-catalog overlap.
+    """
+    data = _itunes_get("/lookup", {
+        "id": itunes_artist_id,
+        "entity": "album",
+        "limit": 200,
+    })
+    if not data or not data.get("results"):
+        return []
+    return [
+        {
+            "id": str(item.get("collectionId", "")),
+            "title": item.get("collectionName", ""),
+        }
+        for item in data["results"]
+        if item.get("wrapperType") == "collection" and item.get("collectionName")
+    ]
+
+
 def get_artist_top_tracks_itunes(itunes_artist_id: str, limit: int = 10) -> list[str]:
     """
     Return top track title strings for an iTunes artist ID.
@@ -331,6 +354,47 @@ def _deezer_get_releases(deezer_id: str, cutoff: datetime,
         else:
             break
     return releases
+
+
+def search_artist_candidates_deezer(name: str, limit: int = 5) -> list[dict]:
+    """
+    Return Deezer artist search candidates as [{name: str, id: str}].
+    Tries name variants (& → and, punctuation stripped) if the original returns nothing.
+    Used by _validate_artist() in library_service for album-overlap scoring.
+    """
+    results = []
+    for term in _search_variants(name):
+        data = _deezer_get("/search/artist", {"q": term, "limit": limit})
+        if not data or not data.get("data"):
+            continue
+        for artist in data["data"]:
+            aid = str(artist.get("id", ""))
+            aname = artist.get("name", "")
+            if aid:
+                results.append({"name": aname, "id": aid})
+        if results:
+            break
+    return results
+
+
+def get_artist_albums_deezer(artist_id: str) -> list[dict]:
+    """
+    Return the album catalog for a Deezer artist ID as [{id, title, record_type}].
+    Returns up to 100 albums (covers essentially all discographies).
+    Used by _validate_artist() to score album-catalog overlap.
+    """
+    data = _deezer_get(f"/artist/{artist_id}/albums", {"limit": 100})
+    if not data or not data.get("data"):
+        return []
+    return [
+        {
+            "id": str(album.get("id", "")),
+            "title": album.get("title", ""),
+            "record_type": album.get("record_type", "album"),
+        }
+        for album in data["data"]
+        if album.get("title")
+    ]
 
 
 # ---------------------------------------------------------------------------
