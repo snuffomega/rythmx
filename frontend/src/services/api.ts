@@ -81,6 +81,29 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     },
     ...options,
   });
+  if (res.status === 401) {
+    // Stale key (e.g. fresh DB install). Clear and re-bootstrap, then retry once.
+    setApiKey('');
+    await initApiKey();
+    const retry = await fetch(`${BASE_URL}${path}`, {
+      headers: {
+        'Content-Type': 'application/json',
+        ...(_apiKey ? { 'X-Api-Key': _apiKey } : {}),
+        ...options?.headers,
+      },
+      ...options,
+    });
+    if (!retry.ok) {
+      const err = await retry.text().catch(() => 'Request failed');
+      throw new ApiError(err || `HTTP ${retry.status}`, retry.status);
+    }
+    const retryData: unknown = await retry.json();
+    if (retryData && typeof retryData === 'object' && (retryData as Record<string, unknown>).status === 'error') {
+      const d = retryData as Record<string, unknown>;
+      throw new ApiError(typeof d.error === 'string' ? d.error : typeof d.message === 'string' ? d.message : 'API error');
+    }
+    return retryData as T;
+  }
   if (!res.ok) {
     const err = await res.text().catch(() => 'Request failed');
     throw new ApiError(err || `HTTP ${res.status}`, res.status);
