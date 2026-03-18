@@ -395,15 +395,18 @@ def _prune_old_releases() -> None:
 def _write_enrichment_meta(conn, source: str, entity_type: str, entity_id: str,
                            status: str, error_msg: str | None = None,
                            confidence: int | None = None) -> None:
-    """Upsert a row into enrichment_meta. Silently ignores if table doesn't exist yet."""
+    """Upsert a row into enrichment_meta. Silently ignores if table doesn't exist yet.
+    For 'not_found' status, automatically sets retry_after = date('now', '+30 days') (S3-6)."""
     try:
         conn.execute(
             """
             INSERT OR REPLACE INTO enrichment_meta
-                (source, entity_type, entity_id, status, enriched_at, error_msg, confidence)
-            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
+                (source, entity_type, entity_id, status, enriched_at, error_msg, confidence,
+                 retry_after)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?,
+                    CASE WHEN ? = 'not_found' THEN date('now', '+30 days') ELSE NULL END)
             """,
-            (source, entity_type, entity_id, status, error_msg, confidence),
+            (source, entity_type, entity_id, status, error_msg, confidence, status),
         )
     except Exception as e:
         logger.debug("enrichment_meta write skipped: %s", e)
@@ -692,15 +695,11 @@ def enrich_library(batch_size: int = 50) -> dict:
     return {"enriched": enriched, "failed": failed, "skipped": skipped, "remaining": remaining}
 
 
-def enrich_spotify(batch_size: int = 20) -> dict:
+def enrich_artist_ids_spotify(batch_size: int = 20) -> dict:
     """
-    Spotify enrichment pass: for each lib_artist missing spotify_artist_id,
-    resolve via Spotify API → store raw JSON → extract genres, popularity.
-    Also fetches appears_on albums and audio features for owned tracks.
-
-    Writes raw API responses to spotify_raw_cache for dev replay / API expiry survival.
-    Rate-limited via config.SPOTIFY_RATE_LIMIT_RPM.
-    Resumable: skips artists already in enrichment_meta with source='spotify'.
+    Stage 2 — Spotify ID Worker: validate + store spotify_artist_id only.
+    No rich data (genres, popularity) — those belong in Stage 3 (enrich_genres_spotify).
+    Optional: gracefully skips if SPOTIFY_CLIENT_ID/SECRET not configured.
     Returns {enriched, skipped, failed, remaining}.
     """
     if not config.SPOTIFY_CLIENT_ID or not config.SPOTIFY_CLIENT_SECRET:
@@ -715,7 +714,7 @@ def enrich_spotify(batch_size: int = 20) -> dict:
             client_secret=config.SPOTIFY_CLIENT_SECRET,
         ))
     except Exception as e:
-        logger.error("enrich_spotify: Spotify client init failed: %s", e)
+        logger.error("enrich_artist_ids_spotify: Spotify client init failed: %s", e)
         return {"enriched": 0, "skipped": 0, "failed": 0, "remaining": -1, "error": str(e)}
 
     enriched = 0
@@ -726,111 +725,211 @@ def enrich_spotify(batch_size: int = 20) -> dict:
         with _connect() as conn:
             rows = conn.execute(
                 """
-                SELECT id, name, spotify_artist_id FROM lib_artists
-                WHERE id NOT IN (
-                    SELECT entity_id FROM enrichment_meta
-                    WHERE entity_type = 'artist' AND source = 'spotify'
-                      AND status IN ('found', 'not_found')
-                )
+                SELECT id, name FROM lib_artists
+                WHERE spotify_artist_id IS NULL
+                  AND id NOT IN (
+                      SELECT entity_id FROM enrichment_meta
+                      WHERE entity_type = 'artist' AND source = 'spotify_id'
+                        AND (status = 'found'
+                             OR (status = 'not_found'
+                                 AND (retry_after IS NULL OR retry_after > date('now'))))
+                  )
                 LIMIT ?
                 """,
                 (batch_size,),
             ).fetchall()
     except Exception as e:
-        logger.error("enrich_spotify: could not read lib_artists: %s", e)
+        logger.error("enrich_artist_ids_spotify: could not read lib_artists: %s", e)
         return {"enriched": 0, "skipped": 0, "failed": 0, "remaining": -1, "error": str(e)}
 
     if not rows:
-        logger.info("enrich_spotify: nothing to enrich — all artists have Spotify IDs")
         return {"enriched": 0, "skipped": 0, "failed": 0, "remaining": 0}
-
-    import json
 
     for artist in rows:
         artist_id = artist["id"]
         artist_name = artist["name"]
-        stored_spotify_id = artist["spotify_artist_id"]
 
         try:
             from app.clients.music_client import norm
 
-            spotify_artist_id = stored_spotify_id
-            validation_confidence: int | None = None
+            try:
+                with _connect() as conn:
+                    lib_titles = [
+                        _strip_title_suffixes(r["local_title"] or r["title"])
+                        for r in conn.execute(
+                            "SELECT title, local_title FROM lib_albums WHERE artist_id = ? AND removed_at IS NULL",
+                            (artist_id,),
+                        ).fetchall()
+                    ]
+            except Exception:
+                lib_titles = []
 
-            if not spotify_artist_id:
-                # Validation path: name search + album overlap scoring
-                # Load lib_album titles for this artist to score candidates
-                try:
-                    with _connect() as conn:
-                        lib_titles = [
-                            _strip_title_suffixes(r["local_title"] or r["title"])
-                            for r in conn.execute(
-                                "SELECT title, local_title FROM lib_albums WHERE artist_id = ? AND removed_at IS NULL",
-                                (artist_id,),
-                            ).fetchall()
-                        ]
-                except Exception:
-                    lib_titles = []
+            rate_limiter.acquire("spotify")
+            results = sp.search(q=f'artist:"{artist_name}"', type="artist", limit=5)
+            items = results.get("artists", {}).get("items", [])
 
-                # Use spotipy search to get candidates, then validate with album overlap
+            if not items:
+                with _connect() as conn:
+                    _write_enrichment_meta(conn, "spotify_id", "artist", artist_id,
+                                           "not_found", confidence=0)
+                skipped += 1
+                continue
+
+            norm_name = norm(artist_name)
+            best_candidate = None
+            best_score = -1
+            best_conf = 0
+
+            for candidate in items[:3]:
+                name_bonus = _name_similarity_bonus(norm_name, norm(candidate["name"]))
+                if name_bonus == 0:
+                    continue
                 rate_limiter.acquire("spotify")
-                results = sp.search(q=f'artist:"{artist_name}"', type="artist", limit=5)
-                items = results.get("artists", {}).get("items", [])
+                albums_resp = sp.artist_albums(
+                    candidate["id"], include_groups="album,single", limit=50
+                )
+                catalog_titles = [a["name"] for a in albums_resp.get("items", [])]
+                overlap = sum(
+                    1 for lt in lib_titles
+                    if any(_match_album_title(lt, ct) >= 0.82 for ct in catalog_titles)
+                )
+                score = name_bonus + (overlap * 300)
+                if score > best_score:
+                    best_score = score
+                    best_candidate = candidate
+                    best_conf = 95 if overlap >= 3 else (85 if overlap >= 1 else 70)
 
-                if not items:
-                    logger.debug("enrich_spotify: no Spotify match for '%s'", artist_name)
-                    with _connect() as conn:
-                        _write_enrichment_meta(conn, "spotify", "artist", artist_id,
-                                               "not_found", confidence=0)
-                    skipped += 1
-                    continue
+            if best_candidate is None:
+                with _connect() as conn:
+                    _write_enrichment_meta(conn, "spotify_id", "artist", artist_id,
+                                           "not_found", confidence=0)
+                skipped += 1
+                continue
 
-                norm_name = norm(artist_name)
-                best_candidate = None
-                best_score = -1
-                best_conf = 0
+            needs_verification = 1 if best_conf < 85 else 0
+            with _connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE lib_artists
+                    SET spotify_artist_id = ?,
+                        needs_verification = CASE WHEN ? = 1 THEN 1 ELSE needs_verification END,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ? AND spotify_artist_id IS NULL
+                    """,
+                    (best_candidate["id"], needs_verification, artist_id),
+                )
+                _write_enrichment_meta(conn, "spotify_id", "artist", artist_id,
+                                       "found", confidence=best_conf)
+            enriched += 1
+            logger.debug("enrich_artist_ids_spotify: '%s' → id=%s conf=%d",
+                         artist_name, best_candidate["id"], best_conf)
 
-                for candidate in items[:3]:
-                    name_bonus = _name_similarity_bonus(norm_name, norm(candidate["name"]))
-                    if name_bonus == 0:
-                        continue
-                    # Fetch this candidate's album catalog for overlap scoring
-                    rate_limiter.acquire("spotify")
-                    albums_resp = sp.artist_albums(
-                        candidate["id"], include_groups="album,single", limit=50
-                    )
-                    catalog_titles = [a["name"] for a in albums_resp.get("items", [])]
-                    overlap = sum(
-                        1 for lt in lib_titles
-                        if any(_match_album_title(lt, ct) >= 0.82 for ct in catalog_titles)
-                    )
-                    score = name_bonus + (overlap * 300)
-                    if score > best_score:
-                        best_score = score
-                        best_candidate = candidate
-                        best_conf = 95 if overlap >= 3 else (85 if overlap >= 1 else 70)
+        except Exception as e:
+            msg = str(e)
+            if "429" in msg or "rate" in msg.lower():
+                logger.warning("enrich_artist_ids_spotify: rate limit hit on '%s' — stopping", artist_name)
+                break
+            logger.warning("enrich_artist_ids_spotify: failed for '%s': %s", artist_name, e)
+            try:
+                with _connect() as conn:
+                    _write_enrichment_meta(conn, "spotify_id", "artist", artist_id,
+                                           "error", error_msg=str(e)[:200])
+            except Exception:
+                pass
+            failed += 1
 
-                if best_candidate is None:
-                    with _connect() as conn:
-                        _write_enrichment_meta(conn, "spotify", "artist", artist_id,
-                                               "not_found", confidence=0)
-                    skipped += 1
-                    continue
+    try:
+        with _connect() as conn:
+            remaining_row = conn.execute(
+                """
+                SELECT COUNT(*) FROM lib_artists
+                WHERE spotify_artist_id IS NULL
+                  AND id NOT IN (
+                      SELECT entity_id FROM enrichment_meta
+                      WHERE entity_type = 'artist' AND source = 'spotify_id'
+                        AND (status = 'found'
+                             OR (status = 'not_found'
+                                 AND (retry_after IS NULL OR retry_after > date('now'))))
+                  )
+                """
+            ).fetchone()
+            remaining = remaining_row[0] if remaining_row else -1
+    except Exception:
+        remaining = -1
 
-                spotify_artist_id = best_candidate["id"]
-                validation_confidence = best_conf
+    logger.info("enrich_artist_ids_spotify: enriched=%d, skipped=%d, failed=%d, remaining=%d",
+                enriched, skipped, failed, remaining)
+    return {"enriched": enriched, "skipped": skipped, "failed": failed, "remaining": remaining}
 
-            # --- Fetch full artist object (genres, popularity) ---
+
+def enrich_genres_spotify(batch_size: int = 20) -> dict:
+    """
+    Stage 3 — Spotify genres + popularity worker.
+    Requires: spotify_artist_id stored by enrich_artist_ids_spotify() (Stage 2).
+    Fetches: genres_json, popularity, appears_on albums, raw cache.
+    Optional: gracefully skips if SPOTIFY_CLIENT_ID/SECRET not configured.
+    Returns {enriched, skipped, failed, remaining}.
+    """
+    if not config.SPOTIFY_CLIENT_ID or not config.SPOTIFY_CLIENT_SECRET:
+        return {"enriched": 0, "skipped": 0, "failed": 0, "remaining": -1,
+                "error": "Spotify credentials not configured"}
+
+    try:
+        import spotipy  # type: ignore[import]
+        from spotipy.oauth2 import SpotifyClientCredentials  # type: ignore[import]
+        sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
+            client_id=config.SPOTIFY_CLIENT_ID,
+            client_secret=config.SPOTIFY_CLIENT_SECRET,
+        ))
+    except Exception as e:
+        logger.error("enrich_genres_spotify: Spotify client init failed: %s", e)
+        return {"enriched": 0, "skipped": 0, "failed": 0, "remaining": -1, "error": str(e)}
+
+    import json
+
+    enriched = 0
+    skipped = 0
+    failed = 0
+
+    try:
+        with _connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, name, spotify_artist_id FROM lib_artists
+                WHERE spotify_artist_id IS NOT NULL
+                  AND genres_json IS NULL
+                  AND id NOT IN (
+                      SELECT entity_id FROM enrichment_meta
+                      WHERE entity_type = 'artist' AND source = 'spotify_genres'
+                        AND (status = 'found'
+                             OR (status = 'not_found'
+                                 AND (retry_after IS NULL OR retry_after > date('now'))))
+                  )
+                LIMIT ?
+                """,
+                (batch_size,),
+            ).fetchall()
+    except Exception as e:
+        logger.error("enrich_genres_spotify: could not read lib_artists: %s", e)
+        return {"enriched": 0, "skipped": 0, "failed": 0, "remaining": -1, "error": str(e)}
+
+    if not rows:
+        return {"enriched": 0, "skipped": 0, "failed": 0, "remaining": 0}
+
+    for artist in rows:
+        artist_id = artist["id"]
+        artist_name = artist["name"]
+        spotify_artist_id = artist["spotify_artist_id"]
+
+        try:
             rate_limiter.acquire("spotify")
             artist_data = sp.artist(spotify_artist_id)
 
-            # --- Fetch appears_on albums ---
             rate_limiter.acquire("spotify")
             appears_on_data = sp.artist_albums(
                 spotify_artist_id, include_groups="appears_on", limit=20
             )
 
-            # --- Write raw cache ---
             with _connect() as conn:
                 conn.execute(
                     """
@@ -848,58 +947,50 @@ def enrich_spotify(batch_size: int = 20) -> dict:
                     """,
                     (spotify_artist_id, artist_name, json.dumps(appears_on_data)),
                 )
-
-                # --- Extract + write columns ---
                 genres_json = json.dumps(artist_data.get("genres", []))
                 popularity = artist_data.get("popularity")
-                needs_verification = 1 if (validation_confidence and validation_confidence < 85) else 0
                 conn.execute(
                     """
                     UPDATE lib_artists
-                    SET spotify_artist_id = ?,
-                        genres_json = ?,
+                    SET genres_json = ?,
                         popularity = ?,
-                        needs_verification = CASE WHEN ? = 1 THEN 1 ELSE needs_verification END,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                     """,
-                    (spotify_artist_id, genres_json, popularity, needs_verification, artist_id),
+                    (genres_json, popularity, artist_id),
                 )
-                _write_enrichment_meta(conn, "spotify", "artist", artist_id, "found",
-                                       confidence=validation_confidence)
-
+                _write_enrichment_meta(conn, "spotify_genres", "artist", artist_id, "found")
             enriched += 1
-            logger.debug(
-                "enrich_spotify: hit for '%s' → id=%s conf=%s genres=%s popularity=%s",
-                artist_name, spotify_artist_id, validation_confidence,
-                artist_data.get("genres", [])[:3], popularity,
-            )
+            logger.debug("enrich_genres_spotify: '%s' → genres=%s popularity=%s",
+                         artist_name, artist_data.get("genres", [])[:3], popularity)
 
         except Exception as e:
             msg = str(e)
             if "429" in msg or "rate" in msg.lower():
-                logger.warning("enrich_spotify: rate limit hit on '%s' — stopping batch", artist_name)
+                logger.warning("enrich_genres_spotify: rate limit hit on '%s' — stopping", artist_name)
                 break
-            logger.warning("enrich_spotify: failed for '%s': %s", artist_name, e)
+            logger.warning("enrich_genres_spotify: failed for '%s': %s", artist_name, e)
             try:
                 with _connect() as conn:
-                    _write_enrichment_meta(conn, "spotify", "artist", artist_id, "error",
-                                           error_msg=str(e)[:200])
+                    _write_enrichment_meta(conn, "spotify_genres", "artist", artist_id,
+                                           "error", error_msg=str(e)[:200])
             except Exception:
                 pass
             failed += 1
 
-    # Count remaining
     try:
         with _connect() as conn:
             remaining_row = conn.execute(
                 """
                 SELECT COUNT(*) FROM lib_artists
-                WHERE spotify_artist_id IS NULL
+                WHERE spotify_artist_id IS NOT NULL
+                  AND genres_json IS NULL
                   AND id NOT IN (
                       SELECT entity_id FROM enrichment_meta
-                      WHERE entity_type = 'artist' AND source = 'spotify'
-                        AND status IN ('found', 'not_found')
+                      WHERE entity_type = 'artist' AND source = 'spotify_genres'
+                        AND (status = 'found'
+                             OR (status = 'not_found'
+                                 AND (retry_after IS NULL OR retry_after > date('now'))))
                   )
                 """
             ).fetchone()
@@ -907,9 +998,27 @@ def enrich_spotify(batch_size: int = 20) -> dict:
     except Exception:
         remaining = -1
 
-    logger.info("enrich_spotify: enriched=%d, skipped=%d, failed=%d, remaining=%d",
+    logger.info("enrich_genres_spotify: enriched=%d, skipped=%d, failed=%d, remaining=%d",
                 enriched, skipped, failed, remaining)
     return {"enriched": enriched, "skipped": skipped, "failed": failed, "remaining": remaining}
+
+
+def enrich_spotify(batch_size: int = 20) -> dict:
+    """
+    Thin wrapper — runs Stage 2 (ID resolution) then Stage 3 (genres/popularity).
+    For direct per-stage invocation use enrich_artist_ids_spotify() or enrich_genres_spotify().
+    Returns combined result dict.
+    """
+    s2 = enrich_artist_ids_spotify(batch_size)
+    s3 = enrich_genres_spotify(batch_size)
+    return {
+        "enriched": s2.get("enriched", 0) + s3.get("enriched", 0),
+        "skipped": s2.get("skipped", 0) + s3.get("skipped", 0),
+        "failed": s2.get("failed", 0) + s3.get("failed", 0),
+        "remaining": s3.get("remaining", -1),
+        "stage2": s2,
+        "stage3": s3,
+    }
 
 
 def get_spotify_status() -> dict:
@@ -936,15 +1045,143 @@ def get_spotify_status() -> dict:
     }
 
 
-def enrich_lastfm_tags(batch_size: int = 50) -> dict:
+def _normalize_lastfm_tags(raw_tags: list) -> list[str]:
     """
-    Last.fm genre tag enrichment pass.
+    Normalize raw Last.fm tags to canonical genre labels (Stage 3 S3-4 inline normalization).
+    raw_tags format: [[tag_name, tag_count], ...] or [tag_name, ...]
+    Returns up to 5 matched canonical labels (deduplicated, in score order).
+    Unknown tags are discarded — only whitelist matches are kept.
+    """
+    canonical: list[str] = []
+    seen: set[str] = set()
+    for tag_pair in raw_tags:
+        tag_name = (tag_pair[0] if isinstance(tag_pair, (list, tuple)) else str(tag_pair)).lower().strip()
+        label = config.LASTFM_GENRE_WHITELIST.get(tag_name)
+        if label and label not in seen:
+            canonical.append(label)
+            seen.add(label)
+            if len(canonical) >= 5:
+                break
+    return canonical
 
-    Artist pass: fetches artist.getTopTags for each lib_artist missing lastfm_tags_json.
-    Album pass: fetches album.getTopTags for each lib_album missing lastfm_tags_json;
-                falls back to parent artist's tags when Last.fm has no album-level data.
 
-    Resumable — skips rows already in enrichment_meta(source='lastfm_tags').
+def enrich_artist_ids_lastfm(batch_size: int = 50) -> dict:
+    """
+    Stage 2 — Last.fm MBID Worker: validate + store lastfm_mbid only.
+    No tag fetching — tags belong in Stage 3 (enrich_tags_lastfm).
+    Returns {enriched, skipped, failed, remaining}.
+    """
+    enriched = 0
+    skipped = 0
+    failed = 0
+
+    try:
+        with _connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, name FROM lib_artists
+                WHERE lastfm_mbid IS NULL
+                  AND id NOT IN (
+                      SELECT entity_id FROM enrichment_meta
+                      WHERE entity_type = 'artist' AND source = 'lastfm_id'
+                        AND (status = 'found'
+                             OR (status = 'not_found'
+                                 AND (retry_after IS NULL OR retry_after > date('now'))))
+                  )
+                LIMIT ?
+                """,
+                (batch_size,),
+            ).fetchall()
+    except Exception as e:
+        logger.error("enrich_artist_ids_lastfm: could not read lib_artists: %s", e)
+        return {"enriched": 0, "skipped": 0, "failed": 0, "remaining": -1, "error": str(e)}
+
+    if not rows:
+        return {"enriched": 0, "skipped": 0, "failed": 0, "remaining": 0}
+
+    for artist in rows:
+        artist_id = artist["id"]
+        artist_name = artist["name"]
+
+        try:
+            try:
+                with _connect() as conn:
+                    lib_titles = [
+                        _strip_title_suffixes(r["local_title"] or r["title"])
+                        for r in conn.execute(
+                            "SELECT title, local_title FROM lib_albums WHERE artist_id = ? AND removed_at IS NULL",
+                            (artist_id,),
+                        ).fetchall()
+                    ]
+            except Exception:
+                lib_titles = []
+
+            val = _validate_artist(artist_name, lib_titles, "lastfm")
+            if val and val["confidence"] >= 70:
+                mbid = val["artist_id"]
+                needs_verification = 1 if val["confidence"] < 85 else 0
+                with _connect() as conn:
+                    conn.execute(
+                        """
+                        UPDATE lib_artists
+                        SET lastfm_mbid = ?,
+                            needs_verification = CASE WHEN ? = 1 THEN 1 ELSE needs_verification END,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ? AND lastfm_mbid IS NULL
+                        """,
+                        (mbid, needs_verification, artist_id),
+                    )
+                    _write_enrichment_meta(conn, "lastfm_id", "artist", artist_id,
+                                           "found", confidence=val["confidence"])
+                enriched += 1
+                logger.debug("enrich_artist_ids_lastfm: '%s' → mbid=%s conf=%d",
+                             artist_name, mbid, val["confidence"])
+            else:
+                with _connect() as conn:
+                    _write_enrichment_meta(conn, "lastfm_id", "artist", artist_id,
+                                           "not_found", confidence=0)
+                skipped += 1
+
+        except Exception as e:
+            logger.warning("enrich_artist_ids_lastfm: failed for '%s': %s", artist_name, e)
+            try:
+                with _connect() as conn:
+                    _write_enrichment_meta(conn, "lastfm_id", "artist", artist_id,
+                                           "error", error_msg=str(e)[:200])
+            except Exception:
+                pass
+            failed += 1
+
+    try:
+        with _connect() as conn:
+            remaining_row = conn.execute(
+                """
+                SELECT COUNT(*) FROM lib_artists
+                WHERE lastfm_mbid IS NULL
+                  AND id NOT IN (
+                      SELECT entity_id FROM enrichment_meta
+                      WHERE entity_type = 'artist' AND source = 'lastfm_id'
+                        AND (status = 'found'
+                             OR (status = 'not_found'
+                                 AND (retry_after IS NULL OR retry_after > date('now'))))
+                  )
+                """
+            ).fetchone()
+            remaining = remaining_row[0] if remaining_row else -1
+    except Exception:
+        remaining = -1
+
+    logger.info("enrich_artist_ids_lastfm: enriched=%d, skipped=%d, failed=%d, remaining=%d",
+                enriched, skipped, failed, remaining)
+    return {"enriched": enriched, "skipped": skipped, "failed": failed, "remaining": remaining}
+
+
+def enrich_tags_lastfm(batch_size: int = 50) -> dict:
+    """
+    Stage 3 — Last.fm tags worker (artist + album).
+    Requires: lastfm_mbid stored by enrich_artist_ids_lastfm() (Stage 2).
+    Artists without lastfm_mbid are still attempted by name (graceful degradation).
+    Normalizes tags inline: top 5, whitelist-filtered, canonical labels (S3-4).
     Returns {enriched_artists, enriched_albums, skipped, failed, remaining_artists, remaining_albums}.
     """
     from app.clients.last_fm_client import get_artist_tags, get_album_tags
@@ -965,65 +1202,28 @@ def enrich_lastfm_tags(batch_size: int = 50) -> dict:
                   AND id NOT IN (
                       SELECT entity_id FROM enrichment_meta
                       WHERE entity_type = 'artist' AND source = 'lastfm_tags'
-                        AND status IN ('found', 'not_found')
+                        AND (status = 'found'
+                             OR (status = 'not_found'
+                                 AND (retry_after IS NULL OR retry_after > date('now'))))
                   )
                 LIMIT ?
                 """,
                 (batch_size,),
             ).fetchall()
     except Exception as e:
-        logger.error("enrich_lastfm_tags: could not read lib_artists: %s", e)
+        logger.error("enrich_tags_lastfm: could not read lib_artists: %s", e)
         return {"enriched_artists": 0, "enriched_albums": 0, "skipped": 0,
                 "failed": 0, "remaining_artists": -1, "remaining_albums": -1, "error": str(e)}
 
     for artist in artist_rows:
         artist_id = artist["id"]
         artist_name = artist["name"]
-        stored_mbid = artist["lastfm_mbid"]
 
         try:
-            # Determine which MBID / name to use for tag lookup
-            mbid_for_tags = stored_mbid
-
-            if not mbid_for_tags:
-                # Validation path: search + album overlap to confirm correct artist
-                try:
-                    with _connect() as conn:
-                        lib_titles = [
-                            _strip_title_suffixes(r["local_title"] or r["title"])
-                            for r in conn.execute(
-                                "SELECT title, local_title FROM lib_albums WHERE artist_id = ? AND removed_at IS NULL",
-                                (artist_id,),
-                            ).fetchall()
-                        ]
-                except Exception:
-                    lib_titles = []
-
-                val = _validate_artist(artist_name, lib_titles, "lastfm")
-                if val and val["confidence"] >= 70:
-                    mbid_for_tags = val["artist_id"]
-                    try:
-                        with _connect() as conn:
-                            conn.execute(
-                                """
-                                UPDATE lib_artists
-                                SET lastfm_mbid = ?,
-                                    needs_verification = CASE WHEN ? < 85 THEN 1 ELSE needs_verification END,
-                                    updated_at = CURRENT_TIMESTAMP
-                                WHERE id = ? AND lastfm_mbid IS NULL
-                                """,
-                                (mbid_for_tags, val["confidence"], artist_id),
-                            )
-                    except Exception as e:
-                        logger.warning("enrich_lastfm_tags: MBID write failed for '%s': %s",
-                                       artist_name, e)
-
-            # Fetch tags — get_artist_tags uses autocorrect, works fine for name lookup.
-            # Stored MBID helps with future fast-path; tag call itself still uses name.
-            tags = get_artist_tags(artist_name)
-
-            tags_json = json.dumps(tags)
-            status = "found" if tags else "not_found"
+            raw_tags = get_artist_tags(artist_name)
+            canonical = _normalize_lastfm_tags(raw_tags)
+            tags_json = json.dumps(canonical)
+            status = "found" if canonical else "not_found"
             with _connect() as conn:
                 conn.execute(
                     "UPDATE lib_artists SET lastfm_tags_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -1031,9 +1231,9 @@ def enrich_lastfm_tags(batch_size: int = 50) -> dict:
                 )
                 _write_enrichment_meta(conn, "lastfm_tags", "artist", artist_id, status)
             enriched_artists += 1
-            logger.debug("enrich_lastfm_tags artist '%s': %s", artist_name, tags)
+            logger.debug("enrich_tags_lastfm artist '%s': %s", artist_name, canonical)
         except Exception as e:
-            logger.warning("enrich_lastfm_tags: artist '%s' failed: %s", artist_name, e)
+            logger.warning("enrich_tags_lastfm: artist '%s' failed: %s", artist_name, e)
             try:
                 with _connect() as conn:
                     _write_enrichment_meta(conn, "lastfm_tags", "artist", artist_id, "error",
@@ -1055,14 +1255,17 @@ def enrich_lastfm_tags(batch_size: int = 50) -> dict:
                   AND a.id NOT IN (
                       SELECT entity_id FROM enrichment_meta
                       WHERE entity_type = 'album' AND source = 'lastfm_tags'
-                        AND status IN ('found', 'not_found', 'fallback')
+                        AND (status = 'found'
+                             OR status = 'fallback'
+                             OR (status = 'not_found'
+                                 AND (retry_after IS NULL OR retry_after > date('now'))))
                   )
                 LIMIT ?
                 """,
                 (batch_size,),
             ).fetchall()
     except Exception as e:
-        logger.error("enrich_lastfm_tags: could not read lib_albums: %s", e)
+        logger.error("enrich_tags_lastfm: could not read lib_albums: %s", e)
         album_rows = []
 
     for album in album_rows:
@@ -1071,12 +1274,13 @@ def enrich_lastfm_tags(batch_size: int = 50) -> dict:
         artist_name = album["artist_name"]
         artist_tags_json = album["artist_tags"]
         try:
-            tags = get_album_tags(artist_name, album_title)
-            if tags:
-                tags_json = json.dumps(tags)
+            raw_tags = get_album_tags(artist_name, album_title)
+            if raw_tags:
+                canonical = _normalize_lastfm_tags(raw_tags)
+                tags_json = json.dumps(canonical)
                 status = "found"
             else:
-                # Fallback: use parent artist's tags
+                # Fallback: use parent artist's already-normalized tags
                 tags_json = artist_tags_json or json.dumps([])
                 status = "fallback"
             with _connect() as conn:
@@ -1086,10 +1290,10 @@ def enrich_lastfm_tags(batch_size: int = 50) -> dict:
                 )
                 _write_enrichment_meta(conn, "lastfm_tags", "album", album_id, status)
             enriched_albums += 1
-            logger.debug("enrich_lastfm_tags album '%s / %s': %s (status=%s)",
-                         artist_name, album_title, tags, status)
+            logger.debug("enrich_tags_lastfm album '%s / %s': status=%s",
+                         artist_name, album_title, status)
         except Exception as e:
-            logger.warning("enrich_lastfm_tags: album '%s / %s' failed: %s",
+            logger.warning("enrich_tags_lastfm: album '%s / %s' failed: %s",
                            artist_name, album_title, e)
             try:
                 with _connect() as conn:
@@ -1106,18 +1310,24 @@ def enrich_lastfm_tags(batch_size: int = 50) -> dict:
                 """SELECT COUNT(*) FROM lib_artists WHERE lastfm_tags_json IS NULL
                    AND id NOT IN (SELECT entity_id FROM enrichment_meta
                                   WHERE entity_type='artist' AND source='lastfm_tags'
-                                    AND status IN ('found','not_found'))"""
+                                    AND (status = 'found'
+                                         OR (status = 'not_found'
+                                             AND (retry_after IS NULL
+                                                  OR retry_after > date('now')))))"""
             ).fetchone()[0]
             rem_albums = conn.execute(
                 """SELECT COUNT(*) FROM lib_albums WHERE lastfm_tags_json IS NULL
                    AND id NOT IN (SELECT entity_id FROM enrichment_meta
                                   WHERE entity_type='album' AND source='lastfm_tags'
-                                    AND status IN ('found','not_found','fallback'))"""
+                                    AND (status IN ('found', 'fallback')
+                                         OR (status = 'not_found'
+                                             AND (retry_after IS NULL
+                                                  OR retry_after > date('now')))))"""
             ).fetchone()[0]
     except Exception:
         rem_artists = rem_albums = -1
 
-    logger.info("enrich_lastfm_tags: artists=%d albums=%d failed=%d remaining=%d/%d",
+    logger.info("enrich_tags_lastfm: artists=%d albums=%d failed=%d remaining=%d/%d",
                 enriched_artists, enriched_albums, failed, rem_artists, rem_albums)
     return {
         "enriched_artists": enriched_artists,
@@ -1126,6 +1336,26 @@ def enrich_lastfm_tags(batch_size: int = 50) -> dict:
         "failed": failed,
         "remaining_artists": rem_artists,
         "remaining_albums": rem_albums,
+    }
+
+
+def enrich_lastfm_tags(batch_size: int = 50) -> dict:
+    """
+    Thin wrapper — runs Stage 2 (MBID resolution) then Stage 3 (tags + normalization).
+    For direct per-stage invocation use enrich_artist_ids_lastfm() or enrich_tags_lastfm().
+    Returns combined result dict.
+    """
+    s2 = enrich_artist_ids_lastfm(batch_size)
+    s3 = enrich_tags_lastfm(batch_size)
+    return {
+        "enriched_artists": s3.get("enriched_artists", 0),
+        "enriched_albums": s3.get("enriched_albums", 0),
+        "skipped": s2.get("skipped", 0) + s3.get("skipped", 0),
+        "failed": s2.get("failed", 0) + s3.get("failed", 0),
+        "remaining_artists": s3.get("remaining_artists", -1),
+        "remaining_albums": s3.get("remaining_albums", -1),
+        "stage2": s2,
+        "stage3": s3,
     }
 
 
@@ -1191,6 +1421,315 @@ def get_status() -> dict:
         "enriched_albums": enriched_albums,
         "enrich_pct": enrich_pct,
     }
+
+
+# ---------------------------------------------------------------------------
+# Stage 3 — Rich data workers (S3-1 through S3-5)
+# ---------------------------------------------------------------------------
+
+
+def enrich_itunes_rich(batch_size: int = 50) -> dict:
+    """
+    Stage 3 — iTunes rich data worker: genre + release_date per album.
+    Requires: itunes_album_id (from Stage 2 enrich_library).
+    Writes: lib_albums.genre (COALESCE — won't overwrite existing), lib_albums.release_date.
+    Returns {enriched, skipped, failed, remaining}.
+    """
+    from app.clients.music_client import get_album_itunes_rich
+
+    enriched = 0
+    skipped = 0
+    failed = 0
+
+    try:
+        with _connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, itunes_album_id, title FROM lib_albums
+                WHERE itunes_album_id IS NOT NULL
+                  AND (genre IS NULL OR release_date IS NULL)
+                  AND id NOT IN (
+                      SELECT entity_id FROM enrichment_meta
+                      WHERE entity_type = 'album' AND source = 'itunes_rich'
+                        AND (status = 'found'
+                             OR (status = 'not_found'
+                                 AND (retry_after IS NULL OR retry_after > date('now'))))
+                  )
+                LIMIT ?
+                """,
+                (batch_size,),
+            ).fetchall()
+    except Exception as e:
+        logger.error("enrich_itunes_rich: could not read lib_albums: %s", e)
+        return {"enriched": 0, "skipped": 0, "failed": 0, "remaining": -1, "error": str(e)}
+
+    if not rows:
+        return {"enriched": 0, "skipped": 0, "failed": 0, "remaining": 0}
+
+    for album in rows:
+        album_id = album["id"]
+        itunes_album_id = album["itunes_album_id"]
+        album_title = album["title"]
+
+        try:
+            result = get_album_itunes_rich(itunes_album_id)
+            if result and (result.get("genre") or result.get("release_date")):
+                with _connect() as conn:
+                    conn.execute(
+                        """
+                        UPDATE lib_albums
+                        SET genre = COALESCE(genre, ?),
+                            release_date = COALESCE(release_date, ?),
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                        """,
+                        (result.get("genre") or None, result.get("release_date") or None, album_id),
+                    )
+                    _write_enrichment_meta(conn, "itunes_rich", "album", album_id, "found")
+                enriched += 1
+                logger.debug("enrich_itunes_rich: '%s' → genre=%s release=%s",
+                             album_title, result.get("genre"), result.get("release_date"))
+            else:
+                with _connect() as conn:
+                    _write_enrichment_meta(conn, "itunes_rich", "album", album_id, "not_found")
+                skipped += 1
+
+        except Exception as e:
+            logger.warning("enrich_itunes_rich: album '%s' failed: %s", album_title, e)
+            try:
+                with _connect() as conn:
+                    _write_enrichment_meta(conn, "itunes_rich", "album", album_id, "error",
+                                           error_msg=str(e)[:200])
+            except Exception:
+                pass
+            failed += 1
+
+    try:
+        with _connect() as conn:
+            remaining_row = conn.execute(
+                """
+                SELECT COUNT(*) FROM lib_albums
+                WHERE itunes_album_id IS NOT NULL
+                  AND (genre IS NULL OR release_date IS NULL)
+                  AND id NOT IN (
+                      SELECT entity_id FROM enrichment_meta
+                      WHERE entity_type = 'album' AND source = 'itunes_rich'
+                        AND (status = 'found'
+                             OR (status = 'not_found'
+                                 AND (retry_after IS NULL OR retry_after > date('now'))))
+                  )
+                """
+            ).fetchone()
+            remaining = remaining_row[0] if remaining_row else -1
+    except Exception:
+        remaining = -1
+
+    logger.info("enrich_itunes_rich: enriched=%d, skipped=%d, failed=%d, remaining=%d",
+                enriched, skipped, failed, remaining)
+    return {"enriched": enriched, "skipped": skipped, "failed": failed, "remaining": remaining}
+
+
+def enrich_deezer_release(batch_size: int = 50) -> dict:
+    """
+    Stage 3 — Deezer release data worker: record_type + thumb_url (CDN art URL).
+    Requires: deezer_id (from Stage 2 enrich_library).
+    Writes: lib_albums.record_type, lib_albums.thumb_url (CDN URL — persists when Plex offline).
+    COALESCE on both columns — won't overwrite existing values.
+    Returns {enriched, skipped, failed, remaining}.
+    """
+    from app.clients.music_client import get_deezer_album_info
+
+    enriched = 0
+    skipped = 0
+    failed = 0
+
+    try:
+        with _connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, deezer_id, title FROM lib_albums
+                WHERE deezer_id IS NOT NULL
+                  AND id NOT IN (
+                      SELECT entity_id FROM enrichment_meta
+                      WHERE entity_type = 'album' AND source = 'deezer_rich'
+                        AND (status = 'found'
+                             OR (status = 'not_found'
+                                 AND (retry_after IS NULL OR retry_after > date('now'))))
+                  )
+                LIMIT ?
+                """,
+                (batch_size,),
+            ).fetchall()
+    except Exception as e:
+        logger.error("enrich_deezer_release: could not read lib_albums: %s", e)
+        return {"enriched": 0, "skipped": 0, "failed": 0, "remaining": -1, "error": str(e)}
+
+    if not rows:
+        return {"enriched": 0, "skipped": 0, "failed": 0, "remaining": 0}
+
+    for album in rows:
+        album_id = album["id"]
+        deezer_id = album["deezer_id"]
+        album_title = album["title"]
+
+        try:
+            result = get_deezer_album_info(deezer_id)
+            if result:
+                with _connect() as conn:
+                    conn.execute(
+                        """
+                        UPDATE lib_albums
+                        SET record_type = COALESCE(record_type, ?),
+                            thumb_url = COALESCE(thumb_url, ?),
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                        """,
+                        (result.get("record_type") or None,
+                         result.get("thumb_url") or None,
+                         album_id),
+                    )
+                    _write_enrichment_meta(conn, "deezer_rich", "album", album_id, "found")
+                enriched += 1
+                logger.debug("enrich_deezer_release: '%s' → type=%s thumb=%s",
+                             album_title, result.get("record_type"), bool(result.get("thumb_url")))
+            else:
+                with _connect() as conn:
+                    _write_enrichment_meta(conn, "deezer_rich", "album", album_id, "not_found")
+                skipped += 1
+
+        except Exception as e:
+            logger.warning("enrich_deezer_release: album '%s' failed: %s", album_title, e)
+            try:
+                with _connect() as conn:
+                    _write_enrichment_meta(conn, "deezer_rich", "album", album_id, "error",
+                                           error_msg=str(e)[:200])
+            except Exception:
+                pass
+            failed += 1
+
+    try:
+        with _connect() as conn:
+            remaining_row = conn.execute(
+                """
+                SELECT COUNT(*) FROM lib_albums
+                WHERE deezer_id IS NOT NULL
+                  AND id NOT IN (
+                      SELECT entity_id FROM enrichment_meta
+                      WHERE entity_type = 'album' AND source = 'deezer_rich'
+                        AND (status = 'found'
+                             OR (status = 'not_found'
+                                 AND (retry_after IS NULL OR retry_after > date('now'))))
+                  )
+                """
+            ).fetchone()
+            remaining = remaining_row[0] if remaining_row else -1
+    except Exception:
+        remaining = -1
+
+    logger.info("enrich_deezer_release: enriched=%d, skipped=%d, failed=%d, remaining=%d",
+                enriched, skipped, failed, remaining)
+    return {"enriched": enriched, "skipped": skipped, "failed": failed, "remaining": remaining}
+
+
+def enrich_stats_lastfm(batch_size: int = 50) -> dict:
+    """
+    Stage 3 — Last.fm listener/play count worker.
+    Requires: lastfm_mbid (from Stage 2 enrich_artist_ids_lastfm).
+    Writes: lib_artists.listener_count, lib_artists.global_play_count.
+    Returns {enriched, skipped, failed, remaining}.
+    """
+    from app.clients.last_fm_client import get_artist_info_lastfm
+
+    enriched = 0
+    skipped = 0
+    failed = 0
+
+    try:
+        with _connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, name, lastfm_mbid FROM lib_artists
+                WHERE lastfm_mbid IS NOT NULL
+                  AND (listener_count IS NULL OR global_play_count IS NULL)
+                  AND id NOT IN (
+                      SELECT entity_id FROM enrichment_meta
+                      WHERE entity_type = 'artist' AND source = 'lastfm_stats'
+                        AND (status = 'found'
+                             OR (status = 'not_found'
+                                 AND (retry_after IS NULL OR retry_after > date('now'))))
+                  )
+                LIMIT ?
+                """,
+                (batch_size,),
+            ).fetchall()
+    except Exception as e:
+        logger.error("enrich_stats_lastfm: could not read lib_artists: %s", e)
+        return {"enriched": 0, "skipped": 0, "failed": 0, "remaining": -1, "error": str(e)}
+
+    if not rows:
+        return {"enriched": 0, "skipped": 0, "failed": 0, "remaining": 0}
+
+    for artist in rows:
+        artist_id = artist["id"]
+        artist_name = artist["name"]
+        mbid = artist["lastfm_mbid"]
+
+        try:
+            stats = get_artist_info_lastfm(mbid=mbid, name=artist_name)
+            if stats:
+                with _connect() as conn:
+                    conn.execute(
+                        """
+                        UPDATE lib_artists
+                        SET listener_count = ?,
+                            global_play_count = ?,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                        """,
+                        (stats["listeners"], stats["playcount"], artist_id),
+                    )
+                    _write_enrichment_meta(conn, "lastfm_stats", "artist", artist_id, "found")
+                enriched += 1
+                logger.debug("enrich_stats_lastfm: '%s' → listeners=%d plays=%d",
+                             artist_name, stats["listeners"], stats["playcount"])
+            else:
+                with _connect() as conn:
+                    _write_enrichment_meta(conn, "lastfm_stats", "artist", artist_id, "not_found")
+                skipped += 1
+
+        except Exception as e:
+            logger.warning("enrich_stats_lastfm: artist '%s' failed: %s", artist_name, e)
+            try:
+                with _connect() as conn:
+                    _write_enrichment_meta(conn, "lastfm_stats", "artist", artist_id, "error",
+                                           error_msg=str(e)[:200])
+            except Exception:
+                pass
+            failed += 1
+
+    try:
+        with _connect() as conn:
+            remaining_row = conn.execute(
+                """
+                SELECT COUNT(*) FROM lib_artists
+                WHERE lastfm_mbid IS NOT NULL
+                  AND (listener_count IS NULL OR global_play_count IS NULL)
+                  AND id NOT IN (
+                      SELECT entity_id FROM enrichment_meta
+                      WHERE entity_type = 'artist' AND source = 'lastfm_stats'
+                        AND (status = 'found'
+                             OR (status = 'not_found'
+                                 AND (retry_after IS NULL OR retry_after > date('now'))))
+                  )
+                """
+            ).fetchone()
+            remaining = remaining_row[0] if remaining_row else -1
+    except Exception:
+        remaining = -1
+
+    logger.info("enrich_stats_lastfm: enriched=%d, skipped=%d, failed=%d, remaining=%d",
+                enriched, skipped, failed, remaining)
+    return {"enriched": enriched, "skipped": skipped, "failed": failed, "remaining": remaining}
 
 
 # ---------------------------------------------------------------------------
@@ -1284,7 +1823,9 @@ def enrich_deezer_bpm(batch_size: int = 30) -> dict:
                   AND la.id NOT IN (
                       SELECT entity_id FROM enrichment_meta
                       WHERE entity_type = 'album' AND source = 'deezer_bpm'
-                        AND status IN ('found', 'not_found')
+                        AND (status = 'found'
+                             OR (status = 'not_found'
+                                 AND (retry_after IS NULL OR retry_after > date('now'))))
                   )
                 LIMIT ?
                 """,

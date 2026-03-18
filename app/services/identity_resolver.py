@@ -108,7 +108,30 @@ def resolve_artist(lastfm_name: str, force: bool = False) -> dict:
     norm_name = norm(lastfm_name)
 
     # ------------------------------------------------------------------
-    # Cache check
+    # CC-1: DB-first lookup — check lib_artists before any API call.
+    # If the library enrichment pipeline has already resolved this artist
+    # with confidence >= 85, use the stored ID immediately.
+    # ------------------------------------------------------------------
+    if not force:
+        try:
+            from app.db.rythmx_store import get_lib_artist_ids
+            lib_ids = get_lib_artist_ids(lastfm_name)
+            if lib_ids and lib_ids.get("itunes_artist_id") and int(lib_ids.get("match_confidence") or 0) >= 85:
+                result.update({
+                    "itunes_artist_id": lib_ids["itunes_artist_id"],
+                    "itunes_artist_name": None,
+                    "confidence": int(lib_ids["match_confidence"]),
+                    "confidence_level": "high",
+                    "reason_codes": ["lib_artists_hit"],
+                })
+                logger.debug("Identity DB-first hit: %s (confidence=%d, itunes_id=%s)",
+                             lastfm_name, lib_ids["match_confidence"], lib_ids["itunes_artist_id"])
+                return result
+        except Exception as e:
+            logger.debug("Identity DB-first lookup failed (non-fatal): %s", e)
+
+    # ------------------------------------------------------------------
+    # Cache check (artist_identity_cache)
     # ------------------------------------------------------------------
     if not force:
         cached = rythmx_store.get_cached_artist(lastfm_name)

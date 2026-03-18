@@ -130,6 +130,9 @@ def sync_library() -> dict:
                     track_number = getattr(plex_track, "trackNumber", None)
                     disc_number = getattr(plex_track, "discNumber", None)
                     duration = getattr(plex_track, "duration", None)
+                    # S1-1: user rating (0.0–10.0 float in Plex; NULL if unrated) and play count
+                    user_rating = getattr(plex_track, "userRating", None)
+                    play_count = getattr(plex_track, "viewCount", None)
 
                     file_path = None
                     file_size = None
@@ -143,18 +146,20 @@ def sync_library() -> dict:
                     conn.execute(
                         "INSERT OR IGNORE INTO lib_tracks "
                         "(id, album_id, artist_id, title, title_lower, track_number, disc_number, "
-                        "duration, file_path, file_size, source_platform, updated_at) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'plex', CURRENT_TIMESTAMP)",
+                        "duration, file_path, file_size, rating, play_count, source_platform, updated_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'plex', CURRENT_TIMESTAMP)",
                         (track_id, album_id, artist_id, track_title, track_title.lower(),
-                         track_number, disc_number, duration, file_path, file_size),
+                         track_number, disc_number, duration, file_path, file_size,
+                         user_rating, play_count),
                     )
                     conn.execute(
                         "UPDATE lib_tracks SET title = ?, title_lower = ?, track_number = ?, "
                         "disc_number = ?, duration = ?, file_path = ?, file_size = ?, "
+                        "rating = ?, play_count = ?, "
                         "source_platform = 'plex', updated_at = CURRENT_TIMESTAMP, removed_at = NULL "
                         "WHERE id = ?",
                         (track_title, track_title.lower(), track_number, disc_number,
-                         duration, file_path, file_size, track_id),
+                         duration, file_path, file_size, user_rating, play_count, track_id),
                     )
                     conn.execute("INSERT OR IGNORE INTO _seen_tracks (id) VALUES (?)", (track_id,))
                     track_count += 1
@@ -268,10 +273,10 @@ def get_deezer_artist_id(artist_name: str) -> str | None:
     try:
         with _connect() as conn:
             row = conn.execute(
-                "SELECT deezer_id FROM lib_artists WHERE name_lower = lower(?)",
+                "SELECT deezer_artist_id FROM lib_artists WHERE name_lower = lower(?)",
                 (artist_name,),
             ).fetchone()
-            return row["deezer_id"] if row else None
+            return row["deezer_artist_id"] if row else None
     except Exception as e:
         logger.debug("plex_reader.get_deezer_artist_id failed: %s", e)
         return None

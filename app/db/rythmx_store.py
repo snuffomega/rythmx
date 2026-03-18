@@ -513,6 +513,31 @@ def update_playlist_plex_id(playlist_name: str, plex_playlist_id: str):
 
 # --- Artist identity cache ---
 
+def get_lib_artist_ids(artist_name: str) -> dict | None:
+    """
+    CC-1 DB-first lookup: return stored provider IDs from lib_artists for an artist name.
+    Returns {itunes_artist_id, deezer_artist_id, spotify_artist_id, lastfm_mbid,
+             match_confidence} or None if artist not found in lib_artists.
+    Used by identity_resolver.resolve_artist() before any API call.
+    """
+    try:
+        with _connect() as conn:
+            row = conn.execute(
+                """
+                SELECT itunes_artist_id, deezer_artist_id, spotify_artist_id,
+                       lastfm_mbid, match_confidence
+                FROM lib_artists
+                WHERE name_lower = lower(?)
+                  AND removed_at IS NULL
+                LIMIT 1
+                """,
+                (artist_name,),
+            ).fetchone()
+            return dict(row) if row else None
+    except Exception:
+        return None
+
+
 def get_cached_artist(lastfm_name: str) -> dict | None:
     """Return cached provider IDs for a Last.fm artist name, or None if not cached."""
     with _connect() as conn:

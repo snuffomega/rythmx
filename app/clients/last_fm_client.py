@@ -370,6 +370,36 @@ def get_artist_top_albums_lastfm(mbid_or_name: str, use_mbid: bool = False) -> l
     return titles
 
 
+def get_artist_info_lastfm(mbid: str = "", name: str = "") -> dict | None:
+    """
+    Fetch artist.getInfo from Last.fm. Returns {listeners: int, playcount: int} or None.
+    Prefers mbid lookup for precision; falls back to name-based lookup.
+    Returns None if API key not set, API returns no data, or stats are unavailable.
+    Used by enrich_stats_lastfm() (Stage 3 S3-5).
+    """
+    if not mbid and not name:
+        return None
+    params: dict = {"autocorrect": 1}
+    if mbid:
+        params["mbid"] = mbid
+    else:
+        params["artist"] = name
+
+    data = _get("artist.getInfo", params)
+    if not data:
+        return None
+    artist = data.get("artist", {})
+    if not artist:
+        return None
+    stats = artist.get("stats", {})
+    try:
+        listeners = int(stats.get("listeners", 0))
+        playcount = int(stats.get("playcount", 0))
+    except (ValueError, TypeError):
+        return None
+    return {"listeners": listeners, "playcount": playcount}
+
+
 def test_connection() -> dict:
     """
     Verify Last.fm credentials work. Returns {status, username} or {status, error}.

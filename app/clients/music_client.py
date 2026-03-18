@@ -275,6 +275,31 @@ _deezer_session = requests.Session()
 _deezer_session.headers["Accept"] = "application/json"
 
 
+def get_album_itunes_rich(itunes_album_id: str) -> dict | None:
+    """
+    Fetch genre and release_date for an album from iTunes by collectionId.
+    Returns {genre: str, release_date: str} or None if not found / API error.
+    release_date is trimmed to YYYY-MM-DD format.
+    Used by enrich_itunes_rich() (Stage 3 S3-1).
+    """
+    data = _itunes_get("/lookup", {"id": itunes_album_id, "entity": "album"})
+    if not data or not data.get("results"):
+        return None
+    for item in data["results"]:
+        if (item.get("wrapperType") == "collection"
+                and str(item.get("collectionId", "")) == str(itunes_album_id)):
+            return {
+                "genre": item.get("primaryGenreName", "") or "",
+                "release_date": (item.get("releaseDate", "") or "")[:10],
+            }
+    # Fallback: first result if exact match not found
+    item = data["results"][0]
+    return {
+        "genre": item.get("primaryGenreName", "") or "",
+        "release_date": (item.get("releaseDate", "") or "")[:10],
+    }
+
+
 def _deezer_get(path: str, params: dict = None) -> dict | None:
     rate_limiter.acquire("deezer")
     try:
@@ -395,6 +420,23 @@ def get_artist_albums_deezer(artist_id: str) -> list[dict]:
         for album in data["data"]
         if album.get("title")
     ]
+
+
+def get_deezer_album_info(deezer_album_id: str) -> dict | None:
+    """
+    Fetch record_type and cover thumbnail URL for a Deezer album by ID.
+    Returns {record_type: str, thumb_url: str} or None on API error.
+    record_type values from Deezer: "album", "single", "compile" (EP/compilation).
+    thumb_url is the medium cover (500x500) CDN URL — persists when Plex is offline.
+    Used by enrich_deezer_release() (Stage 3 S3-2).
+    """
+    data = _deezer_get(f"/album/{deezer_album_id}")
+    if not data:
+        return None
+    return {
+        "record_type": data.get("record_type", "") or "",
+        "thumb_url": data.get("cover_medium", "") or data.get("cover", "") or "",
+    }
 
 
 # ---------------------------------------------------------------------------
