@@ -6,7 +6,7 @@ export type ApiErrorResponse = { status: 'error'; error?: string; message?: stri
 export type Period = '7day' | '1month' | '3month' | '6month' | '12month' | 'overall';
 export type AcquisitionStatus = 'pending' | 'submitted' | 'found' | 'failed' | 'skipped';
 export type ReleaseKind = 'album' | 'ep' | 'single' | 'compilation';
-export type LibraryBackend = 'soulsync' | 'plex' | 'jellyfin' | 'navidrome';
+export type LibraryPlatform = 'plex' | 'jellyfin' | 'navidrome';
 
 export interface Artist {
   name: string;
@@ -168,7 +168,7 @@ export interface StatsSummary {
 }
 
 export interface LibraryStatus {
-  backend: LibraryBackend;
+  platform: LibraryPlatform;
   track_count: number;
   last_synced?: string;
   synced?: boolean;
@@ -221,7 +221,7 @@ export interface Settings {
   soulsync_url?: string;
   spotify_client_id?: string;
   spotify_client_secret?: string;
-  library_backend: LibraryBackend;
+  library_platform: LibraryPlatform;
 }
 
 export interface Toast {

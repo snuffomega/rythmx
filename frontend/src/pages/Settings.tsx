@@ -3,11 +3,10 @@ import { CheckCircle, XCircle, Loader2, RefreshCw, Database, Radio, ChevronDown,
 import { useApi } from '../hooks/useApi';
 import { settingsApi, libraryApi, imageServiceApi, setApiKey } from '../services/api';
 import { ConfirmDialog } from '../components/ConfirmDialog';
-import type { LibraryBackend, LibraryEnrichStatus, SpotifyEnrichStatus, LastfmTagsStatus, DeezerBpmStatus } from '../types';
+import type { LibraryPlatform, LibraryEnrichStatus, SpotifyEnrichStatus, LastfmTagsStatus, DeezerBpmStatus } from '../types';
 
-const BACKEND_LABELS: Record<string, string> = {
-  soulsync: 'SoulSync',
-  plex: 'Plex Library',
+const PLATFORM_LABELS: Record<string, string> = {
+  plex: 'Plex',
   jellyfin: 'Jellyfin',
   navidrome: 'Navidrome',
 };
@@ -100,11 +99,11 @@ export function SettingsPage({ toast }: SettingsPageProps) {
   const { data: spotifyStatusData, refetch: refetchSpotifyStatus } = useApi(() => libraryApi.spotifyStatus());
   const { data: lastfmTagsData, refetch: refetchLastfmTags } = useApi(() => libraryApi.lastfmTagsStatus());
   const { data: deezerBpmData, refetch: refetchDeezerBpm } = useApi(() => libraryApi.deezerBpmStatus());
-  const [backend, setBackend] = useState<LibraryBackend>('soulsync');
+  const [platform, setPlatform] = useState<LibraryPlatform>('plex');
 
   useEffect(() => {
-    if (libraryStatus?.backend) setBackend(libraryStatus.backend as LibraryBackend);
-  }, [libraryStatus?.backend]);
+    if (libraryStatus?.platform) setPlatform(libraryStatus.platform as LibraryPlatform);
+  }, [libraryStatus?.platform]);
   const [syncing, setSyncing] = useState(false);
   const [enriching, setEnriching] = useState(false);
   const [liveEnrichStatus, setLiveEnrichStatus] = useState<LibraryEnrichStatus | null>(null);
@@ -129,15 +128,15 @@ export function SettingsPage({ toast }: SettingsPageProps) {
     settingsApi.getApiKey().then(setApiKeyState).catch(() => {});
   }, []);
 
-  const handleBackendChange = async (b: LibraryBackend) => {
-    setBackend(b);
+  const handlePlatformChange = async (p: LibraryPlatform) => {
+    setPlatform(p);
     setSwitchingBackend(true);
     try {
-      await settingsApi.setLibraryBackend(b);
-      toast.success(`Switched to ${BACKEND_LABELS[b] ?? b}`);
+      await settingsApi.setLibraryPlatform(p);
+      toast.success(`Switched to ${PLATFORM_LABELS[p] ?? p}`);
       refetchLibrary();
     } catch {
-      toast.error('Failed to switch backend');
+      toast.error('Failed to switch platform');
     } finally {
       setSwitchingBackend(false);
     }
@@ -358,8 +357,8 @@ export function SettingsPage({ toast }: SettingsPageProps) {
             onTest={settingsApi.testPlex}
           />
           <ServiceCard
-            key={`library-${backend}`}
-            name={BACKEND_LABELS[backend] ?? 'Library DB'}
+            key={`library-${platform}`}
+            name="SoulSync Enrichment"
             icon={<Database size={16} className="text-accent" />}
             onTest={settingsApi.testSoulsync}
           />
@@ -382,15 +381,14 @@ export function SettingsPage({ toast }: SettingsPageProps) {
 
         <div className="space-y-5">
           <div>
-            <label className="label">Library Backend</label>
+            <label className="label">Library Platform</label>
             <div className="relative mt-1">
               <select
                 className="select w-full"
-                value={libraryStatus?.backend ?? backend}
-                onChange={e => handleBackendChange(e.target.value as LibraryBackend)}
+                value={libraryStatus?.platform ?? platform}
+                onChange={e => handlePlatformChange(e.target.value as LibraryPlatform)}
                 disabled={switchingBackend}
               >
-                <option value="soulsync">SoulSync</option>
                 <option value="plex">Plex</option>
                 <option value="jellyfin">Jellyfin</option>
                 <option value="navidrome">Navidrome</option>
@@ -420,7 +418,7 @@ export function SettingsPage({ toast }: SettingsPageProps) {
             Sync Library Now
           </button>
 
-          {backend === 'plex' && (
+          {platform === 'plex' && (
             <div className="space-y-2 pt-1">
               {(() => {
                 const status = liveEnrichStatus ?? libraryStatus;

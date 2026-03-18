@@ -236,10 +236,10 @@ export const settingsApi = {
     request<ConnectionStatus>('/settings/test-spotify', { method: 'POST' }),
   testFanart: () =>
     request<ConnectionStatus>('/settings/test-fanart', { method: 'POST' }),
-  setLibraryBackend: (backend: 'soulsync' | 'plex' | 'jellyfin' | 'navidrome') =>
-    request<{ status: string }>('/settings/library-backend', {
+  setLibraryPlatform: (platform: 'plex' | 'jellyfin' | 'navidrome') =>
+    request<{ status: string; platform: string }>('/settings/library-platform', {
       method: 'POST',
-      body: JSON.stringify({ backend }),
+      body: JSON.stringify({ platform }),
     }),
   clearHistory: () =>
     request<{ status: string }>('/settings/clear-history', { method: 'POST' }),
