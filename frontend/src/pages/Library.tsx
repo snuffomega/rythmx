@@ -767,9 +767,10 @@ export function Library({ onPlay }: LibraryProps) {
               <button
                 onClick={() => setDrawerOpen(o => !o)}
                 title={enrichStatus.running ? 'Enrichment running — click for details' : 'Enrichment — click for details'}
-                className="ml-3 w-2.5 h-2.5 rounded-full flex-shrink-0 focus:outline-none"
+                className="ml-3 w-2 h-2 rounded-full flex-shrink-0 focus:outline-none"
                 style={{
-                  background: enrichStatus.running ? '#D4F53C' : '#333',
+                  background: '#D4F53C',
+                  opacity: enrichStatus.running ? 1 : 0.25,
                   boxShadow: enrichStatus.running ? '0 0 6px #D4F53C88' : 'none',
                   animation: enrichStatus.running ? 'enrichPulse 2s ease-in-out infinite' : 'none',
                 }}
