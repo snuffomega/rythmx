@@ -132,10 +132,11 @@ def create_app() -> Flask:
     from app.routes.images import images_bp
     from app.routes.personal_discovery import personal_discovery_bp
     from app.routes.library_browse import library_browse_bp
+    from app.routes.library_enrich import enrich_bp
 
     for bp in (auth_bp, dash_bp, new_music_bp, acquisition_bp, playlists_bp,
                stats_bp, settings_bp, images_bp, personal_discovery_bp,
-               library_browse_bp):
+               library_browse_bp, enrich_bp):
         app.register_blueprint(bp, url_prefix="/api/v1")
 
     # -------------------------------------------------------------------------

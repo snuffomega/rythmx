@@ -4,11 +4,12 @@ import {
   Library as LibraryIcon, ChevronLeft, Star,
   ListPlus, MoreHorizontal, User, Disc, Play,
 } from 'lucide-react';
-import { libraryBrowseApi, libraryApi } from '../services/api';
+import { libraryBrowseApi, libraryApi, enrichmentApi } from '../services/api';
 import { useImage } from '../hooks/useImage';
 import { getImageUrl } from '../utils/imageUrl';
 import { ApiErrorBanner } from '../components/common';
-import type { LibArtist, LibAlbum, LibTrack, LibArtistDetail, LibAlbumDetail, LibraryStatus } from '../types';
+import { useWebSocket } from '../hooks/useWebSocket';
+import type { LibArtist, LibAlbum, LibTrack, LibArtistDetail, LibAlbumDetail, LibraryStatus, EnrichmentPipelineStatus, WsEnrichmentProgress } from '../types';
 
 type Tab = 'artists' | 'albums' | 'tracks';
 type ViewMode = 'grid' | 'list';
@@ -458,6 +459,77 @@ function AlbumDetail({ albumId, onArtistClick, onBack, onLibrary, onPlay }: Albu
 }
 
 // ---------------------------------------------------------------------------
+// EnrichmentDrawer — inline panel below Library status bar
+// ---------------------------------------------------------------------------
+
+const WORKER_LABELS: { key: keyof EnrichmentPipelineStatus['workers']; label: string }[] = [
+  { key: 'itunes',        label: 'IDs & Matching' },
+  { key: 'itunes_rich',   label: 'Release Info' },
+  { key: 'lastfm_tags',   label: 'Genres & Tags' },
+  { key: 'spotify_genres',label: 'Spotify Genres' },
+  { key: 'deezer_bpm',    label: 'BPM' },
+];
+
+interface EnrichmentDrawerProps {
+  status: EnrichmentPipelineStatus;
+  onStop: () => void;
+  onClose: () => void;
+}
+
+function EnrichmentDrawer({ status, onStop, onClose }: EnrichmentDrawerProps) {
+  return (
+    <div className="px-6 py-3 bg-[#080808] border-b border-[#1a1a1a] flex-shrink-0">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs font-mono text-text-secondary uppercase tracking-wider">Library Enrichment</span>
+        <div className="flex items-center gap-2">
+          {status.running && (
+            <button
+              onClick={onStop}
+              className="text-xs text-text-muted hover:text-text-primary transition-colors"
+            >
+              Stop
+            </button>
+          )}
+          <button onClick={onClose} className="text-text-muted hover:text-text-primary transition-colors">
+            ✕
+          </button>
+        </div>
+      </div>
+      <div className="flex flex-col gap-1.5">
+        {WORKER_LABELS.map(({ key, label }) => {
+          const w = status.workers[key];
+          const total = w ? w.found + w.not_found + w.errors + w.pending : 0;
+          const done = w ? w.found + w.not_found + w.errors : 0;
+          const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+          const isQueued = !w || total === 0;
+          const isComplete = w && w.pending === 0 && w.errors === 0 && total > 0;
+
+          return (
+            <div key={key} className="flex items-center gap-3 text-xs font-mono">
+              <span className="w-28 text-text-muted truncate">{label}</span>
+              <div className="flex-1 h-1 bg-[#1a1a1a] rounded-full overflow-hidden">
+                {!isQueued && (
+                  <div
+                    className="h-full rounded-full transition-all duration-500"
+                    style={{
+                      width: `${pct}%`,
+                      background: isComplete ? '#D4F53C' : '#888',
+                    }}
+                  />
+                )}
+              </div>
+              <span className="w-16 text-right text-text-muted">
+                {isQueued ? 'Queued' : isComplete ? '✓' : `${done}/${total}`}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Library page (root)
 // ---------------------------------------------------------------------------
 
@@ -476,6 +548,10 @@ export function Library({ onPlay }: LibraryProps) {
   // Status banner
   const [status, setStatus] = useState<LibraryStatus | null>(null);
   const [syncing, setSyncing] = useState(false);
+
+  // Enrichment pulse
+  const [enrichStatus, setEnrichStatus] = useState<EnrichmentPipelineStatus | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   // Drill state
   const [drillType, setDrillType] = useState<DrillType>('root');
@@ -505,6 +581,31 @@ export function Library({ onPlay }: LibraryProps) {
   useEffect(() => {
     libraryApi.getStatus().then(setStatus).catch(() => {});
   }, []);
+
+  // Enrichment status — initial snapshot on mount
+  useEffect(() => {
+    enrichmentApi.status().then(setEnrichStatus).catch(() => {});
+  }, []);
+
+  // Enrichment status — WS-driven updates
+  useWebSocket((event, payload) => {
+    if (event === 'enrichment_progress') {
+      const p = payload as WsEnrichmentProgress;
+      setEnrichStatus(prev => ({
+        running: p.running,
+        workers: {
+          ...(prev?.workers ?? {}),
+          [p.worker]: { found: p.found, not_found: p.not_found, errors: p.errors, pending: p.pending },
+        },
+      }));
+    } else if (event === 'enrichment_complete') {
+      // Refresh from REST for final counts, mark not running
+      enrichmentApi.status().then(setEnrichStatus).catch(() => {});
+      setDrawerOpen(false);
+    } else if (event === 'enrichment_stopped') {
+      setEnrichStatus(prev => prev ? { ...prev, running: false } : prev);
+    }
+  });
 
   // Fetch data when tab / filters / search change
   const fetchArtists = useCallback(async (q: string, backend: string) => {
@@ -662,6 +763,18 @@ export function Library({ onPlay }: LibraryProps) {
                 </>
               )}
             </div>
+            {enrichStatus && (
+              <button
+                onClick={() => setDrawerOpen(o => !o)}
+                title={enrichStatus.running ? 'Enrichment running — click for details' : 'Enrichment — click for details'}
+                className="ml-3 w-2.5 h-2.5 rounded-full flex-shrink-0 focus:outline-none"
+                style={{
+                  background: enrichStatus.running ? '#D4F53C' : '#333',
+                  boxShadow: enrichStatus.running ? '0 0 6px #D4F53C88' : 'none',
+                  animation: enrichStatus.running ? 'enrichPulse 2s ease-in-out infinite' : 'none',
+                }}
+              />
+            )}
           </div>
           <button
             onClick={handleSync}
@@ -672,6 +785,15 @@ export function Library({ onPlay }: LibraryProps) {
             {syncing ? 'Syncing…' : 'Sync Now'}
           </button>
         </div>
+      )}
+
+      {/* Enrichment drawer */}
+      {drawerOpen && enrichStatus && (
+        <EnrichmentDrawer
+          status={enrichStatus}
+          onStop={() => enrichmentApi.stop().then(() => setEnrichStatus(prev => prev ? { ...prev, running: false } : prev)).catch(() => {})}
+          onClose={() => setDrawerOpen(false)}
+        />
       )}
 
       {/* Header */}

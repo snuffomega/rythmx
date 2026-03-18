@@ -154,6 +154,14 @@ def library_sync():
             "library_last_synced",
             datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
         )
+        # Auto-trigger enrichment 30s after a successful sync
+        def _delayed_enrich():
+            import time
+            time.sleep(30)
+            from app.services.api_orchestrator import EnrichmentOrchestrator
+            EnrichmentOrchestrator.get().run_full()
+
+        threading.Thread(target=_delayed_enrich, daemon=True, name="enrich-auto-trigger").start()
         return jsonify({"status": "ok", **result})
     except NotImplementedError as e:
         return jsonify({"status": "error", "message": str(e)}), 400

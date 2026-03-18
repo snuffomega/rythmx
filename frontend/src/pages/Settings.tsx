@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { CheckCircle, XCircle, Loader2, RefreshCw, Database, Radio, ChevronDown, ChevronUp, Key, Eye, EyeOff, Copy } from 'lucide-react';
 import { useApi } from '../hooks/useApi';
-import { settingsApi, libraryApi, libraryBrowseApi, imageServiceApi, setApiKey } from '../services/api';
+import { settingsApi, libraryApi, libraryBrowseApi, imageServiceApi, setApiKey, enrichmentApi } from '../services/api';
 import { ConfirmDialog } from '../components/ConfirmDialog';
-import type { LibraryPlatform, LibraryEnrichStatus, SpotifyEnrichStatus, LastfmTagsStatus, DeezerBpmStatus } from '../types';
+import { useWebSocket } from '../hooks/useWebSocket';
+import type { LibraryPlatform, EnrichmentPipelineStatus, WsEnrichmentProgress } from '../types';
 
 const PLATFORM_LABELS: Record<string, string> = {
   plex: 'Plex',
@@ -90,29 +91,116 @@ function ServiceCard({ name, subtitle, icon, onTest }: ServiceRowProps) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// SettingsEnrichmentCard — single card replacing 4 enrichment buttons
+// ---------------------------------------------------------------------------
+
+const SETTINGS_WORKER_LABELS: { key: keyof EnrichmentPipelineStatus['workers']; label: string }[] = [
+  { key: 'itunes',         label: 'IDs & Matching' },
+  { key: 'itunes_rich',    label: 'Release Info' },
+  { key: 'lastfm_tags',    label: 'Genres & Tags' },
+  { key: 'spotify_genres', label: 'Spotify Genres' },
+  { key: 'deezer_bpm',     label: 'BPM' },
+];
+
+interface SettingsEnrichmentCardProps {
+  status: EnrichmentPipelineStatus | null;
+  open: boolean;
+  onToggle: () => void;
+  onRunFull: () => void;
+  onStop: () => void;
+}
+
+function SettingsEnrichmentCard({ status, open, onToggle, onRunFull, onStop }: SettingsEnrichmentCardProps) {
+  const running = status?.running ?? false;
+
+  // Summary pill: total found / total across all workers
+  const allWorkers = status ? Object.values(status.workers) : [];
+  const totalFound = allWorkers.reduce((s, w) => s + (w?.found ?? 0), 0);
+  const totalAll = allWorkers.reduce((s, w) => s + (w?.found ?? 0) + (w?.not_found ?? 0) + (w?.errors ?? 0) + (w?.pending ?? 0), 0);
+  const hasData = totalAll > 0;
+
+  return (
+    <div className="border border-[#1a1a1a] bg-[#0a0a0a]">
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center justify-between px-4 py-3 hover:bg-[#0e0e0e] transition-colors"
+      >
+        <div className="flex items-center gap-2.5">
+          <Radio size={14} className={running ? 'text-accent' : 'text-text-muted'} style={{ animation: running ? 'enrichPulse 2s ease-in-out infinite' : 'none' }} />
+          <span className="text-sm text-text-primary">Library Enrichment</span>
+          {hasData && (
+            <span className={`text-xs px-1.5 py-0.5 rounded-sm font-mono ${running ? 'bg-accent/10 text-accent' : 'bg-[#1a1a1a] text-text-muted'}`}>
+              {running ? 'Running' : `${totalFound.toLocaleString()} / ${totalAll.toLocaleString()}`}
+            </span>
+          )}
+        </div>
+        {open ? <ChevronUp size={14} className="text-text-muted" /> : <ChevronDown size={14} className="text-text-muted" />}
+      </button>
+
+      {open && (
+        <div className="px-4 pb-4 border-t border-[#1a1a1a] space-y-3 pt-3">
+          {SETTINGS_WORKER_LABELS.map(({ key, label }) => {
+            const w = status?.workers[key];
+            const total = w ? w.found + w.not_found + w.errors + w.pending : 0;
+            const done = w ? w.found + w.not_found + w.errors : 0;
+            const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+            const isQueued = !w || total === 0;
+            const isComplete = w && w.pending === 0 && w.errors === 0 && total > 0;
+
+            return (
+              <div key={key} className="flex items-center gap-3 text-xs font-mono">
+                <span className="w-28 text-text-muted">{label}</span>
+                <div className="flex-1 h-0.5 bg-[#1a1a1a] rounded-full overflow-hidden">
+                  {!isQueued && (
+                    <div
+                      className="h-full rounded-full transition-all duration-500"
+                      style={{ width: `${pct}%`, background: isComplete ? '#D4F53C' : '#666' }}
+                    />
+                  )}
+                </div>
+                <span className="w-16 text-right text-text-muted">
+                  {isQueued ? '—' : isComplete ? '✓' : `${done}/${total}`}
+                </span>
+              </div>
+            );
+          })}
+
+          <div className="flex items-center gap-2 pt-1">
+            <button
+              onClick={onRunFull}
+              disabled={running}
+              className="btn-secondary flex items-center gap-1.5 text-xs"
+            >
+              {running ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+              Enrich Now
+            </button>
+            {running && (
+              <button onClick={onStop} className="text-xs text-text-muted hover:text-text-primary transition-colors">
+                Stop
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface SettingsPageProps {
   toast: { success: (m: string) => void; error: (m: string) => void };
 }
 
 export function SettingsPage({ toast }: SettingsPageProps) {
   const { data: libraryStatus, loading: libraryLoading, refetch: refetchLibrary } = useApi(() => libraryApi.getStatus());
-  const { data: spotifyStatusData, refetch: refetchSpotifyStatus } = useApi(() => libraryApi.spotifyStatus());
-  const { data: lastfmTagsData, refetch: refetchLastfmTags } = useApi(() => libraryApi.lastfmTagsStatus());
-  const { data: deezerBpmData, refetch: refetchDeezerBpm } = useApi(() => libraryApi.deezerBpmStatus());
   const [platform, setPlatform] = useState<LibraryPlatform>('plex');
 
   useEffect(() => {
     if (libraryStatus?.platform) setPlatform(libraryStatus.platform as LibraryPlatform);
   }, [libraryStatus?.platform]);
   const [syncing, setSyncing] = useState(false);
-  const [enriching, setEnriching] = useState(false);
-  const [liveEnrichStatus, setLiveEnrichStatus] = useState<LibraryEnrichStatus | null>(null);
-  const [enrichingSpotify, setEnrichingSpotify] = useState(false);
-  const [liveSpotifyStatus, setLiveSpotifyStatus] = useState<SpotifyEnrichStatus | null>(null);
-  const [enrichingLastfmTags, setEnrichingLastfmTags] = useState(false);
-  const [liveLastfmTagsStatus, setLiveLastfmTagsStatus] = useState<LastfmTagsStatus | null>(null);
-  const [enrichingDeezerBpm, setEnrichingDeezerBpm] = useState(false);
-  const [liveDeezerBpmStatus, setLiveDeezerBpmStatus] = useState<DeezerBpmStatus | null>(null);
+  const [enrichStatus, setEnrichStatus] = useState<EnrichmentPipelineStatus | null>(null);
+  const [enrichCardOpen, setEnrichCardOpen] = useState(false);
   const [switchingBackend, setSwitchingBackend] = useState(false);
   const [auditTotal, setAuditTotal] = useState(0);
   const [warmingCache, setWarmingCache] = useState(false);
@@ -162,121 +250,28 @@ export function SettingsPage({ toast }: SettingsPageProps) {
     }
   };
 
-  const handleEnrich = async () => {
-    setEnriching(true);
-    try {
-      await libraryApi.enrich();
-    } catch {
-      toast.error('Failed to start enrich');
-      setEnriching(false);
-    }
-  };
-
+  // Enrichment status — initial snapshot
   useEffect(() => {
-    if (!enriching) return;
-    const id = setInterval(async () => {
-      try {
-        const s = await libraryApi.enrichStatus();
-        setLiveEnrichStatus(s);
-        if (!s.enrich_running) {
-          setEnriching(false);
-          refetchLibrary();
-          clearInterval(id);
-        }
-      } catch {
-        setEnriching(false);
-        clearInterval(id);
-      }
-    }, 3000);
-    return () => clearInterval(id);
-  }, [enriching]);
+    enrichmentApi.status().then(setEnrichStatus).catch(() => {});
+  }, []);
 
-  const handleEnrichSpotify = async () => {
-    setEnrichingSpotify(true);
-    try {
-      await libraryApi.enrichSpotify();
-    } catch {
-      toast.error('Failed to start Spotify enrich');
-      setEnrichingSpotify(false);
+  // Enrichment status — WS-driven updates
+  useWebSocket((event, payload) => {
+    if (event === 'enrichment_progress') {
+      const p = payload as WsEnrichmentProgress;
+      setEnrichStatus(prev => ({
+        running: p.running,
+        workers: {
+          ...(prev?.workers ?? {}),
+          [p.worker]: { found: p.found, not_found: p.not_found, errors: p.errors, pending: p.pending },
+        },
+      }));
+    } else if (event === 'enrichment_complete') {
+      enrichmentApi.status().then(setEnrichStatus).catch(() => {});
+    } else if (event === 'enrichment_stopped') {
+      setEnrichStatus(prev => prev ? { ...prev, running: false } : prev);
     }
-  };
-
-  useEffect(() => {
-    if (!enrichingSpotify) return;
-    const id = setInterval(async () => {
-      try {
-        const s = await libraryApi.spotifyStatus();
-        setLiveSpotifyStatus(s);
-        if (!s.enrich_running) {
-          setEnrichingSpotify(false);
-          refetchSpotifyStatus();
-          clearInterval(id);
-        }
-      } catch {
-        setEnrichingSpotify(false);
-        clearInterval(id);
-      }
-    }, 3000);
-    return () => clearInterval(id);
-  }, [enrichingSpotify]);
-
-  const handleEnrichLastfmTags = async () => {
-    setEnrichingLastfmTags(true);
-    try {
-      await libraryApi.enrichLastfmTags();
-    } catch {
-      toast.error('Failed to start genre enrich');
-      setEnrichingLastfmTags(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!enrichingLastfmTags) return;
-    const id = setInterval(async () => {
-      try {
-        const s = await libraryApi.lastfmTagsStatus();
-        setLiveLastfmTagsStatus(s);
-        if (!s.enrich_running) {
-          setEnrichingLastfmTags(false);
-          refetchLastfmTags();
-          clearInterval(id);
-        }
-      } catch {
-        setEnrichingLastfmTags(false);
-        clearInterval(id);
-      }
-    }, 3000);
-    return () => clearInterval(id);
-  }, [enrichingLastfmTags]);
-
-  const handleEnrichDeezerBpm = async () => {
-    setEnrichingDeezerBpm(true);
-    try {
-      await libraryApi.enrichDeezerBpm();
-    } catch {
-      toast.error('Failed to start BPM enrich');
-      setEnrichingDeezerBpm(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!enrichingDeezerBpm) return;
-    const id = setInterval(async () => {
-      try {
-        const s = await libraryApi.deezerBpmStatus();
-        setLiveDeezerBpmStatus(s);
-        if (!s.enrich_running) {
-          setEnrichingDeezerBpm(false);
-          refetchDeezerBpm();
-          clearInterval(id);
-        }
-      } catch {
-        setEnrichingDeezerBpm(false);
-        clearInterval(id);
-      }
-    }, 3000);
-    return () => clearInterval(id);
-  }, [enrichingDeezerBpm]);
+  });
 
   const handleClearHistory = async () => {
     try {
@@ -425,154 +420,14 @@ export function SettingsPage({ toast }: SettingsPageProps) {
             Sync Library Now
           </button>
 
-          {platform === 'plex' && (
-            <div className="space-y-2 pt-1">
-              {(() => {
-                const status = liveEnrichStatus ?? libraryStatus;
-                const total = status?.total_albums ?? 0;
-                const enriched = status?.enriched_albums ?? 0;
-                const pct = status?.enrich_pct ?? 0;
-                return total > 0 ? (
-                  <div className="space-y-1">
-                    <p className="text-[#444] text-xs">
-                      {enriched.toLocaleString()} / {total.toLocaleString()} albums enriched ({pct}%)
-                    </p>
-                    <div className="h-0.5 bg-[#1a1a1a] w-full">
-                      <div
-                        className="h-0.5 bg-accent transition-all duration-500"
-                        style={{ width: `${pct}%` }}
-                      />
-                    </div>
-                  </div>
-                ) : null;
-              })()}
-              <button
-                onClick={handleEnrich}
-                disabled={enriching}
-                className="btn-secondary flex items-center gap-2 text-sm"
-              >
-                {enriching ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-                Enrich Library
-              </button>
-            </div>
-          )}
-
-          {spotifyStatusData?.spotify_available && (
-            <div className="space-y-2 pt-1">
-              {(() => {
-                const s = liveSpotifyStatus ?? spotifyStatusData;
-                const enriched = s?.enriched_artists ?? 0;
-                const total = s?.total_artists ?? 0;
-                const pct = total > 0 ? Math.round((enriched / total) * 100) : 0;
-                const lastRun = s?.last_run;
-                return (
-                  <div className="space-y-1">
-                    {total > 0 && (
-                      <>
-                        <p className="text-[#444] text-xs">
-                          {enriched.toLocaleString()} / {total.toLocaleString()} artists Spotify-enriched ({pct}%)
-                          {lastRun && <span className="ml-2">· last run {lastRun}</span>}
-                        </p>
-                        <div className="h-0.5 bg-[#1a1a1a] w-full">
-                          <div
-                            className="h-0.5 bg-success transition-all duration-500"
-                            style={{ width: `${pct}%` }}
-                          />
-                        </div>
-                      </>
-                    )}
-                  </div>
-                );
-              })()}
-              <button
-                onClick={handleEnrichSpotify}
-                disabled={enrichingSpotify}
-                className="btn-secondary flex items-center gap-2 text-sm"
-              >
-                {enrichingSpotify ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-                Enrich Spotify
-              </button>
-            </div>
-          )}
-
-          {lastfmTagsData?.lastfm_available && (
-            <div className="space-y-2 pt-1">
-              {(() => {
-                const s = liveLastfmTagsStatus ?? lastfmTagsData;
-                const ea = s?.enriched_artists ?? 0;
-                const ta = s?.total_artists ?? 0;
-                const eab = s?.enriched_albums ?? 0;
-                const tab = s?.total_albums ?? 0;
-                const pct = ta > 0 ? Math.round((ea / ta) * 100) : 0;
-                const lastRun = s?.last_run;
-                return (
-                  <div className="space-y-1">
-                    {ta > 0 && (
-                      <>
-                        <p className="text-[#444] text-xs">
-                          {ea.toLocaleString()} / {ta.toLocaleString()} artists · {eab.toLocaleString()} / {tab.toLocaleString()} albums tagged ({pct}%)
-                          {lastRun && <span className="ml-2">· last run {lastRun}</span>}
-                        </p>
-                        <div className="h-0.5 bg-[#1a1a1a] w-full">
-                          <div
-                            className="h-0.5 bg-accent transition-all duration-500"
-                            style={{ width: `${pct}%` }}
-                          />
-                        </div>
-                      </>
-                    )}
-                  </div>
-                );
-              })()}
-              <button
-                onClick={handleEnrichLastfmTags}
-                disabled={enrichingLastfmTags}
-                className="btn-secondary flex items-center gap-2 text-sm"
-              >
-                {enrichingLastfmTags ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-                Enrich Genres
-              </button>
-            </div>
-          )}
-
-          {(deezerBpmData?.total_albums ?? 0) > 0 && (
-            <div className="space-y-2 pt-1">
-              {(() => {
-                const s = liveDeezerBpmStatus ?? deezerBpmData;
-                const ea = s?.enriched_albums ?? 0;
-                const ta = s?.total_albums ?? 0;
-                const et = s?.enriched_tracks ?? 0;
-                const pct = ta > 0 ? Math.round((ea / ta) * 100) : 0;
-                const lastRun = s?.last_run;
-                return (
-                  <div className="space-y-1">
-                    {ta > 0 && (
-                      <>
-                        <p className="text-[#444] text-xs">
-                          {ea.toLocaleString()} / {ta.toLocaleString()} albums · {et.toLocaleString()} tracks with BPM ({pct}%)
-                          {lastRun && <span className="ml-2">· last run {lastRun}</span>}
-                        </p>
-                        <div className="h-0.5 bg-[#1a1a1a] w-full">
-                          <div
-                            className="h-0.5 bg-accent transition-all duration-500"
-                            style={{ width: `${pct}%` }}
-                          />
-                        </div>
-                      </>
-                    )}
-                  </div>
-                );
-              })()}
-              <button
-                onClick={handleEnrichDeezerBpm}
-                disabled={enrichingDeezerBpm}
-                className="btn-secondary flex items-center gap-2 text-sm"
-              >
-                {enrichingDeezerBpm ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-                Enrich BPM
-              </button>
-            </div>
-          )}
+          {/* Enrichment card — replaces 4 separate buttons */}
+          <SettingsEnrichmentCard
+            status={enrichStatus}
+            open={enrichCardOpen}
+            onToggle={() => setEnrichCardOpen(o => !o)}
+            onRunFull={() => enrichmentApi.runFull().catch(() => toast.error('Failed to start enrichment'))}
+            onStop={() => enrichmentApi.stop().then(() => setEnrichStatus(prev => prev ? { ...prev, running: false } : prev)).catch(() => {})}
+          />
 
           {auditTotal > 0 && (
             <div className="pt-2">

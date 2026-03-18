@@ -28,6 +28,8 @@ import type {
   LibArtistDetail,
   LibAlbumDetail,
   AuditResponse,
+  EnrichmentPipelineStatus,
+  EnrichmentStopResponse,
 } from '../types';
 
 const BASE_URL = '/api/v1';
@@ -356,4 +358,16 @@ export const libraryBrowseApi = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+};
+
+export const enrichmentApi = {
+  status: () =>
+    request<EnrichmentPipelineStatus & { status: string }>('/library/enrich/status'),
+  runFull: (batch_size = 50) =>
+    request<{ status: string; message: string }>('/library/enrich/full', {
+      method: 'POST',
+      body: JSON.stringify({ batch_size }),
+    }),
+  stop: () =>
+    request<EnrichmentStopResponse>('/library/enrich/stop', { method: 'POST' }),
 };

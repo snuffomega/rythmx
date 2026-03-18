@@ -41,6 +41,7 @@ import logging
 import random
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -194,3 +195,187 @@ class DomainRateLimiter:
 
 # Singleton — import this, not the class directly.
 rate_limiter = DomainRateLimiter()
+
+
+# ---------------------------------------------------------------------------
+# EnrichmentOrchestrator — DAG conductor for library enrichment pipeline
+# ---------------------------------------------------------------------------
+
+class EnrichmentOrchestrator:
+    """
+    Conductor for the 4-stage library enrichment pipeline.
+
+    Does NOT make API calls. Sequences existing library_service.py workers:
+      Stage 2 (sequential): enrich_library → enrich_artist_ids_spotify → enrich_artist_ids_lastfm
+      Stage 3 (parallel):   enrich_itunes_rich, enrich_deezer_release, enrich_genres_spotify,
+                             enrich_tags_lastfm, enrich_stats_lastfm
+      BPM (last):           enrich_deezer_bpm (depends on deezer_id from Stage 2)
+
+    Broadcasts SHRTA enrichment_progress events after each worker via ws.broadcast().
+    Broadcasts enrichment_complete or enrichment_stopped on finish.
+
+    Usage:
+        EnrichmentOrchestrator.get().run_full()   # fire-and-forget
+        EnrichmentOrchestrator.get().stop()        # graceful stop after current batch
+        EnrichmentOrchestrator.get().is_running()  # True while thread alive
+    """
+
+    _instance: "EnrichmentOrchestrator | None" = None
+    _instance_lock = threading.Lock()
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    @classmethod
+    def get(cls) -> "EnrichmentOrchestrator":
+        if cls._instance is None:
+            with cls._instance_lock:
+                if cls._instance is None:
+                    cls._instance = cls()
+        return cls._instance
+
+    def run_full(self, batch_size: int = 50) -> None:
+        """Start full pipeline in background thread. No-op if already running."""
+        with self._lock:
+            if self._thread and self._thread.is_alive():
+                return
+            self._stop_event.clear()
+            self._thread = threading.Thread(
+                target=self._run,
+                args=(batch_size,),
+                daemon=True,
+                name="enrichment-orchestrator",
+            )
+            self._thread.start()
+
+    def stop(self) -> None:
+        """Signal all workers to stop after their current batch."""
+        self._stop_event.set()
+
+    def is_running(self) -> bool:
+        return bool(self._thread and self._thread.is_alive())
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _broadcast_worker(self, worker: str, running: bool = True) -> None:
+        """Query enrichment_meta for current counts and broadcast progress."""
+        try:
+            from app.routes.ws import broadcast
+            from app.db.rythmx_store import _connect
+            with _connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT status, COUNT(*) as cnt
+                    FROM enrichment_meta
+                    WHERE source = ?
+                    GROUP BY status
+                    """,
+                    (worker,),
+                ).fetchall()
+            counts = {r["status"]: r["cnt"] for r in rows}
+            broadcast("enrichment_progress", {
+                "worker": worker,
+                "found": counts.get("found", 0),
+                "not_found": counts.get("not_found", 0),
+                "errors": counts.get("error", 0),
+                "pending": counts.get("pending", 0),
+                "running": running,
+            })
+        except Exception as e:
+            logger.warning("EnrichmentOrchestrator: broadcast failed for '%s': %s", worker, e)
+
+    def _broadcast_complete(self) -> None:
+        try:
+            from app.routes.ws import broadcast
+            from app.db.rythmx_store import _connect
+            with _connect() as conn:
+                rows = conn.execute(
+                    "SELECT source, status, COUNT(*) as cnt FROM enrichment_meta GROUP BY source, status"
+                ).fetchall()
+            workers: dict = {}
+            for r in rows:
+                src = r["source"]
+                if src not in workers:
+                    workers[src] = {"found": 0, "not_found": 0, "errors": 0, "pending": 0, "running": False}
+                field = "errors" if r["status"] == "error" else r["status"]
+                if field in workers[src]:
+                    workers[src][field] = r["cnt"]
+            broadcast("enrichment_complete", {"workers": workers})
+        except Exception as e:
+            logger.warning("EnrichmentOrchestrator: broadcast_complete failed: %s", e)
+
+    def _run(self, batch_size: int) -> None:
+        from app.services import library_service as ls
+        logger.info("EnrichmentOrchestrator: pipeline start (batch_size=%d)", batch_size)
+
+        try:
+            # --- Stage 2: sequential (IDs must be resolved before Stage 3) ---
+            for worker_fn, worker_key in [
+                (lambda: ls.enrich_library(batch_size, self._stop_event), "itunes"),
+                (lambda: ls.enrich_artist_ids_spotify(batch_size, self._stop_event), "spotify_id"),
+                (lambda: ls.enrich_artist_ids_lastfm(batch_size, self._stop_event), "lastfm_id"),
+            ]:
+                if self._stop_event.is_set():
+                    break
+                try:
+                    worker_fn()
+                except Exception as e:
+                    logger.error("EnrichmentOrchestrator: Stage 2 worker error: %s", e)
+                self._broadcast_worker(worker_key)
+
+            if self._stop_event.is_set():
+                try:
+                    from app.routes.ws import broadcast
+                    broadcast("enrichment_stopped", {"message": "Enrichment stopped by user"})
+                except Exception:
+                    pass
+                logger.info("EnrichmentOrchestrator: stopped after Stage 2")
+                return
+
+            # --- Stage 3: parallel (independent rich-data workers) ---
+            stage3_workers = [
+                (ls.enrich_itunes_rich, batch_size, "itunes_rich"),
+                (ls.enrich_deezer_release, batch_size, "deezer_rich"),
+                (ls.enrich_genres_spotify, batch_size, "spotify_genres"),
+                (ls.enrich_tags_lastfm, batch_size, "lastfm_tags"),
+                (ls.enrich_stats_lastfm, batch_size, "lastfm_stats"),
+            ]
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                futures = {
+                    pool.submit(fn, bs, self._stop_event): key
+                    for fn, bs, key in stage3_workers
+                }
+                for future in futures:
+                    key = futures[future]
+                    try:
+                        future.result()
+                    except Exception as e:
+                        logger.error("EnrichmentOrchestrator: Stage 3 '%s' error: %s", key, e)
+                    self._broadcast_worker(key)
+
+            # --- BPM: last (depends on deezer_id from Stage 2) ---
+            if not self._stop_event.is_set():
+                try:
+                    ls.enrich_deezer_bpm(30, self._stop_event)
+                except Exception as e:
+                    logger.error("EnrichmentOrchestrator: BPM worker error: %s", e)
+                self._broadcast_worker("deezer_bpm")
+
+            if self._stop_event.is_set():
+                try:
+                    from app.routes.ws import broadcast
+                    broadcast("enrichment_stopped", {"message": "Enrichment stopped by user"})
+                except Exception:
+                    pass
+                logger.info("EnrichmentOrchestrator: stopped during Stage 3 / BPM")
+            else:
+                self._broadcast_complete()
+                logger.info("EnrichmentOrchestrator: pipeline complete")
+
+        except Exception as e:
+            logger.exception("EnrichmentOrchestrator: unhandled error: %s", e)

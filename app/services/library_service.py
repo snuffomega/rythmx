@@ -15,6 +15,7 @@ import difflib
 import logging
 import re
 import sqlite3
+import threading
 from datetime import datetime
 from app import config
 from app.db import rythmx_store
@@ -412,7 +413,7 @@ def _write_enrichment_meta(conn, source: str, entity_type: str, entity_id: str,
         logger.debug("enrichment_meta write skipped: %s", e)
 
 
-def enrich_library(batch_size: int = 50) -> dict:
+def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = None) -> dict:
     """
     Stage 2 — Primary ID Workers: artist-first confidence loop for iTunes + Deezer.
 
@@ -455,6 +456,8 @@ def enrich_library(batch_size: int = 50) -> dict:
         return {"enriched": 0, "failed": 0, "skipped": 0, "remaining": 0}
 
     for artist in artist_rows:
+        if stop_event and stop_event.is_set():
+            break
         artist_id = artist["id"]
         artist_name = artist["name"]
 
@@ -695,7 +698,7 @@ def enrich_library(batch_size: int = 50) -> dict:
     return {"enriched": enriched, "failed": failed, "skipped": skipped, "remaining": remaining}
 
 
-def enrich_artist_ids_spotify(batch_size: int = 20) -> dict:
+def enrich_artist_ids_spotify(batch_size: int = 20, stop_event: threading.Event | None = None) -> dict:
     """
     Stage 2 — Spotify ID Worker: validate + store spotify_artist_id only.
     No rich data (genres, popularity) — those belong in Stage 3 (enrich_genres_spotify).
@@ -746,6 +749,8 @@ def enrich_artist_ids_spotify(batch_size: int = 20) -> dict:
         return {"enriched": 0, "skipped": 0, "failed": 0, "remaining": 0}
 
     for artist in rows:
+        if stop_event and stop_event.is_set():
+            break
         artist_id = artist["id"]
         artist_name = artist["name"]
 
@@ -862,7 +867,7 @@ def enrich_artist_ids_spotify(batch_size: int = 20) -> dict:
     return {"enriched": enriched, "skipped": skipped, "failed": failed, "remaining": remaining}
 
 
-def enrich_genres_spotify(batch_size: int = 20) -> dict:
+def enrich_genres_spotify(batch_size: int = 20, stop_event: threading.Event | None = None) -> dict:
     """
     Stage 3 — Spotify genres + popularity worker.
     Requires: spotify_artist_id stored by enrich_artist_ids_spotify() (Stage 2).
@@ -917,6 +922,8 @@ def enrich_genres_spotify(batch_size: int = 20) -> dict:
         return {"enriched": 0, "skipped": 0, "failed": 0, "remaining": 0}
 
     for artist in rows:
+        if stop_event and stop_event.is_set():
+            break
         artist_id = artist["id"]
         artist_name = artist["name"]
         spotify_artist_id = artist["spotify_artist_id"]
@@ -1065,7 +1072,7 @@ def _normalize_lastfm_tags(raw_tags: list) -> list[str]:
     return canonical
 
 
-def enrich_artist_ids_lastfm(batch_size: int = 50) -> dict:
+def enrich_artist_ids_lastfm(batch_size: int = 50, stop_event: threading.Event | None = None) -> dict:
     """
     Stage 2 — Last.fm MBID Worker: validate + store lastfm_mbid only.
     No tag fetching — tags belong in Stage 3 (enrich_tags_lastfm).
@@ -1100,6 +1107,8 @@ def enrich_artist_ids_lastfm(batch_size: int = 50) -> dict:
         return {"enriched": 0, "skipped": 0, "failed": 0, "remaining": 0}
 
     for artist in rows:
+        if stop_event and stop_event.is_set():
+            break
         artist_id = artist["id"]
         artist_name = artist["name"]
 
@@ -1176,7 +1185,7 @@ def enrich_artist_ids_lastfm(batch_size: int = 50) -> dict:
     return {"enriched": enriched, "skipped": skipped, "failed": failed, "remaining": remaining}
 
 
-def enrich_tags_lastfm(batch_size: int = 50) -> dict:
+def enrich_tags_lastfm(batch_size: int = 50, stop_event: threading.Event | None = None) -> dict:
     """
     Stage 3 — Last.fm tags worker (artist + album).
     Requires: lastfm_mbid stored by enrich_artist_ids_lastfm() (Stage 2).
@@ -1216,6 +1225,8 @@ def enrich_tags_lastfm(batch_size: int = 50) -> dict:
                 "failed": 0, "remaining_artists": -1, "remaining_albums": -1, "error": str(e)}
 
     for artist in artist_rows:
+        if stop_event and stop_event.is_set():
+            break
         artist_id = artist["id"]
         artist_name = artist["name"]
 
@@ -1428,7 +1439,7 @@ def get_status() -> dict:
 # ---------------------------------------------------------------------------
 
 
-def enrich_itunes_rich(batch_size: int = 50) -> dict:
+def enrich_itunes_rich(batch_size: int = 50, stop_event: threading.Event | None = None) -> dict:
     """
     Stage 3 — iTunes rich data worker: genre + release_date per album.
     Requires: itunes_album_id (from Stage 2 enrich_library).
@@ -1467,6 +1478,8 @@ def enrich_itunes_rich(batch_size: int = 50) -> dict:
         return {"enriched": 0, "skipped": 0, "failed": 0, "remaining": 0}
 
     for album in rows:
+        if stop_event and stop_event.is_set():
+            break
         album_id = album["id"]
         itunes_album_id = album["itunes_album_id"]
         album_title = album["title"]
@@ -1529,7 +1542,7 @@ def enrich_itunes_rich(batch_size: int = 50) -> dict:
     return {"enriched": enriched, "skipped": skipped, "failed": failed, "remaining": remaining}
 
 
-def enrich_deezer_release(batch_size: int = 50) -> dict:
+def enrich_deezer_release(batch_size: int = 50, stop_event: threading.Event | None = None) -> dict:
     """
     Stage 3 — Deezer release data worker: record_type + thumb_url (CDN art URL).
     Requires: deezer_id (from Stage 2 enrich_library).
@@ -1568,6 +1581,8 @@ def enrich_deezer_release(batch_size: int = 50) -> dict:
         return {"enriched": 0, "skipped": 0, "failed": 0, "remaining": 0}
 
     for album in rows:
+        if stop_event and stop_event.is_set():
+            break
         album_id = album["id"]
         deezer_id = album["deezer_id"]
         album_title = album["title"]
@@ -1631,7 +1646,7 @@ def enrich_deezer_release(batch_size: int = 50) -> dict:
     return {"enriched": enriched, "skipped": skipped, "failed": failed, "remaining": remaining}
 
 
-def enrich_stats_lastfm(batch_size: int = 50) -> dict:
+def enrich_stats_lastfm(batch_size: int = 50, stop_event: threading.Event | None = None) -> dict:
     """
     Stage 3 — Last.fm listener/play count worker.
     Requires: lastfm_mbid (from Stage 2 enrich_artist_ids_lastfm).
@@ -1670,6 +1685,8 @@ def enrich_stats_lastfm(batch_size: int = 50) -> dict:
         return {"enriched": 0, "skipped": 0, "failed": 0, "remaining": 0}
 
     for artist in rows:
+        if stop_event and stop_event.is_set():
+            break
         artist_id = artist["id"]
         artist_name = artist["name"]
         mbid = artist["lastfm_mbid"]
@@ -1792,7 +1809,7 @@ def _fetch_deezer_album_tracks(deezer_album_id: str) -> list[dict]:
     return results
 
 
-def enrich_deezer_bpm(batch_size: int = 30) -> dict:
+def enrich_deezer_bpm(batch_size: int = 30, stop_event: threading.Event | None = None) -> dict:
     """
     Deezer BPM enrichment pass.
 
@@ -1842,6 +1859,8 @@ def enrich_deezer_bpm(batch_size: int = 30) -> dict:
                 "failed": 0, "skipped": 0, "remaining": 0}
 
     for album in rows:
+        if stop_event and stop_event.is_set():
+            break
         album_id = album["id"]
         deezer_album_id = album["deezer_id"]
         artist_name = album["artist_name"]

@@ -309,6 +309,31 @@ export interface AuditResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Enrichment pipeline — REST status shapes
+// ---------------------------------------------------------------------------
+
+export interface EnrichmentWorkerStatus {
+  found: number;
+  not_found: number;
+  errors: number;
+  pending: number;
+}
+
+export interface EnrichmentPipelineStatus {
+  running: boolean;
+  workers: Partial<Record<
+    'itunes' | 'itunes_rich' | 'deezer_rich' | 'spotify_id' | 'spotify_genres' |
+    'lastfm_id' | 'lastfm_tags' | 'lastfm_stats' | 'deezer_bpm',
+    EnrichmentWorkerStatus
+  >>;
+}
+
+export interface EnrichmentStopResponse {
+  status: 'ok' | 'error';
+  message: string;
+}
+
+// ---------------------------------------------------------------------------
 // WebSocket — SHRTA-framed event shapes (Section 6 registry)
 // ---------------------------------------------------------------------------
 
