@@ -23,16 +23,16 @@ def library_artists():
     q = request.args.get("q", "").strip()
     page = max(1, int(request.args.get("page", 1)))
     per_page = min(int(request.args.get("per_page", 50)), 200)
-    backend = request.args.get("backend", "all")
+    platform = request.args.get("platform", "all")
 
     where = ["a.removed_at IS NULL"]
     params: list = []
     if q:
         where.append("lower(a.name) LIKE lower(?)")
         params.append(f"%{q}%")
-    if backend != "all":
-        where.append("a.source_backend = ?")
-        params.append(backend)
+    if platform != "all":
+        where.append("a.source_platform = ?")
+        params.append(platform)
 
     where_clause = " AND ".join(where)
     offset = (page - 1) * per_page
@@ -45,7 +45,7 @@ def library_artists():
 
         rows = conn.execute(
             f"""
-            SELECT a.id, a.name, a.match_confidence, a.source_backend,
+            SELECT a.id, a.name, a.match_confidence, a.source_platform,
                    a.lastfm_tags_json,
                    COUNT(al.id) AS album_count
             FROM lib_artists a
@@ -68,7 +68,7 @@ def library_artist_detail(artist_id):
     with rythmx_store._connect() as conn:
         artist_row = conn.execute(
             """
-            SELECT a.id, a.name, a.match_confidence, a.source_backend,
+            SELECT a.id, a.name, a.match_confidence, a.source_platform,
                    a.lastfm_tags_json,
                    COUNT(al.id) AS album_count
             FROM lib_artists a
@@ -86,7 +86,7 @@ def library_artist_detail(artist_id):
         albums = conn.execute(
             """
             SELECT id, artist_id, title, year, record_type,
-                   match_confidence, needs_verification, source_backend
+                   match_confidence, needs_verification, source_platform
             FROM lib_albums
             WHERE artist_id = ? AND removed_at IS NULL
             ORDER BY year DESC
@@ -126,7 +126,7 @@ def library_albums():
     q = request.args.get("q", "").strip()
     page = max(1, int(request.args.get("page", 1)))
     per_page = min(int(request.args.get("per_page", 50)), 200)
-    backend = request.args.get("backend", "all")
+    platform = request.args.get("platform", "all")
     record_type = request.args.get("record_type", "all")
 
     where = ["al.removed_at IS NULL"]
@@ -134,9 +134,9 @@ def library_albums():
     if q:
         where.append("(lower(al.title) LIKE lower(?) OR lower(ar.name) LIKE lower(?))")
         params.extend([f"%{q}%", f"%{q}%"])
-    if backend != "all":
-        where.append("al.source_backend = ?")
-        params.append(backend)
+    if platform != "all":
+        where.append("al.source_platform = ?")
+        params.append(platform)
     if record_type != "all":
         where.append("al.record_type = ?")
         params.append(record_type)
@@ -157,7 +157,7 @@ def library_albums():
         rows = conn.execute(
             f"""
             SELECT al.id, al.artist_id, al.title, al.year, al.record_type,
-                   al.match_confidence, al.needs_verification, al.source_backend,
+                   al.match_confidence, al.needs_verification, al.source_platform,
                    ar.name AS artist_name
             FROM lib_albums al
             JOIN lib_artists ar ON ar.id = al.artist_id
@@ -178,7 +178,7 @@ def library_album_detail(album_id):
         album_row = conn.execute(
             """
             SELECT al.id, al.artist_id, al.title, al.year, al.record_type,
-                   al.match_confidence, al.needs_verification, al.source_backend,
+                   al.match_confidence, al.needs_verification, al.source_platform,
                    ar.name AS artist_name
             FROM lib_albums al
             JOIN lib_artists ar ON ar.id = al.artist_id

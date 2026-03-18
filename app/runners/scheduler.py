@@ -8,7 +8,7 @@ Cruise Control pipeline (7 stages):
   1. Poll Last.fm — top artists filtered by min-listens threshold
   2. Resolve artist identities — Last.fm name → Deezer/Spotify/MB IDs (cached)
   3. Find new releases — within lookback_days, via music_client provider chain
-  4. Owned-check — library backend (Plex/SoulSync), case-insensitive artist + album name
+  4. Owned-check — library platform (Plex/Navidrome/Jellyfin), case-insensitive artist + album name
   5. Build download queue — unowned releases, capped at max_per_cycle
   6. Queue downloads — acquisition worker (stub)
   7. Save history — rythmx.db; playlist from owned candidates

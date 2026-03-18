@@ -6,7 +6,7 @@ Three-stage pipeline for the Plex backend:
   Stage 2 ENRICH  — For each lib_album with no itunes_album_id, query iTunes → Deezer
   Stage 3 STATUS  — Return combined sync + enrich progress for the Settings UI
 
-The SoulSync backend does not use this service (it manages its own DB).
+Enrichment APIs (SoulSync, Spotify, Last.fm, Deezer, iTunes) populate metadata after sync.
 The enrich stage is resumable: only processes albums where itunes_album_id IS NULL
 AND deezer_id IS NULL, so interrupted runs pick up where they left off.
 """
@@ -780,7 +780,7 @@ def get_status() -> dict:
     Always safe to call — returns sane defaults if tables don't exist yet.
     """
     last_synced = rythmx_store.get_setting("library_last_synced")
-    backend = rythmx_store.get_setting("library_backend") or config.LIBRARY_BACKEND
+    backend = rythmx_store.get_setting("library_platform") or config.LIBRARY_PLATFORM
 
     try:
         with _connect() as conn:

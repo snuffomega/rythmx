@@ -1,17 +1,17 @@
 """
-navidrome_reader.py — Navidrome library backend (not yet implemented).
+navidrome_reader.py — Navidrome library platform reader (not yet implemented).
 
 Stub implementation. All functions return safe empty values or raise
-NotImplementedError for write operations. Select this backend via
-LIBRARY_BACKEND=navidrome or the Settings UI.
+NotImplementedError for write operations. Select this platform via
+LIBRARY_PLATFORM=navidrome or the Settings UI.
 """
 import logging
 
 logger = logging.getLogger(__name__)
 
 _NOT_IMPLEMENTED = (
-    "Navidrome backend is not yet implemented. "
-    "Set LIBRARY_BACKEND=soulsync or LIBRARY_BACKEND=plex."
+    "Navidrome platform reader is not yet implemented. "
+    "Set LIBRARY_PLATFORM=plex to use Plex instead."
 )
 
 

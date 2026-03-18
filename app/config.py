@@ -26,7 +26,7 @@ def _optional(key: str, default: str = "") -> str:
 SOULSYNC_DB = _optional("SOULSYNC_DB", "/data/soulsync/music_library.db")
 RYTHMX_DB = _optional("RYTHMX_DB", "/data/rythmx/rythmx.db")
 
-# --- SoulSync API ---
+# --- SoulSync enrichment API ---
 SOULSYNC_URL = _optional("SOULSYNC_URL", "http://soulsync:8008")
 
 # --- Last.fm ---
@@ -65,11 +65,22 @@ RELEASE_KINDS = _optional("RELEASE_KINDS", "album,single,ep")
 # auto = Spotify if credentials set, otherwise Deezer, MusicBrainz as fallback
 MUSIC_API_PROVIDER = _optional("MUSIC_API_PROVIDER", "auto")  # auto|deezer|spotify|musicbrainz
 
-# --- Library backend ---
-# Swap to pivot from SoulSync DB to a direct player API reader.
-# All backends implement the same interface as soulsync_reader.py.
-# Valid values: "soulsync" | "plex" | "jellyfin" | "navidrome"
-LIBRARY_BACKEND = _optional("LIBRARY_BACKEND", "soulsync")
+# --- Library platform ---
+# Which media server platform populates the library (lib_* tables).
+# Valid values: "plex" | "jellyfin" | "navidrome"
+# SoulSync is an enrichment API, not a platform — do not set here.
+# Backward compat: LIBRARY_BACKEND is read if LIBRARY_PLATFORM is not set.
+_lp_new = os.environ.get("LIBRARY_PLATFORM", "")
+_lp_old = os.environ.get("LIBRARY_BACKEND", "")
+if _lp_new:
+    LIBRARY_PLATFORM = _lp_new
+elif _lp_old:
+    logger.warning(
+        "LIBRARY_BACKEND env var is deprecated — rename to LIBRARY_PLATFORM in your .env"
+    )
+    LIBRARY_PLATFORM = _lp_old
+else:
+    LIBRARY_PLATFORM = "plex"
 
 # --- Fanart.tv (optional) ---
 # Free API key from https://fanart.tv/get-an-api-key/
@@ -92,13 +103,12 @@ def log_config_summary():
     """Log a redacted config summary on startup (never log secret values)."""
     logger.info("Rythmx config loaded:")
     logger.info("  RYTHMX_DB: %s", RYTHMX_DB)
-    logger.info("  LIBRARY_BACKEND: %s", LIBRARY_BACKEND)
-    if LIBRARY_BACKEND == "soulsync":
-        logger.info("  SOULSYNC_DB: %s", SOULSYNC_DB)
-        logger.info("  SOULSYNC_URL: %s", SOULSYNC_URL)
-    if LIBRARY_BACKEND == "plex":
+    logger.info("  LIBRARY_PLATFORM: %s", LIBRARY_PLATFORM)
+    if LIBRARY_PLATFORM == "plex":
         logger.info("  PLEX_URL: %s", PLEX_URL or "(not set)")
         logger.info("  PLEX_TOKEN: %s", "set" if PLEX_TOKEN else "NOT SET")
+    logger.info("  SOULSYNC_DB: %s", SOULSYNC_DB)
+    logger.info("  SOULSYNC_URL: %s", SOULSYNC_URL)
     logger.info("  LASTFM_USERNAME: %s", LASTFM_USERNAME or "(not set)")
     logger.info("  LASTFM_API_KEY: %s", "set" if LASTFM_API_KEY else "NOT SET")
     logger.info("  SPOTIFY_CLIENT_ID: %s", "set" if SPOTIFY_CLIENT_ID else "NOT SET")

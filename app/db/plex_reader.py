@@ -1,19 +1,19 @@
 """
-plex_reader.py — Plex-native library backend.
+plex_reader.py — Plex library platform reader.
 
-Implements the library reader interface (see soulsync_reader.py for the contract).
+Implements the library reader interface for the Plex media server platform.
 Reads from lib_* tables in rythmx.db, built and maintained by sync_library().
 
 sync_library() walks the Plex music library via python-plexapi and captures
-ratingKeys directly — the same mechanism SoulSync uses. All other functions
-query rythmx.db only; no network calls outside of sync_library().
+ratingKeys directly. All other functions query rythmx.db only; no network
+calls outside of sync_library().
 
 The lib_* tables are a derived cache — safe to delete and re-sync at any time.
 Tables are created by migrations/002_add_lib_tables.sql (not here).
 
-Functions not applicable to this backend return safe empty values:
-  get_discovery_pool()       → []    (SoulSync-specific)
-  get_similar_artists_map()  → {}    (SoulSync-specific)
+Functions not applicable to this platform return safe empty values:
+  get_discovery_pool()       → []    (SoulSync enrichment API only)
+  get_similar_artists_map()  → {}    (SoulSync enrichment API only)
 """
 import sqlite3
 import time
@@ -85,14 +85,14 @@ def sync_library() -> dict:
             # Insert new artists only — enrichment columns untouched on existing rows
             conn.execute(
                 "INSERT OR IGNORE INTO lib_artists "
-                "(id, name, name_lower, source_backend, updated_at) "
+                "(id, name, name_lower, source_platform, updated_at) "
                 "VALUES (?, ?, ?, 'plex', CURRENT_TIMESTAMP)",
                 (artist_id, artist_name, artist_name.lower()),
             )
             # Update ONLY Plex-owned columns; un-tombstone if previously removed
             conn.execute(
                 "UPDATE lib_artists SET name = ?, name_lower = ?, "
-                "source_backend = 'plex', updated_at = CURRENT_TIMESTAMP, removed_at = NULL "
+                "source_platform = 'plex', updated_at = CURRENT_TIMESTAMP, removed_at = NULL "
                 "WHERE id = ?",
                 (artist_name, artist_name.lower(), artist_id),
             )
@@ -109,14 +109,14 @@ def sync_library() -> dict:
                 conn.execute(
                     "INSERT OR IGNORE INTO lib_albums "
                     "(id, artist_id, title, local_title, title_lower, year, thumb_url, "
-                    "source_backend, updated_at) "
+                    "source_platform, updated_at) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, 'plex', CURRENT_TIMESTAMP)",
                     (album_id, artist_id, album_title, album_title,
                      album_title.lower(), album_year, thumb_url),
                 )
                 conn.execute(
                     "UPDATE lib_albums SET title = ?, local_title = ?, title_lower = ?, "
-                    "year = ?, thumb_url = ?, record_type = ?, source_backend = 'plex', "
+                    "year = ?, thumb_url = ?, record_type = ?, source_platform = 'plex', "
                     "updated_at = CURRENT_TIMESTAMP, removed_at = NULL WHERE id = ?",
                     (album_title, album_title, album_title.lower(),
                      album_year, thumb_url, record_type, album_id),
@@ -143,7 +143,7 @@ def sync_library() -> dict:
                     conn.execute(
                         "INSERT OR IGNORE INTO lib_tracks "
                         "(id, album_id, artist_id, title, title_lower, track_number, disc_number, "
-                        "duration, file_path, file_size, source_backend, updated_at) "
+                        "duration, file_path, file_size, source_platform, updated_at) "
                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'plex', CURRENT_TIMESTAMP)",
                         (track_id, album_id, artist_id, track_title, track_title.lower(),
                          track_number, disc_number, duration, file_path, file_size),
@@ -151,7 +151,7 @@ def sync_library() -> dict:
                     conn.execute(
                         "UPDATE lib_tracks SET title = ?, title_lower = ?, track_number = ?, "
                         "disc_number = ?, duration = ?, file_path = ?, file_size = ?, "
-                        "source_backend = 'plex', updated_at = CURRENT_TIMESTAMP, removed_at = NULL "
+                        "source_platform = 'plex', updated_at = CURRENT_TIMESTAMP, removed_at = NULL "
                         "WHERE id = ?",
                         (track_title, track_title.lower(), track_number, disc_number,
                          duration, file_path, file_size, track_id),
@@ -165,20 +165,19 @@ def sync_library() -> dict:
                 logger.debug("sync_library: committed batch at artist %d", i + 1)
 
         # Tombstone Plex items not present in this sync (deleted from Plex).
-        # Only touches source_backend='plex' rows — SoulSync rows are unaffected.
         conn.execute(
             "UPDATE lib_tracks SET removed_at = CURRENT_TIMESTAMP "
-            "WHERE source_backend = 'plex' AND removed_at IS NULL "
+            "WHERE source_platform = 'plex' AND removed_at IS NULL "
             "AND id NOT IN (SELECT id FROM _seen_tracks)"
         )
         conn.execute(
             "UPDATE lib_albums SET removed_at = CURRENT_TIMESTAMP "
-            "WHERE source_backend = 'plex' AND removed_at IS NULL "
+            "WHERE source_platform = 'plex' AND removed_at IS NULL "
             "AND id NOT IN (SELECT id FROM _seen_albums)"
         )
         conn.execute(
             "UPDATE lib_artists SET removed_at = CURRENT_TIMESTAMP "
-            "WHERE source_backend = 'plex' AND removed_at IS NULL "
+            "WHERE source_platform = 'plex' AND removed_at IS NULL "
             "AND id NOT IN (SELECT id FROM _seen_artists)"
         )
 
