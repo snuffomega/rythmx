@@ -49,13 +49,14 @@ export function setApiKey(key: string): void {
 }
 
 export async function initApiKey(): Promise<void> {
-  if (_apiKey) return; // already have it (localStorage hit)
+  // Always fetch from bootstrap — ensures stale localStorage keys are replaced
+  // (e.g. after a fresh DB install). Bootstrap is public and fast.
   try {
     const res = await fetch(`${BASE_URL}/auth/bootstrap`);
     if (!res.ok) return;
     const data = await res.json() as { status: string; api_key?: string };
     if (data.status === 'ok' && data.api_key) setApiKey(data.api_key);
-  } catch { /* network down / dev mode — proceed unauthenticated */ }
+  } catch { /* network down — fall back to cached key */ }
 }
 
 // ── Error class ───────────────────────────────────────────────────────────────
