@@ -82,6 +82,16 @@ elif _lp_old:
 else:
     LIBRARY_PLATFORM = "plex"
 
+# --- WebSocket ---
+# Comma-separated substrings checked against the Origin header on WS upgrade.
+# Default covers localhost dev + loopback. Add your LAN IP if accessing remotely.
+# Example: WS_ALLOWED_ORIGINS=localhost,127.0.0.1,192.168.1.100
+WS_ALLOWED_ORIGINS: list[str] = [
+    o.strip()
+    for o in _optional("WS_ALLOWED_ORIGINS", "localhost,127.0.0.1").split(",")
+    if o.strip()
+]
+
 # --- Fanart.tv (optional) ---
 # Free API key from https://fanart.tv/get-an-api-key/
 # When set, artist images use real band photos from Fanart.tv.

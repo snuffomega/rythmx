@@ -307,3 +307,47 @@ export interface AuditResponse {
   total: number;
   page: number;
 }
+
+// ---------------------------------------------------------------------------
+// WebSocket — SHRTA-framed event shapes (Section 6 registry)
+// ---------------------------------------------------------------------------
+
+export interface WsEnvelope<T = unknown> {
+  event: string;
+  payload: T;
+  timestamp: number;
+}
+
+// Enrichment pipeline events (EnrichmentOrchestrator)
+export interface WsEnrichmentProgress {
+  worker: string;
+  found: number;
+  not_found: number;
+  errors: number;
+  pending: number;
+  running: boolean;
+}
+
+export interface WsEnrichmentComplete {
+  workers: Record<string, WsEnrichmentProgress>;
+}
+
+export interface WsEnrichmentStopped {
+  message: string;
+}
+
+// CC pipeline events (scheduler)
+export interface WsPipelineProgress {
+  stage: string;
+  processed: number;
+  total: number;
+  message: string;
+}
+
+// Library sync events
+export interface WsLibrarySyncProgress {
+  artists: number;
+  albums: number;
+  tracks: number;
+  message: string;
+}

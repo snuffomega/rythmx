@@ -12,6 +12,7 @@ from flask_talisman import Talisman
 from app import config
 from app.runners import scheduler
 from app.db import rythmx_store
+from app.routes.ws import sock
 
 
 class _SecretRedactionFilter(logging.Filter):
@@ -70,6 +71,11 @@ logger = logging.getLogger(__name__)
 def create_app() -> Flask:
     app = Flask(__name__, static_folder="../webui", static_url_path="")
 
+    # --- WebSocket ---
+    # Pass allowed origins from config so ws_handler can check them at runtime.
+    app.config["WS_ALLOWED_ORIGINS"] = config.WS_ALLOWED_ORIGINS
+    sock.init_app(app)
+
     # --- Security headers ---
     # 'unsafe-inline' is intentionally absent from script-src: the Vite bundle
     # loads from 'self' as a module script — no inline scripts are ever needed.
@@ -86,7 +92,7 @@ def create_app() -> Flask:
             "script-src": "'self'",    # no unsafe-inline — Vite bundle loads via 'self'
             "style-src": "'self' 'unsafe-inline'",  # Tailwind runtime needs this
             "img-src": "'self' data: https:",
-            "connect-src": "'self'",
+            "connect-src": "'self' ws: wss:",
         },
         frame_options="DENY",
     )
@@ -104,7 +110,7 @@ def create_app() -> Flask:
     @app.before_request
     def _require_api_key():
         if not request.path.startswith('/api/v1/'):
-            return  # SPA routes and /health pass through
+            return  # SPA routes, /health, and /ws pass through — origin check in ws_handler
         if request.path == '/api/v1/auth/bootstrap':
             return  # public seeding endpoint
         provided = request.headers.get('X-Api-Key', '')
