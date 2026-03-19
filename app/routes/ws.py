@@ -86,6 +86,27 @@ def broadcast(event: str, payload: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Heartbeat — server-side ping to keep proxy connections alive (SHRTA Section 4)
+# ---------------------------------------------------------------------------
+
+def _start_heartbeat(interval: int = 15) -> None:
+    """
+    Launch a daemon thread that sends ping to all clients every `interval` seconds.
+    Prevents Traefik / Nginx proxy idle-connection drops on enrichment runs.
+    Dead connections are pruned automatically by broadcast().
+    """
+    def _loop() -> None:
+        while True:
+            time.sleep(interval)
+            if _clients:
+                broadcast("ping", {})
+
+    t = threading.Thread(target=_loop, daemon=True, name="ws-heartbeat")
+    t.start()
+    logger.info("ws: heartbeat started (interval=%ds)", interval)
+
+
+# ---------------------------------------------------------------------------
 # WebSocket connection handler
 # ---------------------------------------------------------------------------
 

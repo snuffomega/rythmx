@@ -1,10 +1,10 @@
-import { useState, useEffect } from 'react';
-import { CheckCircle, XCircle, Loader2, RefreshCw, Database, Radio, ChevronDown, ChevronUp, Key, Eye, EyeOff, Copy } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { CheckCircle, XCircle, Loader2, RefreshCw, Database, Radio, ChevronDown, ChevronUp, Key, Eye, EyeOff, Copy, Play, Square, Clock, Zap } from 'lucide-react';
 import { useApi } from '../hooks/useApi';
 import { settingsApi, libraryApi, libraryBrowseApi, imageServiceApi, setApiKey, enrichmentApi } from '../services/api';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useWebSocket } from '../hooks/useWebSocket';
-import type { LibraryPlatform, EnrichmentPipelineStatus, WsEnrichmentProgress } from '../types';
+import type { LibraryPlatform, EnrichmentPipelineStatus, EnrichmentWorkerStatus, WsEnrichmentProgress } from '../types';
 
 const PLATFORM_LABELS: Record<string, string> = {
   plex: 'Plex',
@@ -92,97 +92,186 @@ function ServiceCard({ name, subtitle, icon, onTest }: ServiceRowProps) {
 }
 
 // ---------------------------------------------------------------------------
-// SettingsEnrichmentCard — single card replacing 4 enrichment buttons
+// PipelineOrchestrator — 4-stage pipeline view replacing SettingsEnrichmentCard
 // ---------------------------------------------------------------------------
 
-const SETTINGS_WORKER_LABELS: { key: keyof EnrichmentPipelineStatus['workers']; label: string }[] = [
-  { key: 'itunes',         label: 'IDs & Matching' },
-  { key: 'itunes_rich',    label: 'Release Info' },
-  { key: 'lastfm_tags',    label: 'Genres & Tags' },
-  { key: 'spotify_genres', label: 'Spotify Genres' },
-  { key: 'deezer_bpm',     label: 'BPM' },
-];
+const STAGE_GROUPS = [
+  { id: 'identity', label: 'Identity Matching',   description: 'iTunes, Spotify ID, Last.fm ID',  workers: ['itunes', 'spotify_id', 'lastfm_id'] },
+  { id: 'metadata', label: 'Metadata Enrichment', description: 'iTunes Rich, Deezer Rich',         workers: ['itunes_rich', 'deezer_rich'] },
+  { id: 'genres',   label: 'Genre & Tagging',     description: 'Spotify Genres, Last.fm Tags',    workers: ['spotify_genres', 'lastfm_tags'] },
+  { id: 'audio',    label: 'Audio Analysis',      description: 'Last.fm Stats, Deezer BPM',       workers: ['lastfm_stats', 'deezer_bpm'] },
+] as const;
 
-interface SettingsEnrichmentCardProps {
+function formatElapsed(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  return `${m.toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`;
+}
+
+interface PipelineOrchestratorProps {
   status: EnrichmentPipelineStatus | null;
-  open: boolean;
-  onToggle: () => void;
+  activeWorker: string | null;
+  elapsedMs: number;
   onRunFull: () => void;
   onStop: () => void;
 }
 
-function SettingsEnrichmentCard({ status, open, onToggle, onRunFull, onStop }: SettingsEnrichmentCardProps) {
+function PipelineOrchestrator({ status, activeWorker, elapsedMs, onRunFull, onStop }: PipelineOrchestratorProps) {
   const running = status?.running ?? false;
 
-  // Summary pill: total found / total across all workers
-  const allWorkers = status ? Object.values(status.workers) : [];
-  const totalFound = allWorkers.reduce((s, w) => s + (w?.found ?? 0), 0);
-  const totalAll = allWorkers.reduce((s, w) => s + (w?.found ?? 0) + (w?.not_found ?? 0) + (w?.errors ?? 0) + (w?.pending ?? 0), 0);
-  const hasData = totalAll > 0;
+  // Per-stage aggregates
+  const stageData = STAGE_GROUPS.map(group => {
+    const workers = group.workers.map(k => status?.workers?.[k]).filter((w): w is EnrichmentWorkerStatus => !!w);
+    const found = workers.reduce((s, w) => s + w.found, 0);
+    const notFound = workers.reduce((s, w) => s + w.not_found, 0);
+    const errors = workers.reduce((s, w) => s + w.errors, 0);
+    const pending = workers.reduce((s, w) => s + w.pending, 0);
+    const total = found + notFound + errors + pending;
+
+    const anyWorking = running && group.workers.some(k => k === activeWorker);
+    const hasData = found + notFound + errors > 0;
+    const allDone = hasData && pending === 0;
+    const stageStatus: 'idle' | 'working' | 'complete' = anyWorking ? 'working' : allDone ? 'complete' : hasData ? 'working' : 'idle';
+
+    const foundPct = total > 0 ? (found / total) * 100 : 0;
+    const notFoundPct = total > 0 ? (notFound / total) * 100 : 0;
+    const errorPct = total > 0 ? (errors / total) * 100 : 0;
+    const processedPct = foundPct + notFoundPct + errorPct;
+
+    return { group, found, notFound, errors, pending, total, stageStatus, foundPct, notFoundPct, errorPct, processedPct };
+  });
+
+  // Overall progress
+  const totalFound = stageData.reduce((s, d) => s + d.found, 0);
+  const totalProcessed = stageData.reduce((s, d) => s + d.found + d.notFound + d.errors, 0);
+  const totalItems = stageData.reduce((s, d) => s + d.total, 0);
+  const overallPct = totalItems > 0 ? (totalProcessed / totalItems) * 100 : 0;
+  const totalErrors = stageData.reduce((s, d) => s + d.errors, 0);
 
   return (
-    <div className="border border-[#1a1a1a] bg-[#0a0a0a]">
-      <button
-        onClick={onToggle}
-        className="w-full flex items-center justify-between px-4 py-3 hover:bg-[#0e0e0e] transition-colors"
-      >
-        <div className="flex items-center gap-2.5">
-          <Radio size={14} className={running ? 'text-accent' : 'text-text-muted'} style={{ animation: running ? 'enrichPulse 2s ease-in-out infinite' : 'none' }} />
-          <span className="text-sm text-text-primary">Library Enrichment</span>
-          {hasData && (
-            <span className={`text-xs px-1.5 py-0.5 rounded-sm font-mono ${running ? 'bg-accent/10 text-accent' : 'bg-[#1a1a1a] text-text-muted'}`}>
-              {running ? 'Running' : `${totalFound.toLocaleString()} / ${totalAll.toLocaleString()}`}
-            </span>
-          )}
+    <div data-testid="pipeline-orchestrator" className="max-w-3xl">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h2 className="text-lg font-semibold tracking-tight text-text-primary">Metadata Enrichment Pipeline</h2>
+          <p className="text-xs font-mono text-text-muted mt-1">Enrich your library with metadata from multiple sources</p>
         </div>
-        {open ? <ChevronUp size={14} className="text-text-muted" /> : <ChevronDown size={14} className="text-text-muted" />}
-      </button>
+        {(running || elapsedMs > 0) && (
+          <div className="flex items-center gap-2 text-sm font-mono text-text-muted">
+            <Clock size={14} />
+            <span>{formatElapsed(elapsedMs)}</span>
+          </div>
+        )}
+      </div>
 
-      {open && (
-        <div className="px-4 pb-4 border-t border-[#1a1a1a] space-y-3 pt-3">
-          {SETTINGS_WORKER_LABELS.map(({ key, label }) => {
-            const w = status?.workers[key];
-            const total = w ? w.found + w.not_found + w.errors + w.pending : 0;
-            const done = w ? w.found + w.not_found + w.errors : 0;
-            const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-            const isQueued = !w || total === 0;
-            const isComplete = w && w.pending === 0 && w.errors === 0 && total > 0;
-
-            return (
-              <div key={key} className="flex items-center gap-3 text-xs font-mono">
-                <span className="w-28 text-text-muted">{label}</span>
-                <div className="flex-1 h-0.5 bg-[#1a1a1a] rounded-full overflow-hidden">
-                  {!isQueued && (
-                    <div
-                      className="h-full rounded-full transition-all duration-500"
-                      style={{ width: `${pct}%`, background: isComplete ? '#D4F53C' : '#666' }}
-                    />
-                  )}
-                </div>
-                <span className="w-16 text-right text-text-muted">
-                  {isQueued ? '—' : isComplete ? '✓' : `${done}/${total}`}
-                </span>
-              </div>
-            );
-          })}
-
-          <div className="flex items-center gap-2 pt-1">
-            <button
-              onClick={onRunFull}
-              disabled={running}
-              className="btn-secondary flex items-center gap-1.5 text-xs"
-            >
-              {running ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-              Enrich Now
-            </button>
-            {running && (
-              <button onClick={onStop} className="text-xs text-text-muted hover:text-text-primary transition-colors">
-                Stop
-              </button>
-            )}
+      {/* Overall progress */}
+      {(running || totalProcessed > 0) && (
+        <div className="mb-6 p-4 bg-surface rounded-sm border border-[#1a1a1a]">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-mono text-text-muted uppercase tracking-wider">Overall Progress</span>
+            <span className="text-xs font-mono text-text-secondary">{overallPct.toFixed(1)}%</span>
+          </div>
+          <div className="h-1.5 bg-surface-highlight rounded-full overflow-hidden">
+            <div className="h-full bg-accent transition-all duration-500 ease-out" style={{ width: `${overallPct}%` }} />
+          </div>
+          <div className="flex items-center gap-4 mt-2 text-[10px] font-mono text-text-muted">
+            <span>{totalProcessed.toLocaleString()} / {totalItems.toLocaleString()} items</span>
+            <span className="text-accent">{totalFound.toLocaleString()} enriched</span>
+            {totalErrors > 0 && <span className="text-red-400">{totalErrors} errors</span>}
           </div>
         </div>
       )}
+
+      {/* Controls */}
+      <div className="flex items-center gap-3 mb-6">
+        {!running ? (
+          <button onClick={onRunFull} className="btn-primary flex items-center gap-2 text-sm">
+            <Play size={14} />
+            Start Enrichment
+          </button>
+        ) : (
+          <button onClick={onStop} className="btn-danger flex items-center gap-2 text-sm">
+            <Square size={14} />
+            Stop
+          </button>
+        )}
+        {!running && totalProcessed > 0 && (
+          <span className="text-xs font-mono text-text-muted">
+            Last run: {totalFound.toLocaleString()} enriched
+          </span>
+        )}
+      </div>
+
+      {/* Stage cards */}
+      <div className="space-y-3">
+        {stageData.map(({ group, found, notFound, errors, total, stageStatus, foundPct, notFoundPct, errorPct, processedPct }, idx) => {
+          const isWorking = stageStatus === 'working';
+          const isComplete = stageStatus === 'complete';
+          return (
+            <div
+              key={group.id}
+              className={`relative p-5 rounded-sm border transition-all duration-500 ${
+                isWorking
+                  ? 'bg-surface border-accent/30 shadow-[0_0_20px_rgba(212,245,60,0.05)]'
+                  : isComplete
+                    ? 'bg-surface/50 border-[#1a1a1a]'
+                    : 'bg-surface/30 border-[#141414]'
+              }`}
+            >
+              {/* Stage header */}
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-mono font-medium transition-colors duration-300 ${
+                    isComplete ? 'bg-accent/20 text-accent' : isWorking ? 'bg-accent/10 text-accent' : 'bg-surface-highlight text-text-muted'
+                  }`}>
+                    {isComplete ? <CheckCircle size={14} /> : idx + 1}
+                  </div>
+                  <div>
+                    <h3 className={`text-sm font-medium tracking-tight transition-colors duration-300 ${
+                      isWorking ? 'text-text-primary' : isComplete ? 'text-text-secondary' : 'text-text-muted'
+                    }`}>{group.label}</h3>
+                    <p className="text-[11px] font-mono text-text-muted/70 mt-0.5">{group.description}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {isWorking && (
+                    <span className="flex items-center gap-1.5 text-[10px] font-mono text-accent uppercase tracking-wider">
+                      <Zap size={10} className="animate-pulse" />
+                      Working
+                    </span>
+                  )}
+                  {isComplete && (
+                    <span className="flex items-center gap-1.5 text-[10px] font-mono text-text-muted uppercase tracking-wider">
+                      <CheckCircle size={10} />
+                      Complete
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* 3-segment progress bar */}
+              <div className="relative h-2 bg-surface-highlight rounded-full overflow-hidden mb-3">
+                <div className="absolute top-0 left-0 h-full bg-accent transition-all duration-500 ease-out" style={{ width: `${foundPct}%` }} />
+                <div className="absolute top-0 h-full bg-text-muted/50 transition-all duration-500 ease-out" style={{ left: `${foundPct}%`, width: `${notFoundPct}%` }} />
+                <div className="absolute top-0 h-full bg-red-500/70 transition-all duration-500 ease-out" style={{ left: `${foundPct + notFoundPct}%`, width: `${errorPct}%` }} />
+                {isWorking && (
+                  <div className="absolute top-0 h-full overflow-hidden" style={{ left: `${processedPct}%`, width: `${100 - processedPct}%` }}>
+                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent animate-shimmer" />
+                  </div>
+                )}
+              </div>
+
+              {/* Stats row */}
+              <div className="flex items-center gap-4 text-[11px] font-mono">
+                <span className="text-accent">{found.toLocaleString()} found</span>
+                <span className="text-text-muted">{notFound.toLocaleString()} not found</span>
+                {errors > 0 && <span className="text-red-400">{errors.toLocaleString()} errors</span>}
+                <span className="ml-auto text-text-muted/60">{(found + notFound + errors).toLocaleString()} / {total.toLocaleString()}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -200,7 +289,10 @@ export function SettingsPage({ toast }: SettingsPageProps) {
   }, [libraryStatus?.platform]);
   const [syncing, setSyncing] = useState(false);
   const [enrichStatus, setEnrichStatus] = useState<EnrichmentPipelineStatus | null>(null);
-  const [enrichCardOpen, setEnrichCardOpen] = useState(false);
+  const [activeWorker, setActiveWorker] = useState<string | null>(null);
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const elapsedStartRef = useRef<number | null>(null);
+  const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [switchingBackend, setSwitchingBackend] = useState(false);
   const [auditTotal, setAuditTotal] = useState(0);
   const [warmingCache, setWarmingCache] = useState(false);
@@ -252,13 +344,38 @@ export function SettingsPage({ toast }: SettingsPageProps) {
 
   // Enrichment status — initial snapshot
   useEffect(() => {
-    enrichmentApi.status().then(setEnrichStatus).catch(() => {});
+    enrichmentApi.status().then(s => {
+      setEnrichStatus(s);
+      if (s?.running) {
+        elapsedStartRef.current = Date.now();
+      }
+    }).catch(() => {});
   }, []);
+
+  // Elapsed timer — runs while enrichment is active
+  useEffect(() => {
+    const running = enrichStatus?.running ?? false;
+    if (running) {
+      if (!elapsedStartRef.current) elapsedStartRef.current = Date.now();
+      elapsedTimerRef.current = setInterval(() => {
+        setElapsedMs(Date.now() - (elapsedStartRef.current ?? Date.now()));
+      }, 1000);
+    } else {
+      if (elapsedTimerRef.current) {
+        clearInterval(elapsedTimerRef.current);
+        elapsedTimerRef.current = null;
+      }
+    }
+    return () => {
+      if (elapsedTimerRef.current) clearInterval(elapsedTimerRef.current);
+    };
+  }, [enrichStatus?.running]);
 
   // Enrichment status — WS-driven updates
   useWebSocket((event, payload) => {
     if (event === 'enrichment_progress') {
       const p = payload as WsEnrichmentProgress;
+      setActiveWorker(p.worker);
       setEnrichStatus(prev => ({
         running: p.running,
         workers: {
@@ -266,10 +383,17 @@ export function SettingsPage({ toast }: SettingsPageProps) {
           [p.worker]: { found: p.found, not_found: p.not_found, errors: p.errors, pending: p.pending },
         },
       }));
+      if (p.running && !elapsedStartRef.current) {
+        elapsedStartRef.current = Date.now();
+      }
     } else if (event === 'enrichment_complete') {
       enrichmentApi.status().then(setEnrichStatus).catch(() => {});
+      setActiveWorker(null);
+      elapsedStartRef.current = null;
     } else if (event === 'enrichment_stopped') {
       setEnrichStatus(prev => prev ? { ...prev, running: false } : prev);
+      setActiveWorker(null);
+      elapsedStartRef.current = null;
     }
   });
 
@@ -420,13 +544,21 @@ export function SettingsPage({ toast }: SettingsPageProps) {
             Sync Library Now
           </button>
 
-          {/* Enrichment card — replaces 4 separate buttons */}
-          <SettingsEnrichmentCard
+          {/* Enrichment pipeline orchestrator */}
+          <PipelineOrchestrator
             status={enrichStatus}
-            open={enrichCardOpen}
-            onToggle={() => setEnrichCardOpen(o => !o)}
-            onRunFull={() => enrichmentApi.runFull().catch(() => toast.error('Failed to start enrichment'))}
-            onStop={() => enrichmentApi.stop().then(() => setEnrichStatus(prev => prev ? { ...prev, running: false } : prev)).catch(() => {})}
+            activeWorker={activeWorker}
+            elapsedMs={elapsedMs}
+            onRunFull={() => {
+              elapsedStartRef.current = Date.now();
+              setElapsedMs(0);
+              enrichmentApi.runFull().catch(() => toast.error('Failed to start enrichment'));
+            }}
+            onStop={() => {
+              enrichmentApi.stop()
+                .then(() => setEnrichStatus(prev => prev ? { ...prev, running: false } : prev))
+                .catch(() => {});
+            }}
           />
 
           {auditTotal > 0 && (

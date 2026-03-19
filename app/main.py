@@ -12,7 +12,7 @@ from flask_talisman import Talisman
 from app import config
 from app.runners import scheduler
 from app.db import rythmx_store
-from app.routes.ws import sock
+from app.routes.ws import sock, _start_heartbeat
 
 
 class _SecretRedactionFilter(logging.Filter):
@@ -75,6 +75,7 @@ def create_app() -> Flask:
     # Pass allowed origins from config so ws_handler can check them at runtime.
     app.config["WS_ALLOWED_ORIGINS"] = config.WS_ALLOWED_ORIGINS
     sock.init_app(app)
+    _start_heartbeat()
 
     # --- Security headers ---
     # 'unsafe-inline' is intentionally absent from script-src: the Vite bundle

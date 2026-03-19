@@ -41,6 +41,11 @@ export function useWebSocket(onMessage: MessageHandler): void {
     ws.onmessage = (e: MessageEvent) => {
       try {
         const envelope = JSON.parse(e.data) as WsEnvelope;
+        if (envelope.event === 'ping') {
+          // Internal heartbeat — respond with pong, never forward to onMessage
+          ws.send(JSON.stringify({ event: 'pong' }));
+          return;
+        }
         handlerRef.current(envelope.event, envelope.payload);
       } catch {
         // malformed message — ignore

@@ -261,32 +261,22 @@ class EnrichmentOrchestrator:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _broadcast_worker(self, worker: str, running: bool = True) -> None:
-        """Query enrichment_meta for current counts and broadcast progress."""
-        try:
-            from app.routes.ws import broadcast
-            from app.db.rythmx_store import _connect
-            with _connect() as conn:
-                rows = conn.execute(
-                    """
-                    SELECT status, COUNT(*) as cnt
-                    FROM enrichment_meta
-                    WHERE source = ?
-                    GROUP BY status
-                    """,
-                    (worker,),
-                ).fetchall()
-            counts = {r["status"]: r["cnt"] for r in rows}
-            broadcast("enrichment_progress", {
-                "worker": worker,
-                "found": counts.get("found", 0),
-                "not_found": counts.get("not_found", 0),
-                "errors": counts.get("error", 0),
-                "pending": counts.get("pending", 0),
-                "running": running,
-            })
-        except Exception as e:
-            logger.warning("EnrichmentOrchestrator: broadcast failed for '%s': %s", worker, e)
+    def _make_progress_fn(self, worker_key: str) -> "callable":
+        """Return a per-item progress callback that broadcasts enrichment_progress via WS."""
+        def _fn(found: int, not_found: int, errors: int, total: int) -> None:
+            try:
+                from app.routes.ws import broadcast
+                broadcast("enrichment_progress", {
+                    "worker": worker_key,
+                    "found": found,
+                    "not_found": not_found,
+                    "errors": errors,
+                    "pending": max(0, total - found - not_found - errors),
+                    "running": True,
+                })
+            except Exception:
+                pass
+        return _fn
 
     def _broadcast_complete(self) -> None:
         try:
@@ -315,9 +305,9 @@ class EnrichmentOrchestrator:
         try:
             # --- Stage 2: sequential (IDs must be resolved before Stage 3) ---
             for worker_fn, worker_key in [
-                (lambda: ls.enrich_library(batch_size, self._stop_event), "itunes"),
-                (lambda: ls.enrich_artist_ids_spotify(batch_size, self._stop_event), "spotify_id"),
-                (lambda: ls.enrich_artist_ids_lastfm(batch_size, self._stop_event), "lastfm_id"),
+                (lambda k="itunes": ls.enrich_library(batch_size, self._stop_event, self._make_progress_fn(k)), "itunes"),
+                (lambda k="spotify_id": ls.enrich_artist_ids_spotify(batch_size, self._stop_event, self._make_progress_fn(k)), "spotify_id"),
+                (lambda k="lastfm_id": ls.enrich_artist_ids_lastfm(batch_size, self._stop_event, self._make_progress_fn(k)), "lastfm_id"),
             ]:
                 if self._stop_event.is_set():
                     break
@@ -325,7 +315,6 @@ class EnrichmentOrchestrator:
                     worker_fn()
                 except Exception as e:
                     logger.error("EnrichmentOrchestrator: Stage 2 worker error: %s", e)
-                self._broadcast_worker(worker_key)
 
             if self._stop_event.is_set():
                 try:
@@ -347,7 +336,7 @@ class EnrichmentOrchestrator:
 
             with ThreadPoolExecutor(max_workers=2) as pool:
                 futures = {
-                    pool.submit(fn, bs, self._stop_event): key
+                    pool.submit(fn, bs, self._stop_event, self._make_progress_fn(key)): key
                     for fn, bs, key in stage3_workers
                 }
                 for future in futures:
@@ -356,15 +345,13 @@ class EnrichmentOrchestrator:
                         future.result()
                     except Exception as e:
                         logger.error("EnrichmentOrchestrator: Stage 3 '%s' error: %s", key, e)
-                    self._broadcast_worker(key)
 
             # --- BPM: last (depends on deezer_id from Stage 2) ---
             if not self._stop_event.is_set():
                 try:
-                    ls.enrich_deezer_bpm(30, self._stop_event)
+                    ls.enrich_deezer_bpm(30, self._stop_event, self._make_progress_fn("deezer_bpm"))
                 except Exception as e:
                     logger.error("EnrichmentOrchestrator: BPM worker error: %s", e)
-                self._broadcast_worker("deezer_bpm")
 
             if self._stop_event.is_set():
                 try:

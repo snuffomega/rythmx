@@ -10,10 +10,11 @@ import { SettingsPage } from './pages/Settings';
 import { ToastContainer } from './components/ToastContainer';
 import { PlayerBar } from './components/PlayerBar';
 import { FullPagePlayer } from './components/FullPagePlayer';
+import ProcessingSignal from './components/ProcessingSignal';
 import { useToast } from './hooks/useToast';
 import { initApiKey, libraryApi, enrichmentApi } from './services/api';
 import { useWebSocket } from './hooks/useWebSocket';
-import type { LibraryStatus, EnrichmentPipelineStatus, WsEnrichmentProgress } from './types';
+import type { LibraryStatus, WsEnrichmentProgress } from './types';
 
 type Page = 'discovery' | 'library' | 'cruise-control' | 'playlists' | 'activity' | 'stats' | 'settings';
 type PlayerState = 'hidden' | 'mini' | 'fullpage';
@@ -42,27 +43,25 @@ export default function App() {
   // All subsequent api.ts calls will include X-Api-Key automatically.
   useEffect(() => { initApiKey(); }, []);
 
-  // Global library + enrichment status (drives the status bar on all non-Library pages)
+  // Global library status (drives Library page status bar)
   const [globalLibStatus, setGlobalLibStatus] = useState<LibraryStatus | null>(null);
-  const [globalEnrichStatus, setGlobalEnrichStatus] = useState<EnrichmentPipelineStatus | null>(null);
+  // Global enrichment running flag (drives ProcessingSignal in sidebar)
+  const [globalEnrichRunning, setGlobalEnrichRunning] = useState(false);
 
   useEffect(() => {
     libraryApi.getStatus().then(setGlobalLibStatus).catch(() => {});
-    enrichmentApi.status().then(setGlobalEnrichStatus).catch(() => {});
+    enrichmentApi.status().then(s => setGlobalEnrichRunning(s.running ?? false)).catch(() => {});
   }, []);
 
   useWebSocket((event, payload) => {
     if (event === 'enrichment_progress') {
       const p = payload as WsEnrichmentProgress;
-      setGlobalEnrichStatus(prev => ({
-        running: p.running,
-        workers: { ...(prev?.workers ?? {}), [p.worker]: { found: p.found, not_found: p.not_found, errors: p.errors, pending: p.pending } },
-      }));
+      setGlobalEnrichRunning(p.running);
     } else if (event === 'enrichment_complete') {
-      enrichmentApi.status().then(setGlobalEnrichStatus).catch(() => {});
+      setGlobalEnrichRunning(false);
       libraryApi.getStatus().then(setGlobalLibStatus).catch(() => {});
     } else if (event === 'enrichment_stopped') {
-      setGlobalEnrichStatus(prev => prev ? { ...prev, running: false } : prev);
+      setGlobalEnrichRunning(false);
     }
   });
 
@@ -189,12 +188,17 @@ export default function App() {
           )}
         </button>
 
-        <div className="h-10 border-t border-border flex-shrink-0 flex items-center overflow-hidden">
+        <div className="h-12 border-t border-border flex-shrink-0 flex items-center overflow-hidden">
           <span className="w-16 flex items-center justify-center flex-shrink-0">
-            <Zap size={14} className="text-accent" />
+            <ProcessingSignal
+              isActive={globalEnrichRunning}
+              onClick={() => navigate('settings')}
+            />
           </span>
           {expanded && (
-            <span className="text-text-muted text-xs whitespace-nowrap">Music Discovery Engine</span>
+            <span className="text-text-muted text-xs whitespace-nowrap">
+              {globalEnrichRunning ? 'Enriching…' : 'Library Ready'}
+            </span>
           )}
         </div>
       </aside>
@@ -208,33 +212,6 @@ export default function App() {
           />
         ) : (
           <div className="flex-1 min-h-0 overflow-auto">
-            {/* Global status bar — hidden on Library (has its own richer bar) */}
-            {page !== 'library' && globalLibStatus && (
-              <div className="px-8 xl:px-12 py-2 bg-[#0a0a0a] border-b border-[#1a1a1a] flex items-center gap-2 text-xs font-mono text-text-muted">
-                <Library size={12} className="text-accent flex-shrink-0" />
-                <span>{globalLibStatus.track_count?.toLocaleString()} tracks</span>
-                <span className="text-[#333]">·</span>
-                <span>{(globalLibStatus as unknown as { total_albums?: number }).total_albums?.toLocaleString() ?? '—'} albums</span>
-                {globalLibStatus.last_synced && (
-                  <>
-                    <span className="text-[#333]">·</span>
-                    <span className="text-text-muted">synced {new Date(globalLibStatus.last_synced).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
-                  </>
-                )}
-                {globalEnrichStatus && (
-                  <span
-                    className="ml-1 w-1.5 h-1.5 rounded-full inline-block"
-                    title={globalEnrichStatus.running ? 'Enrichment running' : 'Library enriched'}
-                    style={{
-                      background: '#D4F53C',
-                      opacity: globalEnrichStatus.running ? 1 : 0.25,
-                      boxShadow: globalEnrichStatus.running ? '0 0 5px #D4F53C88' : 'none',
-                      animation: globalEnrichStatus.running ? 'enrichPulse 2s ease-in-out infinite' : 'none',
-                    }}
-                  />
-                )}
-              </div>
-            )}
             <div className="max-w-screen-xl mx-auto px-8 xl:px-12 pt-6">
               {renderPage()}
             </div>

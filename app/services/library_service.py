@@ -413,7 +413,8 @@ def _write_enrichment_meta(conn, source: str, entity_type: str, entity_id: str,
         logger.debug("enrichment_meta write skipped: %s", e)
 
 
-def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = None) -> dict:
+def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = None,
+                    on_progress: "callable | None" = None) -> dict:
     """
     Stage 2 — Primary ID Workers: artist-first confidence loop for iTunes + Deezer.
 
@@ -454,6 +455,16 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
     if not artist_rows:
         logger.info("enrich_library: nothing to enrich — all albums have IDs")
         return {"enriched": 0, "failed": 0, "skipped": 0, "remaining": 0}
+
+    # Pre-count pending albums for progress reporting
+    try:
+        with _connect() as conn:
+            _total_pending = conn.execute(
+                "SELECT COUNT(*) FROM lib_albums WHERE removed_at IS NULL"
+                " AND (itunes_album_id IS NULL OR deezer_id IS NULL)"
+            ).fetchone()[0]
+    except Exception:
+        _total_pending = len(artist_rows)
 
     for artist in artist_rows:
         if stop_event and stop_event.is_set():
@@ -608,6 +619,8 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
                         logger.warning("enrich_library: iTunes album write failed '%s / %s': %s",
                                        artist_name, album_title, e)
                         failed += 1
+                        if on_progress:
+                            on_progress(enriched, skipped, failed, _total_pending)
                         continue
                 else:
                     try:
@@ -653,6 +666,8 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
                         logger.warning("enrich_library: Deezer album write failed '%s / %s': %s",
                                        artist_name, album_title, e)
                         failed += 1
+                        if on_progress:
+                            on_progress(enriched, skipped, failed, _total_pending)
                         continue
                 else:
                     try:
@@ -678,8 +693,12 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
                 except Exception:
                     pass
                 skipped += 1
+                if on_progress:
+                    on_progress(enriched, skipped, failed, _total_pending)
             elif album_enriched:
                 enriched += 1
+                if on_progress:
+                    on_progress(enriched, skipped, failed, _total_pending)
 
     # Count remaining unenriched albums
     try:
@@ -698,7 +717,8 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
     return {"enriched": enriched, "failed": failed, "skipped": skipped, "remaining": remaining}
 
 
-def enrich_artist_ids_spotify(batch_size: int = 20, stop_event: threading.Event | None = None) -> dict:
+def enrich_artist_ids_spotify(batch_size: int = 20, stop_event: threading.Event | None = None,
+                               on_progress: "callable | None" = None) -> dict:
     """
     Stage 2 — Spotify ID Worker: validate + store spotify_artist_id only.
     No rich data (genres, popularity) — those belong in Stage 3 (enrich_genres_spotify).
@@ -778,6 +798,8 @@ def enrich_artist_ids_spotify(batch_size: int = 20, stop_event: threading.Event 
                     _write_enrichment_meta(conn, "spotify_id", "artist", artist_id,
                                            "not_found", confidence=0)
                 skipped += 1
+                if on_progress:
+                    on_progress(enriched, skipped, failed, len(rows))
                 continue
 
             norm_name = norm(artist_name)
@@ -809,6 +831,8 @@ def enrich_artist_ids_spotify(batch_size: int = 20, stop_event: threading.Event 
                     _write_enrichment_meta(conn, "spotify_id", "artist", artist_id,
                                            "not_found", confidence=0)
                 skipped += 1
+                if on_progress:
+                    on_progress(enriched, skipped, failed, len(rows))
                 continue
 
             needs_verification = 1 if best_conf < 85 else 0
@@ -826,6 +850,8 @@ def enrich_artist_ids_spotify(batch_size: int = 20, stop_event: threading.Event 
                 _write_enrichment_meta(conn, "spotify_id", "artist", artist_id,
                                        "found", confidence=best_conf)
             enriched += 1
+            if on_progress:
+                on_progress(enriched, skipped, failed, len(rows))
             logger.debug("enrich_artist_ids_spotify: '%s' → id=%s conf=%d",
                          artist_name, best_candidate["id"], best_conf)
 
@@ -842,6 +868,8 @@ def enrich_artist_ids_spotify(batch_size: int = 20, stop_event: threading.Event 
             except Exception:
                 pass
             failed += 1
+            if on_progress:
+                on_progress(enriched, skipped, failed, len(rows))
 
     try:
         with _connect() as conn:
@@ -867,7 +895,8 @@ def enrich_artist_ids_spotify(batch_size: int = 20, stop_event: threading.Event 
     return {"enriched": enriched, "skipped": skipped, "failed": failed, "remaining": remaining}
 
 
-def enrich_genres_spotify(batch_size: int = 20, stop_event: threading.Event | None = None) -> dict:
+def enrich_genres_spotify(batch_size: int = 20, stop_event: threading.Event | None = None,
+                           on_progress: "callable | None" = None) -> dict:
     """
     Stage 3 — Spotify genres + popularity worker.
     Requires: spotify_artist_id stored by enrich_artist_ids_spotify() (Stage 2).
@@ -968,6 +997,8 @@ def enrich_genres_spotify(batch_size: int = 20, stop_event: threading.Event | No
                 )
                 _write_enrichment_meta(conn, "spotify_genres", "artist", artist_id, "found")
             enriched += 1
+            if on_progress:
+                on_progress(enriched, skipped, failed, len(rows))
             logger.debug("enrich_genres_spotify: '%s' → genres=%s popularity=%s",
                          artist_name, artist_data.get("genres", [])[:3], popularity)
 
@@ -984,6 +1015,8 @@ def enrich_genres_spotify(batch_size: int = 20, stop_event: threading.Event | No
             except Exception:
                 pass
             failed += 1
+            if on_progress:
+                on_progress(enriched, skipped, failed, len(rows))
 
     try:
         with _connect() as conn:
@@ -1072,7 +1105,8 @@ def _normalize_lastfm_tags(raw_tags: list) -> list[str]:
     return canonical
 
 
-def enrich_artist_ids_lastfm(batch_size: int = 50, stop_event: threading.Event | None = None) -> dict:
+def enrich_artist_ids_lastfm(batch_size: int = 50, stop_event: threading.Event | None = None,
+                              on_progress: "callable | None" = None) -> dict:
     """
     Stage 2 — Last.fm MBID Worker: validate + store lastfm_mbid only.
     No tag fetching — tags belong in Stage 3 (enrich_tags_lastfm).
@@ -1143,6 +1177,8 @@ def enrich_artist_ids_lastfm(batch_size: int = 50, stop_event: threading.Event |
                     _write_enrichment_meta(conn, "lastfm_id", "artist", artist_id,
                                            "found", confidence=val["confidence"])
                 enriched += 1
+                if on_progress:
+                    on_progress(enriched, skipped, failed, len(rows))
                 logger.debug("enrich_artist_ids_lastfm: '%s' → mbid=%s conf=%d",
                              artist_name, mbid, val["confidence"])
             else:
@@ -1150,6 +1186,8 @@ def enrich_artist_ids_lastfm(batch_size: int = 50, stop_event: threading.Event |
                     _write_enrichment_meta(conn, "lastfm_id", "artist", artist_id,
                                            "not_found", confidence=0)
                 skipped += 1
+                if on_progress:
+                    on_progress(enriched, skipped, failed, len(rows))
 
         except Exception as e:
             logger.warning("enrich_artist_ids_lastfm: failed for '%s': %s", artist_name, e)
@@ -1160,6 +1198,8 @@ def enrich_artist_ids_lastfm(batch_size: int = 50, stop_event: threading.Event |
             except Exception:
                 pass
             failed += 1
+            if on_progress:
+                on_progress(enriched, skipped, failed, len(rows))
 
     try:
         with _connect() as conn:
@@ -1185,7 +1225,8 @@ def enrich_artist_ids_lastfm(batch_size: int = 50, stop_event: threading.Event |
     return {"enriched": enriched, "skipped": skipped, "failed": failed, "remaining": remaining}
 
 
-def enrich_tags_lastfm(batch_size: int = 50, stop_event: threading.Event | None = None) -> dict:
+def enrich_tags_lastfm(batch_size: int = 50, stop_event: threading.Event | None = None,
+                        on_progress: "callable | None" = None) -> dict:
     """
     Stage 3 — Last.fm tags worker (artist + album).
     Requires: lastfm_mbid stored by enrich_artist_ids_lastfm() (Stage 2).
@@ -1242,6 +1283,8 @@ def enrich_tags_lastfm(batch_size: int = 50, stop_event: threading.Event | None 
                 )
                 _write_enrichment_meta(conn, "lastfm_tags", "artist", artist_id, status)
             enriched_artists += 1
+            if on_progress:
+                on_progress(enriched_artists + enriched_albums, skipped, failed, len(artist_rows))
             logger.debug("enrich_tags_lastfm artist '%s': %s", artist_name, canonical)
         except Exception as e:
             logger.warning("enrich_tags_lastfm: artist '%s' failed: %s", artist_name, e)
@@ -1252,6 +1295,8 @@ def enrich_tags_lastfm(batch_size: int = 50, stop_event: threading.Event | None 
             except Exception:
                 pass
             failed += 1
+            if on_progress:
+                on_progress(enriched_artists + enriched_albums, skipped, failed, len(artist_rows))
 
     # --- Album pass ---
     try:
@@ -1301,6 +1346,8 @@ def enrich_tags_lastfm(batch_size: int = 50, stop_event: threading.Event | None 
                 )
                 _write_enrichment_meta(conn, "lastfm_tags", "album", album_id, status)
             enriched_albums += 1
+            if on_progress:
+                on_progress(enriched_artists + enriched_albums, skipped, failed, len(artist_rows) + len(album_rows))
             logger.debug("enrich_tags_lastfm album '%s / %s': status=%s",
                          artist_name, album_title, status)
         except Exception as e:
@@ -1313,6 +1360,8 @@ def enrich_tags_lastfm(batch_size: int = 50, stop_event: threading.Event | None 
             except Exception:
                 pass
             failed += 1
+            if on_progress:
+                on_progress(enriched_artists + enriched_albums, skipped, failed, len(artist_rows) + len(album_rows))
 
     # Count remaining
     try:
@@ -1439,7 +1488,8 @@ def get_status() -> dict:
 # ---------------------------------------------------------------------------
 
 
-def enrich_itunes_rich(batch_size: int = 50, stop_event: threading.Event | None = None) -> dict:
+def enrich_itunes_rich(batch_size: int = 50, stop_event: threading.Event | None = None,
+                        on_progress: "callable | None" = None) -> dict:
     """
     Stage 3 — iTunes rich data worker: genre + release_date per album.
     Requires: itunes_album_id (from Stage 2 enrich_library).
@@ -1500,12 +1550,16 @@ def enrich_itunes_rich(batch_size: int = 50, stop_event: threading.Event | None 
                     )
                     _write_enrichment_meta(conn, "itunes_rich", "album", album_id, "found")
                 enriched += 1
+                if on_progress:
+                    on_progress(enriched, skipped, failed, len(rows))
                 logger.debug("enrich_itunes_rich: '%s' → genre=%s release=%s",
                              album_title, result.get("genre"), result.get("release_date"))
             else:
                 with _connect() as conn:
                     _write_enrichment_meta(conn, "itunes_rich", "album", album_id, "not_found")
                 skipped += 1
+                if on_progress:
+                    on_progress(enriched, skipped, failed, len(rows))
 
         except Exception as e:
             logger.warning("enrich_itunes_rich: album '%s' failed: %s", album_title, e)
@@ -1516,6 +1570,8 @@ def enrich_itunes_rich(batch_size: int = 50, stop_event: threading.Event | None 
             except Exception:
                 pass
             failed += 1
+            if on_progress:
+                on_progress(enriched, skipped, failed, len(rows))
 
     try:
         with _connect() as conn:
@@ -1542,7 +1598,8 @@ def enrich_itunes_rich(batch_size: int = 50, stop_event: threading.Event | None 
     return {"enriched": enriched, "skipped": skipped, "failed": failed, "remaining": remaining}
 
 
-def enrich_deezer_release(batch_size: int = 50, stop_event: threading.Event | None = None) -> dict:
+def enrich_deezer_release(batch_size: int = 50, stop_event: threading.Event | None = None,
+                           on_progress: "callable | None" = None) -> dict:
     """
     Stage 3 — Deezer release data worker: record_type + thumb_url (CDN art URL).
     Requires: deezer_id (from Stage 2 enrich_library).
@@ -1605,12 +1662,16 @@ def enrich_deezer_release(batch_size: int = 50, stop_event: threading.Event | No
                     )
                     _write_enrichment_meta(conn, "deezer_rich", "album", album_id, "found")
                 enriched += 1
+                if on_progress:
+                    on_progress(enriched, skipped, failed, len(rows))
                 logger.debug("enrich_deezer_release: '%s' → type=%s thumb=%s",
                              album_title, result.get("record_type"), bool(result.get("thumb_url")))
             else:
                 with _connect() as conn:
                     _write_enrichment_meta(conn, "deezer_rich", "album", album_id, "not_found")
                 skipped += 1
+                if on_progress:
+                    on_progress(enriched, skipped, failed, len(rows))
 
         except Exception as e:
             logger.warning("enrich_deezer_release: album '%s' failed: %s", album_title, e)
@@ -1621,6 +1682,8 @@ def enrich_deezer_release(batch_size: int = 50, stop_event: threading.Event | No
             except Exception:
                 pass
             failed += 1
+            if on_progress:
+                on_progress(enriched, skipped, failed, len(rows))
 
     try:
         with _connect() as conn:
@@ -1646,7 +1709,8 @@ def enrich_deezer_release(batch_size: int = 50, stop_event: threading.Event | No
     return {"enriched": enriched, "skipped": skipped, "failed": failed, "remaining": remaining}
 
 
-def enrich_stats_lastfm(batch_size: int = 50, stop_event: threading.Event | None = None) -> dict:
+def enrich_stats_lastfm(batch_size: int = 50, stop_event: threading.Event | None = None,
+                         on_progress: "callable | None" = None) -> dict:
     """
     Stage 3 — Last.fm listener/play count worker.
     Requires: lastfm_mbid (from Stage 2 enrich_artist_ids_lastfm).
@@ -1707,12 +1771,16 @@ def enrich_stats_lastfm(batch_size: int = 50, stop_event: threading.Event | None
                     )
                     _write_enrichment_meta(conn, "lastfm_stats", "artist", artist_id, "found")
                 enriched += 1
+                if on_progress:
+                    on_progress(enriched, skipped, failed, len(rows))
                 logger.debug("enrich_stats_lastfm: '%s' → listeners=%d plays=%d",
                              artist_name, stats["listeners"], stats["playcount"])
             else:
                 with _connect() as conn:
                     _write_enrichment_meta(conn, "lastfm_stats", "artist", artist_id, "not_found")
                 skipped += 1
+                if on_progress:
+                    on_progress(enriched, skipped, failed, len(rows))
 
         except Exception as e:
             logger.warning("enrich_stats_lastfm: artist '%s' failed: %s", artist_name, e)
@@ -1723,6 +1791,8 @@ def enrich_stats_lastfm(batch_size: int = 50, stop_event: threading.Event | None
             except Exception:
                 pass
             failed += 1
+            if on_progress:
+                on_progress(enriched, skipped, failed, len(rows))
 
     try:
         with _connect() as conn:
@@ -1809,7 +1879,8 @@ def _fetch_deezer_album_tracks(deezer_album_id: str) -> list[dict]:
     return results
 
 
-def enrich_deezer_bpm(batch_size: int = 30, stop_event: threading.Event | None = None) -> dict:
+def enrich_deezer_bpm(batch_size: int = 30, stop_event: threading.Event | None = None,
+                       on_progress: "callable | None" = None) -> dict:
     """
     Deezer BPM enrichment pass.
 
@@ -1873,6 +1944,8 @@ def enrich_deezer_bpm(batch_size: int = 30, stop_event: threading.Event | None =
                 with _connect() as conn:
                     _write_enrichment_meta(conn, "deezer_bpm", "album", album_id, "not_found")
                 skipped += 1
+                if on_progress:
+                    on_progress(enriched_albums, skipped, failed, len(rows))
             except Exception:
                 pass
             continue
@@ -1903,6 +1976,8 @@ def enrich_deezer_bpm(batch_size: int = 30, stop_event: threading.Event | None =
 
             enriched_tracks += updated
             enriched_albums += 1
+            if on_progress:
+                on_progress(enriched_albums, skipped, failed, len(rows))
             logger.debug(
                 "enrich_deezer_bpm: '%s / %s' → %d tracks updated",
                 artist_name, album_title, updated,
@@ -1917,6 +1992,8 @@ def enrich_deezer_bpm(batch_size: int = 30, stop_event: threading.Event | None =
             except Exception:
                 pass
             failed += 1
+            if on_progress:
+                on_progress(enriched_albums, skipped, failed, len(rows))
 
     logger.info(
         "enrich_deezer_bpm: enriched_tracks=%d enriched_albums=%d failed=%d skipped=%d",
