@@ -41,6 +41,7 @@ import logging
 import random
 import threading
 import time
+from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
@@ -227,6 +228,7 @@ class EnrichmentOrchestrator:
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
+        self._started_at: str | None = None
 
     @classmethod
     def get(cls) -> "EnrichmentOrchestrator":
@@ -242,6 +244,7 @@ class EnrichmentOrchestrator:
             if self._thread and self._thread.is_alive():
                 return
             self._stop_event.clear()
+            self._started_at = datetime.now(timezone.utc).isoformat()
             self._thread = threading.Thread(
                 target=self._run,
                 args=(batch_size,),
@@ -294,6 +297,18 @@ class EnrichmentOrchestrator:
                 field = "errors" if r["status"] == "error" else r["status"]
                 if field in workers[src]:
                     workers[src][field] = r["cnt"]
+            # Merge enrich_library sub-sources into single "library" key.
+            # enrich_library writes to enrichment_meta under: itunes_artist, deezer_artist,
+            # itunes (album-level iTunes), deezer (album-level Deezer). All four represent
+            # the Identity Matching stage — aggregated here so the UI shows one complete number.
+            _lib_sources = {"itunes_artist", "deezer_artist", "itunes", "deezer"}
+            lib_agg: dict = {"found": 0, "not_found": 0, "errors": 0, "pending": 0, "running": False}
+            for src in _lib_sources:
+                if src in workers:
+                    for field in ("found", "not_found", "errors", "pending"):
+                        lib_agg[field] += workers.pop(src)[field]
+            if any(lib_agg[f] > 0 for f in ("found", "not_found", "errors")):
+                workers["library"] = lib_agg
             broadcast("enrichment_complete", {"workers": workers})
         except Exception as e:
             logger.warning("EnrichmentOrchestrator: broadcast_complete failed: %s", e)
@@ -305,7 +320,7 @@ class EnrichmentOrchestrator:
         try:
             # --- Stage 2: sequential (IDs must be resolved before Stage 3) ---
             for worker_fn, worker_key in [
-                (lambda k="itunes": ls.enrich_library(batch_size, self._stop_event, self._make_progress_fn(k)), "itunes"),
+                (lambda k="library": ls.enrich_library(batch_size, self._stop_event, self._make_progress_fn(k)), "library"),
                 (lambda k="spotify_id": ls.enrich_artist_ids_spotify(batch_size, self._stop_event, self._make_progress_fn(k)), "spotify_id"),
                 (lambda k="lastfm_id": ls.enrich_artist_ids_lastfm(batch_size, self._stop_event, self._make_progress_fn(k)), "lastfm_id"),
             ]:
@@ -317,6 +332,7 @@ class EnrichmentOrchestrator:
                     logger.error("EnrichmentOrchestrator: Stage 2 worker error: %s", e)
 
             if self._stop_event.is_set():
+                self._started_at = None
                 try:
                     from app.routes.ws import broadcast
                     broadcast("enrichment_stopped", {"message": "Enrichment stopped by user"})
@@ -354,6 +370,7 @@ class EnrichmentOrchestrator:
                     logger.error("EnrichmentOrchestrator: BPM worker error: %s", e)
 
             if self._stop_event.is_set():
+                self._started_at = None
                 try:
                     from app.routes.ws import broadcast
                     broadcast("enrichment_stopped", {"message": "Enrichment stopped by user"})
@@ -361,6 +378,7 @@ class EnrichmentOrchestrator:
                     pass
                 logger.info("EnrichmentOrchestrator: stopped during Stage 3 / BPM")
             else:
+                self._started_at = None
                 self._broadcast_complete()
                 logger.info("EnrichmentOrchestrator: pipeline complete")
 

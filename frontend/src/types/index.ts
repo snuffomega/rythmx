@@ -321,8 +321,15 @@ export interface EnrichmentWorkerStatus {
 
 export interface EnrichmentPipelineStatus {
   running: boolean;
+  // started_at: ISO 8601 UTC string set when run_full() is called; null when not running.
+  // Used by the frontend to compute accurate elapsed time on mid-run page load.
+  started_at?: string | null;
+  // "library" aggregates all enrich_library sub-sources from enrichment_meta:
+  //   itunes_artist + deezer_artist (artist confidence validation)
+  //   itunes + deezer (album-level ID enrichment)
+  // The counts reflect total artist+album identity work — not just iTunes albums.
   workers: Partial<Record<
-    'itunes' | 'itunes_rich' | 'deezer_rich' | 'spotify_id' | 'spotify_genres' |
+    'library' | 'itunes_rich' | 'deezer_rich' | 'spotify_id' | 'spotify_genres' |
     'lastfm_id' | 'lastfm_tags' | 'lastfm_stats' | 'deezer_bpm',
     EnrichmentWorkerStatus
   >>;

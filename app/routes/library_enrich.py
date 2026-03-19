@@ -20,19 +20,38 @@ def enrich_status():
     """
     Returns unified pipeline status grouped by enrichment_meta source.
 
+    enrich_library writes 4 sub-sources to enrichment_meta:
+      itunes_artist  — artist-level iTunes confidence validation
+      deezer_artist  — artist-level Deezer confidence validation
+      itunes         — album-level iTunes ID enrichment
+      deezer         — album-level Deezer ID enrichment
+    These are aggregated into a single "library" key so the Identity Matching
+    stage card shows one complete number reflecting all enrich_library work.
+
     Response:
       {
         "status": "ok",
         "running": bool,
+        "started_at": "ISO8601 UTC string | null",
         "workers": {
-          "<source>": { "found": int, "not_found": int, "errors": int, "pending": int }
+          "library":        { "found": int, "not_found": int, "errors": int, "pending": int },
+          "itunes_rich":    { ... },
+          "deezer_rich":    { ... },
+          "spotify_id":     { ... },
+          "spotify_genres": { ... },
+          "lastfm_id":      { ... },
+          "lastfm_tags":    { ... },
+          "lastfm_stats":   { ... },
+          "deezer_bpm":     { ... }
         }
       }
     """
     from app.services.api_orchestrator import EnrichmentOrchestrator
     from app.db.rythmx_store import _connect
 
-    running = EnrichmentOrchestrator.get().is_running()
+    orch = EnrichmentOrchestrator.get()
+    running = orch.is_running()
+    started_at = orch._started_at if running else None
 
     try:
         with _connect() as conn:
@@ -56,7 +75,20 @@ def enrich_status():
         if field in workers[src]:
             workers[src][field] = r["cnt"]
 
-    return jsonify({"status": "ok", "running": running, "workers": workers})
+    # Aggregate enrich_library sub-sources into single "library" key.
+    # itunes_artist + deezer_artist = artist-level confidence validation rows
+    # itunes + deezer = album-level enrichment rows
+    # All four represent Identity Matching stage work.
+    _lib_sources = {"itunes_artist", "deezer_artist", "itunes", "deezer"}
+    lib_agg: dict = {"found": 0, "not_found": 0, "errors": 0, "pending": 0}
+    for src in _lib_sources:
+        if src in workers:
+            for field in ("found", "not_found", "errors", "pending"):
+                lib_agg[field] += workers.pop(src)[field]
+    if any(lib_agg[f] > 0 for f in ("found", "not_found", "errors", "pending")):
+        workers["library"] = lib_agg
+
+    return jsonify({"status": "ok", "running": running, "started_at": started_at, "workers": workers})
 
 
 @enrich_bp.route("/library/enrich/full", methods=["POST"])

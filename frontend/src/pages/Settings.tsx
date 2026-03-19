@@ -95,11 +95,14 @@ function ServiceCard({ name, subtitle, icon, onTest }: ServiceRowProps) {
 // PipelineOrchestrator — 4-stage pipeline view replacing SettingsEnrichmentCard
 // ---------------------------------------------------------------------------
 
+// "library" aggregates all enrich_library sub-sources: itunes_artist + deezer_artist
+// (artist confidence validation) + itunes + deezer (album-level ID enrichment).
+// Counts = total artist + album identity work across both iTunes and Deezer.
 const STAGE_GROUPS = [
-  { id: 'identity', label: 'Identity Matching',   description: 'iTunes, Spotify ID, Last.fm ID',  workers: ['itunes', 'spotify_id', 'lastfm_id'] },
-  { id: 'metadata', label: 'Metadata Enrichment', description: 'iTunes Rich, Deezer Rich',         workers: ['itunes_rich', 'deezer_rich'] },
-  { id: 'genres',   label: 'Genre & Tagging',     description: 'Spotify Genres, Last.fm Tags',    workers: ['spotify_genres', 'lastfm_tags'] },
-  { id: 'audio',    label: 'Audio Analysis',      description: 'Last.fm Stats, Deezer BPM',       workers: ['lastfm_stats', 'deezer_bpm'] },
+  { id: 'identity', label: 'Identity Matching',   description: 'iTunes + Deezer IDs, Spotify ID, Last.fm ID', workers: ['library', 'spotify_id', 'lastfm_id'] },
+  { id: 'metadata', label: 'Metadata Enrichment', description: 'iTunes Rich, Deezer Rich',                     workers: ['itunes_rich', 'deezer_rich'] },
+  { id: 'genres',   label: 'Genre & Tagging',     description: 'Spotify Genres, Last.fm Tags',                 workers: ['spotify_genres', 'lastfm_tags'] },
+  { id: 'audio',    label: 'Audio Analysis',      description: 'Last.fm Stats, Deezer BPM',                    workers: ['lastfm_stats', 'deezer_bpm'] },
 ] as const;
 
 function formatElapsed(ms: number): string {
@@ -110,13 +113,13 @@ function formatElapsed(ms: number): string {
 
 interface PipelineOrchestratorProps {
   status: EnrichmentPipelineStatus | null;
-  activeWorker: string | null;
+  activeWorkers: Set<string>;
   elapsedMs: number;
   onRunFull: () => void;
   onStop: () => void;
 }
 
-function PipelineOrchestrator({ status, activeWorker, elapsedMs, onRunFull, onStop }: PipelineOrchestratorProps) {
+function PipelineOrchestrator({ status, activeWorkers, elapsedMs, onRunFull, onStop }: PipelineOrchestratorProps) {
   const running = status?.running ?? false;
 
   // Per-stage aggregates
@@ -128,7 +131,7 @@ function PipelineOrchestrator({ status, activeWorker, elapsedMs, onRunFull, onSt
     const pending = workers.reduce((s, w) => s + w.pending, 0);
     const total = found + notFound + errors + pending;
 
-    const anyWorking = running && group.workers.some(k => k === activeWorker);
+    const anyWorking = running && group.workers.some(k => activeWorkers.has(k));
     const hasData = found + notFound + errors > 0;
     const allDone = hasData && pending === 0;
     const stageStatus: 'idle' | 'working' | 'complete' = anyWorking ? 'working' : allDone ? 'complete' : hasData ? 'working' : 'idle';
@@ -289,7 +292,7 @@ export function SettingsPage({ toast }: SettingsPageProps) {
   }, [libraryStatus?.platform]);
   const [syncing, setSyncing] = useState(false);
   const [enrichStatus, setEnrichStatus] = useState<EnrichmentPipelineStatus | null>(null);
-  const [activeWorker, setActiveWorker] = useState<string | null>(null);
+  const [activeWorkers, setActiveWorkers] = useState<Set<string>>(new Set());
   const [elapsedMs, setElapsedMs] = useState(0);
   const elapsedStartRef = useRef<number | null>(null);
   const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -346,7 +349,10 @@ export function SettingsPage({ toast }: SettingsPageProps) {
   useEffect(() => {
     enrichmentApi.status().then(s => {
       setEnrichStatus(s);
-      if (s?.running) {
+      if (s?.running && s?.started_at) {
+        // Compute elapsed from server-provided start time so mid-run page load shows accurate timer.
+        elapsedStartRef.current = new Date(s.started_at).getTime();
+      } else if (s?.running) {
         elapsedStartRef.current = Date.now();
       }
     }).catch(() => {});
@@ -375,7 +381,7 @@ export function SettingsPage({ toast }: SettingsPageProps) {
   useWebSocket((event, payload) => {
     if (event === 'enrichment_progress') {
       const p = payload as WsEnrichmentProgress;
-      setActiveWorker(p.worker);
+      setActiveWorkers(prev => new Set([...prev, p.worker]));
       setEnrichStatus(prev => ({
         running: p.running,
         workers: {
@@ -388,11 +394,11 @@ export function SettingsPage({ toast }: SettingsPageProps) {
       }
     } else if (event === 'enrichment_complete') {
       enrichmentApi.status().then(setEnrichStatus).catch(() => {});
-      setActiveWorker(null);
+      setActiveWorkers(new Set());
       elapsedStartRef.current = null;
     } else if (event === 'enrichment_stopped') {
       setEnrichStatus(prev => prev ? { ...prev, running: false } : prev);
-      setActiveWorker(null);
+      setActiveWorkers(new Set());
       elapsedStartRef.current = null;
     }
   });
@@ -547,9 +553,13 @@ export function SettingsPage({ toast }: SettingsPageProps) {
           {/* Enrichment pipeline orchestrator */}
           <PipelineOrchestrator
             status={enrichStatus}
-            activeWorker={activeWorker}
+            activeWorkers={activeWorkers}
             elapsedMs={elapsedMs}
             onRunFull={() => {
+              // Reset workers to blank slate so bars don't carry over stale counts from a prior run.
+              // Limitation: bars are empty for ~1s until first WS event arrives per worker.
+              setEnrichStatus(prev => ({ running: true, workers: {} }));
+              setActiveWorkers(new Set());
               elapsedStartRef.current = Date.now();
               setElapsedMs(0);
               enrichmentApi.runFull().catch(() => toast.error('Failed to start enrichment'));
