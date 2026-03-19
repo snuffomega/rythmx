@@ -224,7 +224,7 @@ def health():
 
 _WEBUI_DIR = Path(__file__).parent.parent / "webui"
 
-if _WEBUI_DIR.exists():
+if (_WEBUI_DIR / "assets").exists():
     # Mount static assets (JS, CSS, images) — these are matched before the catch-all
     app.mount("/assets", StaticFiles(directory=str(_WEBUI_DIR / "assets")), name="assets")
 

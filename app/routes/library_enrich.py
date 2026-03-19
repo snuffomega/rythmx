@@ -80,8 +80,9 @@ def enrich_status():
     lib_agg: dict = {"found": 0, "not_found": 0, "errors": 0, "pending": 0}
     for src in _lib_sources:
         if src in workers:
+            entry = workers.pop(src)
             for field in ("found", "not_found", "errors", "pending"):
-                lib_agg[field] += workers.pop(src)[field]
+                lib_agg[field] += entry[field]
     if any(lib_agg[f] > 0 for f in ("found", "not_found", "errors", "pending")):
         workers["library"] = lib_agg
 
