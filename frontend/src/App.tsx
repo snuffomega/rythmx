@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { Compass, Zap, ListMusic, Activity, BarChart2, Settings, ChevronRight, Menu, Library, Play } from 'lucide-react';
 import { Discovery } from './pages/Discovery';
 import { Library as LibraryPage } from './pages/Library';
@@ -13,10 +13,10 @@ import { FullPagePlayer } from './components/FullPagePlayer';
 import ProcessingSignal from './components/ProcessingSignal';
 import { useToast } from './hooks/useToast';
 import { initApiKey, libraryApi, enrichmentApi } from './services/api';
-import { useWebSocket } from './hooks/useWebSocket';
+import { wsConnect, wsDisconnect } from './services/wsService';
 import { useEnrichmentStore } from './stores/useEnrichmentStore';
 import { usePlayerStore } from './stores/usePlayerStore';
-import type { LibraryStatus, WsEnrichmentProgress } from './types';
+import type { LibraryStatus } from './types';
 
 type Page = 'discovery' | 'library' | 'cruise-control' | 'playlists' | 'activity' | 'stats' | 'settings';
 
@@ -43,30 +43,19 @@ export default function App() {
           expand: expandPlayer, minimize: minimizePlayer, togglePlayPause } = usePlayerStore();
 
   // Enrichment running state from global store
-  const { isRunning: globalEnrichRunning, setRunning: setEnrichRunning } = useEnrichmentStore();
+  const globalEnrichRunning = useEnrichmentStore(s => s.running);
 
-  // Seed the API key from the bootstrap endpoint on first load.
-  useEffect(() => { initApiKey(); }, []);
-
-  // Seed initial enrichment state from REST on page load
+  // On mount: connect WS singleton, seed API key + initial state from REST
   const [globalLibStatus, setGlobalLibStatus] = useState<LibraryStatus | null>(null);
   useEffect(() => {
+    initApiKey();
+    wsConnect();
     libraryApi.getStatus().then(setGlobalLibStatus).catch(() => {});
-    enrichmentApi.status().then(s => setEnrichRunning(s.running ?? false)).catch(() => {});
+    enrichmentApi.status()
+      .then(useEnrichmentStore.getState().setFromStatus)
+      .catch(() => {});
+    return () => wsDisconnect();
   }, []);
-
-  // WS handler writes enrichment state to the global store
-  useWebSocket((event, payload) => {
-    if (event === 'enrichment_progress') {
-      const p = payload as WsEnrichmentProgress;
-      setEnrichRunning(p.running);
-    } else if (event === 'enrichment_complete') {
-      setEnrichRunning(false);
-      libraryApi.getStatus().then(setGlobalLibStatus).catch(() => {});
-    } else if (event === 'enrichment_stopped') {
-      setEnrichRunning(false);
-    }
-  });
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {

@@ -1,10 +1,10 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { CheckCircle, XCircle, Loader2, RefreshCw, Database, Radio, ChevronDown, ChevronUp, Key, Eye, EyeOff, Copy, Play, Square, Clock, Zap } from 'lucide-react';
 import { useApi } from '../hooks/useApi';
 import { settingsApi, libraryApi, libraryBrowseApi, imageServiceApi, setApiKey, enrichmentApi } from '../services/api';
 import { ConfirmDialog } from '../components/ConfirmDialog';
-import { useWebSocket } from '../hooks/useWebSocket';
-import type { LibraryPlatform, EnrichmentPipelineStatus, EnrichmentWorkerStatus, WsEnrichmentProgress, Settings } from '../types';
+import { useEnrichmentStore } from '../stores/useEnrichmentStore';
+import type { LibraryPlatform, EnrichmentWorkerStatus, Settings } from '../types';
 
 const PLATFORM_LABELS: Record<string, string> = {
   plex: 'Plex',
@@ -96,12 +96,11 @@ function ServiceCard({ name, subtitle, icon, configured, onTest }: ServiceRowPro
 }
 
 // ---------------------------------------------------------------------------
-// PipelineOrchestrator — 4-stage pipeline view replacing SettingsEnrichmentCard
+// PipelineOrchestrator — 4-stage pipeline view
 // ---------------------------------------------------------------------------
 
 // "library" aggregates all enrich_library sub-sources: itunes_artist + deezer_artist
 // (artist confidence validation) + itunes + deezer (album-level ID enrichment).
-// Counts = total artist + album identity work across both iTunes and Deezer.
 const STAGE_GROUPS = [
   { id: 'identity', label: 'Identity Matching',   description: 'iTunes + Deezer IDs, Spotify ID, Last.fm ID', workers: ['library', 'spotify_id', 'lastfm_id'] },
   { id: 'metadata', label: 'Metadata Enrichment', description: 'iTunes Rich, Deezer Rich',                     workers: ['itunes_rich', 'deezer_rich'] },
@@ -116,24 +115,23 @@ function formatElapsed(ms: number): string {
 }
 
 interface PipelineOrchestratorProps {
-  status: EnrichmentPipelineStatus | null;
+  running: boolean;
+  workers: Record<string, EnrichmentWorkerStatus>;
   activeWorkers: Set<string>;
   elapsedMs: number;
   onRunFull: () => void;
   onStop: () => void;
 }
 
-function PipelineOrchestrator({ status, activeWorkers, elapsedMs, onRunFull, onStop }: PipelineOrchestratorProps) {
-  const running = status?.running ?? false;
+function PipelineOrchestrator({ running, workers, activeWorkers, elapsedMs, onRunFull, onStop }: PipelineOrchestratorProps) {
   const [showStageDetail, setShowStageDetail] = useState(false);
 
-  // Per-stage aggregates
   const stageData = STAGE_GROUPS.map(group => {
-    const workers = group.workers.map(k => status?.workers?.[k]).filter((w): w is EnrichmentWorkerStatus => !!w);
-    const found = workers.reduce((s, w) => s + w.found, 0);
-    const notFound = workers.reduce((s, w) => s + w.not_found, 0);
-    const errors = workers.reduce((s, w) => s + w.errors, 0);
-    const pending = workers.reduce((s, w) => s + w.pending, 0);
+    const groupWorkers = group.workers.map(k => workers[k]).filter((w): w is EnrichmentWorkerStatus => !!w);
+    const found = groupWorkers.reduce((s, w) => s + w.found, 0);
+    const notFound = groupWorkers.reduce((s, w) => s + w.not_found, 0);
+    const errors = groupWorkers.reduce((s, w) => s + w.errors, 0);
+    const pending = groupWorkers.reduce((s, w) => s + w.pending, 0);
     const total = found + notFound + errors + pending;
 
     const anyWorking = running && group.workers.some(k => activeWorkers.has(k));
@@ -149,7 +147,6 @@ function PipelineOrchestrator({ status, activeWorkers, elapsedMs, onRunFull, onS
     return { group, found, notFound, errors, pending, total, stageStatus, foundPct, notFoundPct, errorPct, processedPct };
   });
 
-  // Overall progress
   const totalFound = stageData.reduce((s, d) => s + d.found, 0);
   const totalProcessed = stageData.reduce((s, d) => s + d.found + d.notFound + d.errors, 0);
   const totalItems = stageData.reduce((s, d) => s + d.total, 0);
@@ -218,75 +215,74 @@ function PipelineOrchestrator({ status, activeWorkers, elapsedMs, onRunFull, onS
       </button>
 
       {/* Stage cards */}
-      {showStageDetail && <div className="space-y-3">
-        {stageData.map(({ group, found, notFound, errors, total, stageStatus, foundPct, notFoundPct, errorPct, processedPct }, idx) => {
-          const isWorking = stageStatus === 'working';
-          const isComplete = stageStatus === 'complete';
-          return (
-            <div
-              key={group.id}
-              className={`relative p-5 rounded-sm border transition-all duration-500 ${
-                isWorking
-                  ? 'bg-surface border-accent/30 shadow-[0_0_20px_rgba(212,245,60,0.05)]'
-                  : isComplete
-                    ? 'bg-surface/50 border-[#1a1a1a]'
-                    : 'bg-surface/30 border-[#141414]'
-              }`}
-            >
-              {/* Stage header */}
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-3">
-                  <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-mono font-medium transition-colors duration-300 ${
-                    isComplete ? 'bg-accent/20 text-accent' : isWorking ? 'bg-accent/10 text-accent' : 'bg-surface-highlight text-text-muted'
-                  }`}>
-                    {isComplete ? <CheckCircle size={14} /> : idx + 1}
+      {showStageDetail && (
+        <div className="space-y-3">
+          {stageData.map(({ group, found, notFound, errors, total, stageStatus, foundPct, notFoundPct, errorPct, processedPct }, idx) => {
+            const isWorking = stageStatus === 'working';
+            const isComplete = stageStatus === 'complete';
+            return (
+              <div
+                key={group.id}
+                className={`relative p-5 rounded-sm border transition-all duration-500 ${
+                  isWorking
+                    ? 'bg-surface border-accent/30 shadow-[0_0_20px_rgba(212,245,60,0.05)]'
+                    : isComplete
+                      ? 'bg-surface/50 border-[#1a1a1a]'
+                      : 'bg-surface/30 border-[#141414]'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-mono font-medium transition-colors duration-300 ${
+                      isComplete ? 'bg-accent/20 text-accent' : isWorking ? 'bg-accent/10 text-accent' : 'bg-surface-highlight text-text-muted'
+                    }`}>
+                      {isComplete ? <CheckCircle size={14} /> : idx + 1}
+                    </div>
+                    <div>
+                      <h3 className={`text-sm font-medium tracking-tight transition-colors duration-300 ${
+                        isWorking ? 'text-text-primary' : isComplete ? 'text-text-secondary' : 'text-text-muted'
+                      }`}>{group.label}</h3>
+                      <p className="text-[11px] font-mono text-text-muted/70 mt-0.5">{group.description}</p>
+                    </div>
                   </div>
-                  <div>
-                    <h3 className={`text-sm font-medium tracking-tight transition-colors duration-300 ${
-                      isWorking ? 'text-text-primary' : isComplete ? 'text-text-secondary' : 'text-text-muted'
-                    }`}>{group.label}</h3>
-                    <p className="text-[11px] font-mono text-text-muted/70 mt-0.5">{group.description}</p>
+                  <div className="flex items-center gap-2">
+                    {isWorking && (
+                      <span className="flex items-center gap-1.5 text-[10px] font-mono text-accent uppercase tracking-wider">
+                        <Zap size={10} className="animate-pulse" />
+                        Working
+                      </span>
+                    )}
+                    {isComplete && (
+                      <span className="flex items-center gap-1.5 text-[10px] font-mono text-text-muted uppercase tracking-wider">
+                        <CheckCircle size={10} />
+                        Complete
+                      </span>
+                    )}
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+
+                <div className="relative h-2 bg-surface-highlight rounded-full overflow-hidden mb-3">
+                  <div className="absolute top-0 left-0 h-full bg-accent transition-all duration-500 ease-out" style={{ width: `${foundPct}%` }} />
+                  <div className="absolute top-0 h-full bg-text-muted/50 transition-all duration-500 ease-out" style={{ left: `${foundPct}%`, width: `${notFoundPct}%` }} />
+                  <div className="absolute top-0 h-full bg-red-500/70 transition-all duration-500 ease-out" style={{ left: `${foundPct + notFoundPct}%`, width: `${errorPct}%` }} />
                   {isWorking && (
-                    <span className="flex items-center gap-1.5 text-[10px] font-mono text-accent uppercase tracking-wider">
-                      <Zap size={10} className="animate-pulse" />
-                      Working
-                    </span>
-                  )}
-                  {isComplete && (
-                    <span className="flex items-center gap-1.5 text-[10px] font-mono text-text-muted uppercase tracking-wider">
-                      <CheckCircle size={10} />
-                      Complete
-                    </span>
+                    <div className="absolute top-0 h-full overflow-hidden" style={{ left: `${processedPct}%`, width: `${100 - processedPct}%` }}>
+                      <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent animate-shimmer" />
+                    </div>
                   )}
                 </div>
-              </div>
 
-              {/* 3-segment progress bar */}
-              <div className="relative h-2 bg-surface-highlight rounded-full overflow-hidden mb-3">
-                <div className="absolute top-0 left-0 h-full bg-accent transition-all duration-500 ease-out" style={{ width: `${foundPct}%` }} />
-                <div className="absolute top-0 h-full bg-text-muted/50 transition-all duration-500 ease-out" style={{ left: `${foundPct}%`, width: `${notFoundPct}%` }} />
-                <div className="absolute top-0 h-full bg-red-500/70 transition-all duration-500 ease-out" style={{ left: `${foundPct + notFoundPct}%`, width: `${errorPct}%` }} />
-                {isWorking && (
-                  <div className="absolute top-0 h-full overflow-hidden" style={{ left: `${processedPct}%`, width: `${100 - processedPct}%` }}>
-                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent animate-shimmer" />
-                  </div>
-                )}
+                <div className="flex items-center gap-4 text-[11px] font-mono">
+                  <span className="text-accent">{found.toLocaleString()} found</span>
+                  <span className="text-text-muted">{notFound.toLocaleString()} not found</span>
+                  {errors > 0 && <span className="text-red-400">{errors.toLocaleString()} errors</span>}
+                  <span className="ml-auto text-text-muted/60">{(found + notFound + errors).toLocaleString()} / {total.toLocaleString()}</span>
+                </div>
               </div>
-
-              {/* Stats row */}
-              <div className="flex items-center gap-4 text-[11px] font-mono">
-                <span className="text-accent">{found.toLocaleString()} found</span>
-                <span className="text-text-muted">{notFound.toLocaleString()} not found</span>
-                {errors > 0 && <span className="text-red-400">{errors.toLocaleString()} errors</span>}
-                <span className="ml-auto text-text-muted/60">{(found + notFound + errors).toLocaleString()} / {total.toLocaleString()}</span>
-              </div>
-            </div>
-          );
-        })}
-      </div>}
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -296,18 +292,14 @@ interface SettingsPageProps {
 }
 
 export function SettingsPage({ toast }: SettingsPageProps) {
-  const { data: libraryStatus, loading: libraryLoading, refetch: refetchLibrary } = useApi(() => libraryApi.getStatus());
+  const { data: libraryStatus, refetch: refetchLibrary } = useApi(() => libraryApi.getStatus());
   const [platform, setPlatform] = useState<LibraryPlatform>('plex');
 
   useEffect(() => {
     if (libraryStatus?.platform) setPlatform(libraryStatus.platform as LibraryPlatform);
   }, [libraryStatus?.platform]);
+
   const [syncing, setSyncing] = useState(false);
-  const [enrichStatus, setEnrichStatus] = useState<EnrichmentPipelineStatus | null>(null);
-  const [activeWorkers, setActiveWorkers] = useState<Set<string>>(new Set());
-  const [elapsedMs, setElapsedMs] = useState(0);
-  const elapsedStartRef = useRef<number | null>(null);
-  const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [switchingBackend, setSwitchingBackend] = useState(false);
   const [auditTotal, setAuditTotal] = useState(0);
   const [warmingCache, setWarmingCache] = useState(false);
@@ -320,6 +312,17 @@ export function SettingsPage({ toast }: SettingsPageProps) {
   const [regenerating, setRegenerating] = useState(false);
   const [copied, setCopied] = useState(false);
   const [settingsStatus, setSettingsStatus] = useState<Settings | null>(null);
+
+  // Enrichment state from global store — kept live by wsService
+  const { running, workers, activeWorkers, startedAt, reset } = useEnrichmentStore();
+
+  // Elapsed timer — display concern only; driven by startedAt from store
+  const [elapsedMs, setElapsedMs] = useState(0);
+  useEffect(() => {
+    if (!running || startedAt === null) { setElapsedMs(0); return; }
+    const id = setInterval(() => setElapsedMs(Date.now() - startedAt), 1000);
+    return () => clearInterval(id);
+  }, [running, startedAt]);
 
   useEffect(() => {
     settingsApi.getApiKey().then(setApiKeyState).catch(() => {});
@@ -358,64 +361,6 @@ export function SettingsPage({ toast }: SettingsPageProps) {
       setSyncing(false);
     }
   };
-
-  // Enrichment status — initial snapshot
-  useEffect(() => {
-    enrichmentApi.status().then(s => {
-      setEnrichStatus(s);
-      if (s?.running && s?.started_at) {
-        // Compute elapsed from server-provided start time so mid-run page load shows accurate timer.
-        elapsedStartRef.current = new Date(s.started_at).getTime();
-      } else if (s?.running) {
-        elapsedStartRef.current = Date.now();
-      }
-    }).catch(() => {});
-  }, []);
-
-  // Elapsed timer — runs while enrichment is active
-  useEffect(() => {
-    const running = enrichStatus?.running ?? false;
-    if (running) {
-      if (!elapsedStartRef.current) elapsedStartRef.current = Date.now();
-      elapsedTimerRef.current = setInterval(() => {
-        setElapsedMs(Date.now() - (elapsedStartRef.current ?? Date.now()));
-      }, 1000);
-    } else {
-      if (elapsedTimerRef.current) {
-        clearInterval(elapsedTimerRef.current);
-        elapsedTimerRef.current = null;
-      }
-    }
-    return () => {
-      if (elapsedTimerRef.current) clearInterval(elapsedTimerRef.current);
-    };
-  }, [enrichStatus?.running]);
-
-  // Enrichment status — WS-driven updates
-  useWebSocket((event, payload) => {
-    if (event === 'enrichment_progress') {
-      const p = payload as WsEnrichmentProgress;
-      setActiveWorkers(prev => new Set([...prev, p.worker]));
-      setEnrichStatus(prev => ({
-        running: p.running,
-        workers: {
-          ...(prev?.workers ?? {}),
-          [p.worker]: { found: p.found, not_found: p.not_found, errors: p.errors, pending: p.pending },
-        },
-      }));
-      if (p.running && !elapsedStartRef.current) {
-        elapsedStartRef.current = Date.now();
-      }
-    } else if (event === 'enrichment_complete') {
-      enrichmentApi.status().then(setEnrichStatus).catch(() => {});
-      setActiveWorkers(new Set());
-      elapsedStartRef.current = null;
-    } else if (event === 'enrichment_stopped') {
-      setEnrichStatus(prev => prev ? { ...prev, running: false } : prev);
-      setActiveWorkers(new Set());
-      elapsedStartRef.current = null;
-    }
-  });
 
   const handleClearHistory = async () => {
     try {
@@ -476,7 +421,7 @@ export function SettingsPage({ toast }: SettingsPageProps) {
     try {
       const newKey = await settingsApi.regenerateApiKey();
       setApiKeyState(newKey);
-      setApiKey(newKey); // update the in-memory + localStorage key for subsequent requests
+      setApiKey(newKey);
       toast.success('API key regenerated');
     } catch {
       toast.error('Failed to regenerate API key');
@@ -532,11 +477,9 @@ export function SettingsPage({ toast }: SettingsPageProps) {
 
         {/* Step 1 — Sync */}
         <div className="mb-6 p-4 bg-[#0e0e0e] border border-[#1a1a1a]">
-          <div className="flex items-center justify-between mb-3">
-            <div>
-              <p className="text-xs font-mono text-text-muted uppercase tracking-wider mb-0.5">Step 1 — Sync from Plex</p>
-              <p className="text-[11px] text-[#444]">Reads your Plex library into the local database</p>
-            </div>
+          <div className="mb-3">
+            <p className="text-xs font-mono text-text-muted uppercase tracking-wider mb-0.5">Step 1 — Sync from Plex</p>
+            <p className="text-[11px] text-[#444]">Reads your Plex library into the local database</p>
           </div>
 
           <div className="mb-4">
@@ -591,23 +534,15 @@ export function SettingsPage({ toast }: SettingsPageProps) {
           <p className="text-xs font-mono text-text-muted uppercase tracking-wider mb-1">Step 2 — Enrich Metadata</p>
           <p className="text-[11px] text-[#444] mb-4">Fetches IDs, genres, BPM, and tags from iTunes, Deezer, Last.fm, and Spotify</p>
           <PipelineOrchestrator
-            status={enrichStatus}
+            running={running}
+            workers={workers}
             activeWorkers={activeWorkers}
             elapsedMs={elapsedMs}
             onRunFull={() => {
-              setEnrichStatus(prev => ({ running: true, workers: {} }));
-              setActiveWorkers(new Set());
-              elapsedStartRef.current = Date.now();
-              setElapsedMs(0);
-              enrichmentApi.runFull()
-                .then(() => enrichmentApi.status().then(setEnrichStatus))
-                .catch(() => toast.error('Failed to start enrichment'));
+              reset();
+              enrichmentApi.runFull().catch(() => toast.error('Failed to start enrichment'));
             }}
-            onStop={() => {
-              enrichmentApi.stop()
-                .then(() => setEnrichStatus(prev => prev ? { ...prev, running: false } : prev))
-                .catch(() => {});
-            }}
+            onStop={() => enrichmentApi.stop().catch(() => {})}
           />
         </div>
 
