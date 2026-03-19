@@ -7,15 +7,19 @@ Replaces 4 separate enrichment routes in settings.py:
   POST /api/v1/library/enrich/stop    — signal all workers to stop after current batch
 """
 import logging
+from typing import Any, Optional
 
-from flask import Blueprint, jsonify, request
+from fastapi import APIRouter, Body, Depends
+from fastapi.responses import JSONResponse
+
+from app.dependencies import verify_api_key
 
 logger = logging.getLogger(__name__)
 
-enrich_bp = Blueprint("enrich", __name__)
+router = APIRouter(dependencies=[Depends(verify_api_key)])
 
 
-@enrich_bp.route("/library/enrich/status", methods=["GET"])
+@router.get("/library/enrich/status")
 def enrich_status():
     """
     Returns unified pipeline status grouped by enrichment_meta source.
@@ -36,13 +40,7 @@ def enrich_status():
         "workers": {
           "library":        { "found": int, "not_found": int, "errors": int, "pending": int },
           "itunes_rich":    { ... },
-          "deezer_rich":    { ... },
-          "spotify_id":     { ... },
-          "spotify_genres": { ... },
-          "lastfm_id":      { ... },
-          "lastfm_tags":    { ... },
-          "lastfm_stats":   { ... },
-          "deezer_bpm":     { ... }
+          ...
         }
       }
     """
@@ -64,7 +62,9 @@ def enrich_status():
             ).fetchall()
     except Exception as e:
         logger.error("enrich_status: DB query failed: %s", e)
-        return jsonify({"status": "error", "message": "DB query failed"}), 500
+        return JSONResponse(
+            {"status": "error", "message": "DB query failed"}, status_code=500
+        )
 
     workers: dict = {}
     for r in rows:
@@ -76,9 +76,6 @@ def enrich_status():
             workers[src][field] = r["cnt"]
 
     # Aggregate enrich_library sub-sources into single "library" key.
-    # itunes_artist + deezer_artist = artist-level confidence validation rows
-    # itunes + deezer = album-level enrichment rows
-    # All four represent Identity Matching stage work.
     _lib_sources = {"itunes_artist", "deezer_artist", "itunes", "deezer"}
     lib_agg: dict = {"found": 0, "not_found": 0, "errors": 0, "pending": 0}
     for src in _lib_sources:
@@ -88,11 +85,11 @@ def enrich_status():
     if any(lib_agg[f] > 0 for f in ("found", "not_found", "errors", "pending")):
         workers["library"] = lib_agg
 
-    return jsonify({"status": "ok", "running": running, "started_at": started_at, "workers": workers})
+    return {"status": "ok", "running": running, "started_at": started_at, "workers": workers}
 
 
-@enrich_bp.route("/library/enrich/full", methods=["POST"])
-def enrich_full():
+@router.post("/library/enrich/full")
+def enrich_full(data: Optional[dict[str, Any]] = Body(default=None)):
     """
     Start the full enrichment pipeline (Stage 2 → Stage 3 → BPM).
     Returns 202 immediately; pipeline runs in background.
@@ -101,17 +98,22 @@ def enrich_full():
     """
     from app.services.api_orchestrator import EnrichmentOrchestrator
 
-    data = request.get_json(silent=True) or {}
+    data = data or {}
     batch_size = data.get("batch_size", 50)
 
     if not isinstance(batch_size, int) or not (1 <= batch_size <= 200):
-        return jsonify({"status": "error", "message": "batch_size must be integer 1–200"}), 400
+        return JSONResponse(
+            {"status": "error", "message": "batch_size must be integer 1–200"},
+            status_code=400,
+        )
 
     EnrichmentOrchestrator.get().run_full(batch_size=batch_size)
-    return jsonify({"status": "ok", "message": "Enrichment pipeline started"}), 202
+    return JSONResponse(
+        {"status": "ok", "message": "Enrichment pipeline started"}, status_code=202
+    )
 
 
-@enrich_bp.route("/library/enrich/stop", methods=["POST"])
+@router.post("/library/enrich/stop")
 def enrich_stop():
     """
     Signal all enrichment workers to stop after their current batch.
@@ -121,7 +123,7 @@ def enrich_stop():
 
     orch = EnrichmentOrchestrator.get()
     if not orch.is_running():
-        return jsonify({"status": "ok", "message": "No enrichment running"})
+        return {"status": "ok", "message": "No enrichment running"}
 
     orch.stop()
-    return jsonify({"status": "ok", "message": "Stop signal sent"})
+    return {"status": "ok", "message": "Stop signal sent"}

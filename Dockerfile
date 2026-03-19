@@ -6,8 +6,8 @@ RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
-# Stage 2: Python runtime — Flask serves the built React app
-FROM python:3.11-slim
+# Stage 2: Python runtime — uvicorn serves the built React app
+FROM python:3.12-slim
 WORKDIR /rythmx
 
 # Install Python dependencies
@@ -30,4 +30,4 @@ ENV PYTHONUNBUFFERED=1
 EXPOSE 8009
 
 # Ensure data directories exist at runtime (survives fresh volume mounts / nuked appdata)
-CMD ["sh", "-c", "mkdir -p /data/rythmx /data/soulsync && python -m app.main"]
+CMD ["sh", "-c", "mkdir -p /data/rythmx /data/soulsync && uvicorn app.main:app --host 0.0.0.0 --port 8009"]

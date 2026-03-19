@@ -14,10 +14,11 @@ import ProcessingSignal from './components/ProcessingSignal';
 import { useToast } from './hooks/useToast';
 import { initApiKey, libraryApi, enrichmentApi } from './services/api';
 import { useWebSocket } from './hooks/useWebSocket';
+import { useEnrichmentStore } from './stores/useEnrichmentStore';
+import { usePlayerStore } from './stores/usePlayerStore';
 import type { LibraryStatus, WsEnrichmentProgress } from './types';
 
 type Page = 'discovery' | 'library' | 'cruise-control' | 'playlists' | 'activity' | 'stats' | 'settings';
-type PlayerState = 'hidden' | 'mini' | 'fullpage';
 
 const NAV_ITEMS: Array<{ id: Page; label: string; icon: typeof Compass }> = [
   { id: 'discovery', label: 'Discovery', icon: Compass },
@@ -32,36 +33,38 @@ const NAV_ITEMS: Array<{ id: Page; label: string; icon: typeof Compass }> = [
 export default function App() {
   const [page, setPage] = useState<Page>('discovery');
   const [expanded, setExpanded] = useState(false);
-  const [playerState, setPlayerState] = useState<PlayerState>('hidden');
-  const [isPlaying, setIsPlaying] = useState(false);
   const { toasts, success, error, dismiss } = useToast();
   const sidebarRef = useRef<HTMLDivElement>(null);
 
   const toast = { success, error };
 
+  // Player state from global store
+  const { playerState, isPlaying, show: showPlayer, hide: hidePlayer,
+          expand: expandPlayer, minimize: minimizePlayer, togglePlayPause } = usePlayerStore();
+
+  // Enrichment running state from global store
+  const { isRunning: globalEnrichRunning, setRunning: setEnrichRunning } = useEnrichmentStore();
+
   // Seed the API key from the bootstrap endpoint on first load.
-  // All subsequent api.ts calls will include X-Api-Key automatically.
   useEffect(() => { initApiKey(); }, []);
 
-  // Global library status (drives Library page status bar)
+  // Seed initial enrichment state from REST on page load
   const [globalLibStatus, setGlobalLibStatus] = useState<LibraryStatus | null>(null);
-  // Global enrichment running flag (drives ProcessingSignal in sidebar)
-  const [globalEnrichRunning, setGlobalEnrichRunning] = useState(false);
-
   useEffect(() => {
     libraryApi.getStatus().then(setGlobalLibStatus).catch(() => {});
-    enrichmentApi.status().then(s => setGlobalEnrichRunning(s.running ?? false)).catch(() => {});
+    enrichmentApi.status().then(s => setEnrichRunning(s.running ?? false)).catch(() => {});
   }, []);
 
+  // WS handler writes enrichment state to the global store
   useWebSocket((event, payload) => {
     if (event === 'enrichment_progress') {
       const p = payload as WsEnrichmentProgress;
-      setGlobalEnrichRunning(p.running);
+      setEnrichRunning(p.running);
     } else if (event === 'enrichment_complete') {
-      setGlobalEnrichRunning(false);
+      setEnrichRunning(false);
       libraryApi.getStatus().then(setGlobalLibStatus).catch(() => {});
     } else if (event === 'enrichment_stopped') {
-      setGlobalEnrichRunning(false);
+      setEnrichRunning(false);
     }
   });
 
@@ -80,21 +83,17 @@ export default function App() {
     setExpanded(false);
   }, []);
 
-  // Called from Library (and future pages) when user clicks play on a track/album.
-  const handlePlay = useCallback(() => {
-    setPlayerState('mini');
-    setIsPlaying(true);
-  }, []);
+  const handlePlay = useCallback(() => { showPlayer(); }, [showPlayer]);
 
   const handleNowPlayingClick = useCallback(() => {
-    setPlayerState(p => p === 'hidden' ? 'mini' : p === 'mini' ? 'hidden' : 'mini');
-  }, []);
+    if (playerState === 'hidden') minimizePlayer();
+    else hidePlayer();
+  }, [playerState, minimizePlayer, hidePlayer]);
 
   const handleNowPlayingDblClick = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
-    setPlayerState('fullpage');
-    setIsPlaying(true);
-  }, []);
+    expandPlayer();
+  }, [expandPlayer]);
 
   const renderPage = () => {
     switch (page) {
@@ -207,8 +206,8 @@ export default function App() {
         {playerState === 'fullpage' ? (
           <FullPagePlayer
             isPlaying={isPlaying}
-            onPlayPause={() => setIsPlaying(p => !p)}
-            onMinimize={() => setPlayerState('mini')}
+            onPlayPause={togglePlayPause}
+            onMinimize={minimizePlayer}
           />
         ) : (
           <div className="flex-1 min-h-0 overflow-auto">
@@ -221,9 +220,9 @@ export default function App() {
         {playerState === 'mini' && (
           <PlayerBar
             isPlaying={isPlaying}
-            onPlayPause={() => setIsPlaying(p => !p)}
-            onExpand={() => setPlayerState('fullpage')}
-            onMinimize={() => setPlayerState('hidden')}
+            onPlayPause={togglePlayPause}
+            onExpand={expandPlayer}
+            onMinimize={hidePlayer}
           />
         )}
       </main>

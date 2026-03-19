@@ -3,13 +3,18 @@ library_browse.py — Read-only browse routes for the Library page.
 
 Provides artist/album/track listing and detail views backed by lib_* tables.
 All SQL uses ? placeholders. No business logic — raw queries only.
-Blueprint registered at /api/v1 in main.py (no prefix in route strings).
+Router registered at /api/v1 in main.py (no prefix in route strings).
 """
 import logging
 import sqlite3
-from flask import Blueprint, jsonify, request
+from typing import Any, Optional
+
+from fastapi import APIRouter, Body, Depends, Query
+from fastapi.responses import JSONResponse
+
 from app import config
 from app.db import rythmx_store
+from app.dependencies import verify_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -22,20 +27,22 @@ def _connect():
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
 
-library_browse_bp = Blueprint("library_browse", __name__)
+
+router = APIRouter(dependencies=[Depends(verify_api_key)])
 
 
 # ---------------------------------------------------------------------------
 # Artists
 # ---------------------------------------------------------------------------
 
-@library_browse_bp.route("/library/artists")
-def library_artists():
-    q = request.args.get("q", "").strip()
-    page = max(1, int(request.args.get("page", 1)))
-    per_page = min(int(request.args.get("per_page", 50)), 200)
-    platform = request.args.get("platform", "all")
-
+@router.get("/library/artists")
+def library_artists(
+    q: str = "",
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=50, le=200),
+    platform: str = "all",
+):
+    q = q.strip()
     where = ["a.removed_at IS NULL"]
     params: list = []
     if q:
@@ -71,11 +78,11 @@ def library_artists():
         ).fetchall()
 
     artists = [dict(r) for r in rows]
-    return jsonify({"status": "ok", "artists": artists, "total": total, "page": page})
+    return {"status": "ok", "artists": artists, "total": total, "page": page}
 
 
-@library_browse_bp.route("/library/artists/<artist_id>")
-def library_artist_detail(artist_id):
+@router.get("/library/artists/{artist_id}")
+def library_artist_detail(artist_id: str):
     with rythmx_store._connect() as conn:
         artist_row = conn.execute(
             """
@@ -92,7 +99,9 @@ def library_artist_detail(artist_id):
         ).fetchone()
 
         if not artist_row:
-            return jsonify({"status": "error", "message": "Artist not found"}), 404
+            return JSONResponse(
+                {"status": "error", "message": "Artist not found"}, status_code=404
+            )
 
         albums = conn.execute(
             """
@@ -120,26 +129,27 @@ def library_artist_detail(artist_id):
             (artist_id,),
         ).fetchall()
 
-    return jsonify({
+    return {
         "status": "ok",
         "artist": dict(artist_row),
         "albums": [dict(r) for r in albums],
         "top_tracks": [dict(r) for r in top_tracks],
-    })
+    }
 
 
 # ---------------------------------------------------------------------------
 # Albums
 # ---------------------------------------------------------------------------
 
-@library_browse_bp.route("/library/albums")
-def library_albums():
-    q = request.args.get("q", "").strip()
-    page = max(1, int(request.args.get("page", 1)))
-    per_page = min(int(request.args.get("per_page", 50)), 200)
-    platform = request.args.get("platform", "all")
-    record_type = request.args.get("record_type", "all")
-
+@router.get("/library/albums")
+def library_albums(
+    q: str = "",
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=50, le=200),
+    platform: str = "all",
+    record_type: str = "all",
+):
+    q = q.strip()
     where = ["al.removed_at IS NULL"]
     params: list = []
     if q:
@@ -180,11 +190,11 @@ def library_albums():
         ).fetchall()
 
     albums = [dict(r) for r in rows]
-    return jsonify({"status": "ok", "albums": albums, "total": total, "page": page})
+    return {"status": "ok", "albums": albums, "total": total, "page": page}
 
 
-@library_browse_bp.route("/library/albums/<album_id>")
-def library_album_detail(album_id):
+@router.get("/library/albums/{album_id}")
+def library_album_detail(album_id: str):
     with rythmx_store._connect() as conn:
         album_row = conn.execute(
             """
@@ -199,7 +209,9 @@ def library_album_detail(album_id):
         ).fetchone()
 
         if not album_row:
-            return jsonify({"status": "error", "message": "Album not found"}), 404
+            return JSONResponse(
+                {"status": "error", "message": "Album not found"}, status_code=404
+            )
 
         tracks = conn.execute(
             """
@@ -213,23 +225,28 @@ def library_album_detail(album_id):
             (album_id,),
         ).fetchall()
 
-    return jsonify({
+    return {
         "status": "ok",
         "album": dict(album_row),
         "tracks": [dict(r) for r in tracks],
-    })
+    }
 
 
 # ---------------------------------------------------------------------------
 # Track rating
 # ---------------------------------------------------------------------------
 
-@library_browse_bp.route("/library/tracks/<track_id>/rating", methods=["PATCH"])
-def library_rate_track(track_id):
-    data = request.get_json(silent=True) or {}
+@router.patch("/library/tracks/{track_id}/rating")
+def library_rate_track(
+    track_id: str,
+    data: Optional[dict[str, Any]] = Body(default=None),
+):
+    data = data or {}
     rating = data.get("rating")
     if rating is None or not isinstance(rating, int) or not (0 <= rating <= 10):
-        return jsonify({"status": "error", "message": "rating must be integer 0-10"}), 400
+        return JSONResponse(
+            {"status": "error", "message": "rating must be integer 0-10"}, status_code=400
+        )
 
     with rythmx_store._connect() as conn:
         result = conn.execute(
@@ -237,22 +254,25 @@ def library_rate_track(track_id):
             (rating, track_id),
         )
         if result.rowcount == 0:
-            return jsonify({"status": "error", "message": "Track not found"}), 404
+            return JSONResponse(
+                {"status": "error", "message": "Track not found"}, status_code=404
+            )
 
     # TODO Phase 14: write-back rating to platform (Plex, Navidrome, Jellyfin)
-    return jsonify({"status": "ok", "track_id": track_id, "rating": rating})
+    return {"status": "ok", "track_id": track_id, "rating": rating}
 
 
 # ---------------------------------------------------------------------------
 # Tracks (flat list)
 # ---------------------------------------------------------------------------
 
-@library_browse_bp.route("/library/tracks")
-def library_tracks():
-    q = request.args.get("q", "").strip()
-    page = max(1, int(request.args.get("page", 1)))
-    per_page = min(int(request.args.get("per_page", 100)), 500)
-
+@router.get("/library/tracks")
+def library_tracks(
+    q: str = "",
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=100, le=500),
+):
+    q = q.strip()
     where = ["t.removed_at IS NULL"]
     params: list = []
     if q:
@@ -293,22 +313,22 @@ def library_tracks():
         ).fetchall()
 
     tracks = [dict(r) for r in rows]
-    return jsonify({"status": "ok", "tracks": tracks, "total": total, "page": page})
+    return {"status": "ok", "tracks": tracks, "total": total, "page": page}
 
 
 # ---------------------------------------------------------------------------
 # Library Audit — low-confidence / unverified items
 # ---------------------------------------------------------------------------
 
-@library_browse_bp.route("/library/audit")
-def library_audit():
+@router.get("/library/audit")
+def library_audit(
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=50, le=200),
+):
     """
     Return artists and albums with needs_verification=1 or match_confidence < 85.
     Groups by artist. Includes per-source enrichment_meta confidence scores.
-    Pagination: ?page=1&per_page=50
     """
-    page = max(1, int(request.args.get("page", 1)))
-    per_page = min(int(request.args.get("per_page", 50)), 200)
     offset = (page - 1) * per_page
 
     with _connect() as conn:
@@ -339,7 +359,6 @@ def library_audit():
             (per_page, offset),
         ).fetchall()
 
-        # Gather enrichment_meta confidence per album
         album_ids = [r["album_id"] for r in rows]
         meta_map: dict[str, dict] = {}
         if album_ids:
@@ -372,27 +391,29 @@ def library_audit():
             "enrichment": meta_map.get(r["album_id"], {}),
         })
 
-    return jsonify({"status": "ok", "items": items, "total": total, "page": page})
+    return {"status": "ok", "items": items, "total": total, "page": page}
 
 
-@library_browse_bp.route("/library/audit/confirm", methods=["POST"])
-def library_audit_confirm():
+@router.post("/library/audit/confirm")
+def library_audit_confirm(data: Optional[dict[str, Any]] = Body(default=None)):
     """
     Manually confirm an enrichment match.
     Body: { entity_type, entity_id, source, confirmed_id }
     Sets needs_verification=0, match_confidence=100, writes the confirmed ID.
     """
-    data = request.get_json(silent=True) or {}
+    data = data or {}
     entity_type = str(data.get("entity_type", "")).strip()
     entity_id = str(data.get("entity_id", "")).strip()
     source = str(data.get("source", "")).strip()
     confirmed_id = str(data.get("confirmed_id", "")).strip()[:200]
 
     if not entity_type or not entity_id or not source or not confirmed_id:
-        return jsonify({"status": "error",
-                        "message": "entity_type, entity_id, source, confirmed_id required"}), 400
+        return JSONResponse(
+            {"status": "error",
+             "message": "entity_type, entity_id, source, confirmed_id required"},
+            status_code=400,
+        )
 
-    # Map source → column name
     id_col_map = {
         "itunes": "itunes_album_id",
         "deezer": "deezer_id",
@@ -424,26 +445,28 @@ def library_audit_confirm():
             )
     except Exception as e:
         logger.error("library_audit_confirm: DB write failed: %s", e)
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
-    return jsonify({"status": "ok"})
+    return {"status": "ok"}
 
 
-@library_browse_bp.route("/library/audit/reject", methods=["POST"])
-def library_audit_reject():
+@router.post("/library/audit/reject")
+def library_audit_reject(data: Optional[dict[str, Any]] = Body(default=None)):
     """
     Reject an incorrect enrichment match.
     Body: { entity_type, entity_id, source }
     Clears the ID column, sets match_confidence=0, needs_verification=1.
     """
-    data = request.get_json(silent=True) or {}
+    data = data or {}
     entity_type = str(data.get("entity_type", "")).strip()
     entity_id = str(data.get("entity_id", "")).strip()
     source = str(data.get("source", "")).strip()
 
     if not entity_type or not entity_id or not source:
-        return jsonify({"status": "error",
-                        "message": "entity_type, entity_id, source required"}), 400
+        return JSONResponse(
+            {"status": "error", "message": "entity_type, entity_id, source required"},
+            status_code=400,
+        )
 
     id_col_map = {
         "itunes": "itunes_album_id",
@@ -476,6 +499,6 @@ def library_audit_reject():
             )
     except Exception as e:
         logger.error("library_audit_reject: DB write failed: %s", e)
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
-    return jsonify({"status": "ok"})
+    return {"status": "ok"}
