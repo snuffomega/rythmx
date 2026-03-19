@@ -22,7 +22,7 @@ const STUB_VOLUME   = 72;   // % — static until Phase 14
 
 export function PlayerBar({ isPlaying, onPlayPause, onExpand, onMinimize }: PlayerBarProps) {
   return (
-    <div className="h-[80px] bg-[#0a0a0a] border-t border-[#1a1a1a] flex items-center px-5 gap-5 flex-shrink-0">
+    <div className="fixed bottom-0 left-16 right-0 z-30 h-[80px] bg-[#0a0a0a] border-t border-[#1a1a1a] flex items-center px-5 gap-5">
 
       {/* ── Left: track info ─────────────────────────────────────────────── */}
       <div className="flex items-center gap-3.5 w-[280px] min-w-0">

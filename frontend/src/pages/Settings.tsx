@@ -4,7 +4,7 @@ import { useApi } from '../hooks/useApi';
 import { settingsApi, libraryApi, libraryBrowseApi, imageServiceApi, setApiKey, enrichmentApi } from '../services/api';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useWebSocket } from '../hooks/useWebSocket';
-import type { LibraryPlatform, EnrichmentPipelineStatus, EnrichmentWorkerStatus, WsEnrichmentProgress } from '../types';
+import type { LibraryPlatform, EnrichmentPipelineStatus, EnrichmentWorkerStatus, WsEnrichmentProgress, Settings } from '../types';
 
 const PLATFORM_LABELS: Record<string, string> = {
   plex: 'Plex',
@@ -16,10 +16,11 @@ interface ServiceRowProps {
   name: string;
   subtitle?: string;
   icon: React.ReactNode;
+  configured?: boolean;
   onTest: () => Promise<{ connected: boolean; message?: string }>;
 }
 
-function ServiceCard({ name, subtitle, icon, onTest }: ServiceRowProps) {
+function ServiceCard({ name, subtitle, icon, configured, onTest }: ServiceRowProps) {
   const [status, setStatus] = useState<'idle' | 'testing' | 'connected' | 'error'>('idle');
   const [message, setMessage] = useState<string | null>(null);
 
@@ -37,7 +38,10 @@ function ServiceCard({ name, subtitle, icon, onTest }: ServiceRowProps) {
   };
 
   return (
-    <div className="bg-[#0e0e0e] border border-[#1a1a1a] p-4 flex flex-col gap-3">
+    <div className="relative bg-[#0e0e0e] border border-[#1a1a1a] p-4 flex flex-col gap-3">
+      {configured && (
+        <span className="absolute top-2.5 right-2.5 w-2 h-2 rounded-full bg-accent" title="Configured" />
+      )}
       <div className="flex items-center gap-2.5">
         <div className="w-7 h-7 bg-[#181818] flex items-center justify-center flex-shrink-0">
           {icon}
@@ -121,6 +125,7 @@ interface PipelineOrchestratorProps {
 
 function PipelineOrchestrator({ status, activeWorkers, elapsedMs, onRunFull, onStop }: PipelineOrchestratorProps) {
   const running = status?.running ?? false;
+  const [showStageDetail, setShowStageDetail] = useState(false);
 
   // Per-stage aggregates
   const stageData = STAGE_GROUPS.map(group => {
@@ -167,23 +172,21 @@ function PipelineOrchestrator({ status, activeWorkers, elapsedMs, onRunFull, onS
         )}
       </div>
 
-      {/* Overall progress */}
-      {(running || totalProcessed > 0) && (
-        <div className="mb-6 p-4 bg-surface rounded-sm border border-[#1a1a1a]">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-mono text-text-muted uppercase tracking-wider">Overall Progress</span>
-            <span className="text-xs font-mono text-text-secondary">{overallPct.toFixed(1)}%</span>
-          </div>
-          <div className="h-1.5 bg-surface-highlight rounded-full overflow-hidden">
-            <div className="h-full bg-accent transition-all duration-500 ease-out" style={{ width: `${overallPct}%` }} />
-          </div>
-          <div className="flex items-center gap-4 mt-2 text-[10px] font-mono text-text-muted">
-            <span>{totalProcessed.toLocaleString()} / {totalItems.toLocaleString()} items</span>
-            <span className="text-accent">{totalFound.toLocaleString()} enriched</span>
-            {totalErrors > 0 && <span className="text-red-400">{totalErrors} errors</span>}
-          </div>
+      {/* Overall progress — always visible */}
+      <div className="mb-6 p-4 bg-surface rounded-sm border border-[#1a1a1a]">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-xs font-mono text-text-muted uppercase tracking-wider">Overall Progress</span>
+          <span className="text-xs font-mono text-text-secondary">{overallPct.toFixed(1)}%</span>
         </div>
-      )}
+        <div className="h-1.5 bg-surface-highlight rounded-full overflow-hidden">
+          <div className="h-full bg-accent transition-all duration-500 ease-out" style={{ width: `${overallPct}%` }} />
+        </div>
+        <div className="flex items-center gap-4 mt-2 text-[10px] font-mono text-text-muted">
+          <span>{totalProcessed.toLocaleString()} / {totalItems.toLocaleString()} items</span>
+          <span className="text-accent">{totalFound.toLocaleString()} enriched</span>
+          {totalErrors > 0 && <span className="text-red-400">{totalErrors} errors</span>}
+        </div>
+      </div>
 
       {/* Controls */}
       <div className="flex items-center gap-3 mb-6">
@@ -205,8 +208,17 @@ function PipelineOrchestrator({ status, activeWorkers, elapsedMs, onRunFull, onS
         )}
       </div>
 
+      {/* Stage detail toggle */}
+      <button
+        onClick={() => setShowStageDetail(v => !v)}
+        className="flex items-center gap-1.5 text-xs font-mono text-text-muted hover:text-text-secondary transition-colors mb-3"
+      >
+        {showStageDetail ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+        {showStageDetail ? 'Hide stage details' : 'Show stage details'}
+      </button>
+
       {/* Stage cards */}
-      <div className="space-y-3">
+      {showStageDetail && <div className="space-y-3">
         {stageData.map(({ group, found, notFound, errors, total, stageStatus, foundPct, notFoundPct, errorPct, processedPct }, idx) => {
           const isWorking = stageStatus === 'working';
           const isComplete = stageStatus === 'complete';
@@ -274,7 +286,7 @@ function PipelineOrchestrator({ status, activeWorkers, elapsedMs, onRunFull, onS
             </div>
           );
         })}
-      </div>
+      </div>}
     </div>
   );
 }
@@ -307,9 +319,11 @@ export function SettingsPage({ toast }: SettingsPageProps) {
   const [apiKeyVisible, setApiKeyVisible] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [settingsStatus, setSettingsStatus] = useState<Settings | null>(null);
 
   useEffect(() => {
     settingsApi.getApiKey().then(setApiKeyState).catch(() => {});
+    settingsApi.get().then(setSettingsStatus).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -477,42 +491,55 @@ export function SettingsPage({ toast }: SettingsPageProps) {
 
       <section>
         <h2 className="text-text-muted text-xs font-semibold uppercase tracking-widest mb-3">Connections</h2>
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-3 gap-2">
           <ServiceCard
             name="Last.fm"
             icon={<Radio size={16} className="text-danger" />}
+            configured={settingsStatus?.lastfm_configured}
             onTest={settingsApi.testLastfm}
           />
           <ServiceCard
             name="Plex"
             icon={<span className="text-accent font-bold text-sm">P</span>}
+            configured={settingsStatus?.plex_configured}
             onTest={settingsApi.testPlex}
           />
           <ServiceCard
             key={`library-${platform}`}
-            name="SoulSync Enrichment"
+            name="SoulSync"
             icon={<Database size={16} className="text-accent" />}
+            configured={settingsStatus?.soulsync_db_accessible}
             onTest={settingsApi.testSoulsync}
           />
           <ServiceCard
             name="Spotify"
             icon={<span className="text-success font-bold text-sm">S</span>}
+            configured={settingsStatus?.spotify_configured}
             onTest={settingsApi.testSpotify}
           />
           <ServiceCard
             name="Fanart.tv"
-            subtitle="optional — artist photos"
+            subtitle="optional"
             icon={<span className="text-[#e88c2a] font-bold text-sm">F</span>}
+            configured={settingsStatus?.fanart_configured}
             onTest={settingsApi.testFanart}
           />
         </div>
       </section>
 
       <section className="border-t border-[#1a1a1a] pt-8">
-        <h2 className="text-text-muted text-xs font-semibold uppercase tracking-widest mb-4">Library</h2>
+        <h2 className="text-text-muted text-xs font-semibold uppercase tracking-widest mb-6">Library & Enrichment</h2>
 
-        <div className="space-y-5">
-          <div>
+        {/* Step 1 — Sync */}
+        <div className="mb-6 p-4 bg-[#0e0e0e] border border-[#1a1a1a]">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <p className="text-xs font-mono text-text-muted uppercase tracking-wider mb-0.5">Step 1 — Sync from Plex</p>
+              <p className="text-[11px] text-[#444]">Reads your Plex library into the local database</p>
+            </div>
+          </div>
+
+          <div className="mb-4">
             <label className="label">Library Platform</label>
             <div className="relative mt-1">
               <select
@@ -533,36 +560,48 @@ export function SettingsPage({ toast }: SettingsPageProps) {
             </div>
           </div>
 
-          {libraryStatus?.track_count !== undefined && (
-            <p className="text-[#444] text-xs mt-1">{libraryStatus.track_count.toLocaleString()} tracks indexed</p>
-          )}
+          <div className="flex items-center justify-between">
+            <div className="text-[11px] text-[#444] space-y-0.5">
+              {libraryStatus?.track_count !== undefined && (
+                <p>{libraryStatus.track_count.toLocaleString()} tracks indexed</p>
+              )}
+              {libraryStatus?.last_synced && (
+                <p>Last synced: {libraryStatus.last_synced}</p>
+              )}
+            </div>
+            <button
+              onClick={handleSync}
+              disabled={syncing}
+              className="btn-secondary flex items-center gap-2 text-sm flex-shrink-0"
+            >
+              {syncing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+              Sync Now
+            </button>
+          </div>
+        </div>
 
-          {libraryStatus?.last_synced && (
-            <p className="text-[#444] text-xs">Last synced: {libraryStatus.last_synced}</p>
-          )}
+        {/* Step 1 → Step 2 connector */}
+        <div className="flex items-center gap-2 mb-6 pl-2">
+          <div className="w-px h-6 bg-[#2a2a2a] ml-1" />
+          <p className="text-[10px] font-mono text-[#444]">auto-triggers Step 2 after sync completes (30s delay)</p>
+        </div>
 
-          <button
-            onClick={handleSync}
-            disabled={syncing}
-            className="btn-secondary flex items-center gap-2 text-sm"
-          >
-            {syncing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-            Sync Library Now
-          </button>
-
-          {/* Enrichment pipeline orchestrator */}
+        {/* Step 2 — Enrich */}
+        <div className="mb-4">
+          <p className="text-xs font-mono text-text-muted uppercase tracking-wider mb-1">Step 2 — Enrich Metadata</p>
+          <p className="text-[11px] text-[#444] mb-4">Fetches IDs, genres, BPM, and tags from iTunes, Deezer, Last.fm, and Spotify</p>
           <PipelineOrchestrator
             status={enrichStatus}
             activeWorkers={activeWorkers}
             elapsedMs={elapsedMs}
             onRunFull={() => {
-              // Reset workers to blank slate so bars don't carry over stale counts from a prior run.
-              // Limitation: bars are empty for ~1s until first WS event arrives per worker.
               setEnrichStatus(prev => ({ running: true, workers: {} }));
               setActiveWorkers(new Set());
               elapsedStartRef.current = Date.now();
               setElapsedMs(0);
-              enrichmentApi.runFull().catch(() => toast.error('Failed to start enrichment'));
+              enrichmentApi.runFull()
+                .then(() => enrichmentApi.status().then(setEnrichStatus))
+                .catch(() => toast.error('Failed to start enrichment'));
             }}
             onStop={() => {
               enrichmentApi.stop()
@@ -570,20 +609,20 @@ export function SettingsPage({ toast }: SettingsPageProps) {
                 .catch(() => {});
             }}
           />
-
-          {auditTotal > 0 && (
-            <div className="pt-2">
-              <p className="text-xs text-[#666]">
-                <span className="inline-flex items-center gap-1.5 text-amber-500 font-medium">
-                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block" />
-                  {auditTotal} item{auditTotal !== 1 ? 's' : ''} need review
-                </span>
-                {' '}— low-confidence matches flagged for manual confirmation.{' '}
-                <span className="text-[#444]">Audit UI coming in Phase 13c.</span>
-              </p>
-            </div>
-          )}
         </div>
+
+        {auditTotal > 0 && (
+          <div className="pt-2">
+            <p className="text-xs text-[#666]">
+              <span className="inline-flex items-center gap-1.5 text-amber-500 font-medium">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block" />
+                {auditTotal} item{auditTotal !== 1 ? 's' : ''} need review
+              </span>
+              {' '}— low-confidence matches flagged for manual confirmation.{' '}
+              <span className="text-[#444]">Audit UI coming in Phase 13c.</span>
+            </p>
+          </div>
+        )}
       </section>
 
       <section className="border-t border-[#1a1a1a] pt-8">

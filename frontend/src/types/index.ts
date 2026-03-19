@@ -216,11 +216,16 @@ export interface ConnectionStatus {
 export interface Settings {
   lastfm_username?: string;
   lastfm_api_key?: string;
+  lastfm_configured?: boolean;
   plex_url?: string;
   plex_token?: string;
+  plex_configured?: boolean;
   soulsync_url?: string;
+  soulsync_db_accessible?: boolean;
   spotify_client_id?: string;
   spotify_client_secret?: string;
+  spotify_configured?: boolean;
+  fanart_configured?: boolean;
   library_platform: LibraryPlatform;
 }
 

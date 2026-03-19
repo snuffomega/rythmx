@@ -136,6 +136,20 @@ export default function App() {
           )}
         </div>
 
+        <div className="h-12 border-b border-border flex-shrink-0 flex items-center overflow-hidden">
+          <span className="w-16 flex items-center justify-center flex-shrink-0">
+            <ProcessingSignal
+              isActive={globalEnrichRunning}
+              onClick={() => navigate('settings')}
+            />
+          </span>
+          {expanded && (
+            <span className="text-text-muted text-xs whitespace-nowrap">
+              {globalEnrichRunning ? 'Enriching…' : 'Library Ready'}
+            </span>
+          )}
+        </div>
+
         <nav className="flex-1 py-2 overflow-y-auto overflow-x-hidden">
           {NAV_ITEMS.map(item => {
             const Icon = item.icon;
@@ -187,19 +201,6 @@ export default function App() {
           )}
         </button>
 
-        <div className="h-12 border-t border-border flex-shrink-0 flex items-center overflow-hidden">
-          <span className="w-16 flex items-center justify-center flex-shrink-0">
-            <ProcessingSignal
-              isActive={globalEnrichRunning}
-              onClick={() => navigate('settings')}
-            />
-          </span>
-          {expanded && (
-            <span className="text-text-muted text-xs whitespace-nowrap">
-              {globalEnrichRunning ? 'Enriching…' : 'Library Ready'}
-            </span>
-          )}
-        </div>
       </aside>
 
       <main className="flex-1 min-w-0 pl-16 flex flex-col min-h-screen">
@@ -210,7 +211,7 @@ export default function App() {
             onMinimize={minimizePlayer}
           />
         ) : (
-          <div className="flex-1 min-h-0 overflow-auto">
+          <div className={`flex-1 min-h-0 overflow-auto${playerState === 'mini' ? ' pb-20' : ''}`}>
             <div className="max-w-screen-xl mx-auto px-8 xl:px-12 pt-6">
               {renderPage()}
             </div>

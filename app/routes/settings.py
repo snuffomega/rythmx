@@ -40,6 +40,8 @@ def settings_get():
         "soulsync_url": config.SOULSYNC_URL,
         "soulsync_db": config.SOULSYNC_DB,
         "soulsync_db_accessible": accessible,
+        "spotify_configured": bool(config.SPOTIFY_CLIENT_ID and config.SPOTIFY_CLIENT_SECRET),
+        "fanart_configured": bool(config.FANART_API_KEY),
         "library_platform": rythmx_store.get_setting("library_platform") or config.LIBRARY_PLATFORM,
         "library_accessible": accessible,
         "library_track_count": lr.get_track_count() if accessible else 0,
