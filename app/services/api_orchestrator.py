@@ -362,12 +362,12 @@ class EnrichmentOrchestrator:
                     except Exception as e:
                         logger.error("EnrichmentOrchestrator: Stage 3 '%s' error: %s", key, e)
 
-            # --- BPM: last (depends on deezer_id from Stage 2) ---
-            if not self._stop_event.is_set():
-                try:
-                    ls.enrich_deezer_bpm(30, self._stop_event, self._make_progress_fn("deezer_bpm"))
-                except Exception as e:
-                    logger.error("EnrichmentOrchestrator: BPM worker error: %s", e)
+            # --- BPM: disabled (Phase 22 — reduces API stress) ---
+            # if not self._stop_event.is_set():
+            #     try:
+            #         ls.enrich_deezer_bpm(30, self._stop_event, self._make_progress_fn("deezer_bpm"))
+            #     except Exception as e:
+            #         logger.error("EnrichmentOrchestrator: BPM worker error: %s", e)
 
             if self._stop_event.is_set():
                 self._started_at = None

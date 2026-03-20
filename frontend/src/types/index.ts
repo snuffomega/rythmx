@@ -335,7 +335,7 @@ export interface EnrichmentPipelineStatus {
   // The counts reflect total artist+album identity work — not just iTunes albums.
   workers: Partial<Record<
     'library' | 'itunes_rich' | 'deezer_rich' | 'spotify_id' | 'spotify_genres' |
-    'lastfm_id' | 'lastfm_tags' | 'lastfm_stats' | 'deezer_bpm',
+    'lastfm_id' | 'lastfm_tags' | 'lastfm_stats',
     EnrichmentWorkerStatus
   >>;
 }

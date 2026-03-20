@@ -99,13 +99,17 @@ function ServiceCard({ name, subtitle, icon, configured, onTest }: ServiceRowPro
 // PipelineOrchestrator — 4-stage pipeline view
 // ---------------------------------------------------------------------------
 
-// "library" aggregates all enrich_library sub-sources: itunes_artist + deezer_artist
-// (artist confidence validation) + itunes + deezer (album-level ID enrichment).
-const STAGE_GROUPS = [
-  { id: 'identity', label: 'Identity Matching',   description: 'iTunes + Deezer IDs, Spotify ID, Last.fm ID', workers: ['library', 'spotify_id', 'lastfm_id'] },
-  { id: 'metadata', label: 'Metadata Enrichment', description: 'iTunes Rich, Deezer Rich',                     workers: ['itunes_rich', 'deezer_rich'] },
-  { id: 'genres',   label: 'Genre & Tagging',     description: 'Spotify Genres, Last.fm Tags',                 workers: ['spotify_genres', 'lastfm_tags'] },
-  { id: 'audio',    label: 'Audio Analysis',      description: 'Last.fm Stats, Deezer BPM',                    workers: ['lastfm_stats', 'deezer_bpm'] },
+// Flat list of enrichment sources — one row per source in the UI.
+// "library" aggregates enrich_library sub-sources (itunes_artist, deezer_artist, itunes, deezer).
+const ENRICHMENT_SOURCES = [
+  { key: 'library',        label: 'Identity Matching',  description: 'iTunes + Deezer artist & album IDs' },
+  { key: 'spotify_id',     label: 'Spotify ID',         description: 'Artist ID from Spotify' },
+  { key: 'lastfm_id',      label: 'Last.fm ID',         description: 'Artist ID from Last.fm' },
+  { key: 'itunes_rich',    label: 'iTunes Metadata',    description: 'Release date, genre, label' },
+  { key: 'deezer_rich',    label: 'Deezer Metadata',    description: 'Release date, explicit flag' },
+  { key: 'spotify_genres', label: 'Spotify Genres',     description: 'Artist genre tags' },
+  { key: 'lastfm_tags',    label: 'Last.fm Tags',       description: 'Community tags' },
+  { key: 'lastfm_stats',   label: 'Last.fm Stats',      description: 'Playcount, listeners' },
 ] as const;
 
 function formatElapsed(ms: number): string {
@@ -124,34 +128,39 @@ interface PipelineOrchestratorProps {
 }
 
 function PipelineOrchestrator({ running, workers, activeWorkers, elapsedMs, onRunFull, onStop }: PipelineOrchestratorProps) {
-  const [showStageDetail, setShowStageDetail] = useState(false);
+  const [showSources, setShowSources] = useState(false);
 
-  const stageData = STAGE_GROUPS.map(group => {
-    const groupWorkers = group.workers.map(k => workers[k]).filter((w): w is EnrichmentWorkerStatus => !!w);
-    const found = groupWorkers.reduce((s, w) => s + w.found, 0);
-    const notFound = groupWorkers.reduce((s, w) => s + w.not_found, 0);
-    const errors = groupWorkers.reduce((s, w) => s + w.errors, 0);
-    const pending = groupWorkers.reduce((s, w) => s + w.pending, 0);
+  // Per-source data
+  const sourceData = ENRICHMENT_SOURCES.map(src => {
+    const w = workers[src.key];
+    const found = w?.found ?? 0;
+    const notFound = w?.not_found ?? 0;
+    const errors = w?.errors ?? 0;
+    const pending = w?.pending ?? 0;
     const total = found + notFound + errors + pending;
-
-    const anyWorking = running && group.workers.some(k => activeWorkers.has(k));
-    const hasData = found + notFound + errors > 0;
-    const allDone = hasData && pending === 0;
-    const stageStatus: 'idle' | 'working' | 'complete' = anyWorking ? 'working' : allDone ? 'complete' : hasData ? 'working' : 'idle';
+    const isActive = running && activeWorkers.has(src.key);
+    const hasData = total > 0;
 
     const foundPct = total > 0 ? (found / total) * 100 : 0;
     const notFoundPct = total > 0 ? (notFound / total) * 100 : 0;
     const errorPct = total > 0 ? (errors / total) * 100 : 0;
     const processedPct = foundPct + notFoundPct + errorPct;
 
-    return { group, found, notFound, errors, pending, total, stageStatus, foundPct, notFoundPct, errorPct, processedPct };
+    return { ...src, found, notFound, errors, pending, total, isActive, hasData, foundPct, notFoundPct, errorPct, processedPct };
   });
 
-  const totalFound = stageData.reduce((s, d) => s + d.found, 0);
-  const totalProcessed = stageData.reduce((s, d) => s + d.found + d.notFound + d.errors, 0);
-  const totalItems = stageData.reduce((s, d) => s + d.total, 0);
+  // Overall totals cascaded from all sources
+  const totalFound = sourceData.reduce((s, d) => s + d.found, 0);
+  const totalNotFound = sourceData.reduce((s, d) => s + d.notFound, 0);
+  const totalErrors = sourceData.reduce((s, d) => s + d.errors, 0);
+  const totalItems = sourceData.reduce((s, d) => s + d.total, 0);
+  const totalProcessed = totalFound + totalNotFound + totalErrors;
   const overallPct = totalItems > 0 ? (totalProcessed / totalItems) * 100 : 0;
-  const totalErrors = stageData.reduce((s, d) => s + d.errors, 0);
+  const enrichedPct = totalItems > 0 ? (totalFound / totalItems) * 100 : 0;
+
+  const overallFoundPct = totalItems > 0 ? (totalFound / totalItems) * 100 : 0;
+  const overallNotFoundPct = totalItems > 0 ? (totalNotFound / totalItems) * 100 : 0;
+  const overallErrorPct = totalItems > 0 ? (totalErrors / totalItems) * 100 : 0;
 
   return (
     <div data-testid="pipeline-orchestrator" className="max-w-3xl">
@@ -175,12 +184,15 @@ function PipelineOrchestrator({ running, workers, activeWorkers, elapsedMs, onRu
           <span className="text-xs font-mono text-text-muted uppercase tracking-wider">Overall Progress</span>
           <span className="text-xs font-mono text-text-secondary">{overallPct.toFixed(1)}%</span>
         </div>
-        <div className="h-1.5 bg-surface-highlight rounded-full overflow-hidden">
-          <div className="h-full bg-accent transition-all duration-500 ease-out" style={{ width: `${overallPct}%` }} />
+        <div className="relative h-1.5 bg-surface-highlight rounded-full overflow-hidden">
+          <div className="absolute top-0 left-0 h-full bg-accent transition-all duration-500 ease-out" style={{ width: `${overallFoundPct}%` }} />
+          <div className="absolute top-0 h-full bg-red-500/50 transition-all duration-500 ease-out" style={{ left: `${overallFoundPct}%`, width: `${overallNotFoundPct}%` }} />
+          <div className="absolute top-0 h-full bg-red-500/70 transition-all duration-500 ease-out" style={{ left: `${overallFoundPct + overallNotFoundPct}%`, width: `${overallErrorPct}%` }} />
         </div>
         <div className="flex items-center gap-4 mt-2 text-[10px] font-mono text-text-muted">
           <span>{totalProcessed.toLocaleString()} / {totalItems.toLocaleString()} items</span>
           <span className="text-accent">{totalFound.toLocaleString()} enriched</span>
+          {totalNotFound > 0 && <span className="text-red-400/70">{totalNotFound.toLocaleString()} not found</span>}
           {totalErrors > 0 && <span className="text-red-400">{totalErrors} errors</span>}
         </div>
       </div>
@@ -198,89 +210,69 @@ function PipelineOrchestrator({ running, workers, activeWorkers, elapsedMs, onRu
             Stop
           </button>
         )}
-        {!running && totalProcessed > 0 && (
-          <span className="text-xs font-mono text-text-muted">
-            Last run: {totalFound.toLocaleString()} enriched
+        {totalItems > 0 && (
+          <span className="text-xs font-mono text-accent font-medium">
+            {enrichedPct.toFixed(0)}% enriched
           </span>
         )}
       </div>
 
-      {/* Stage detail toggle */}
+      {/* Source detail toggle */}
       <button
-        onClick={() => setShowStageDetail(v => !v)}
+        onClick={() => setShowSources(v => !v)}
         className="flex items-center gap-1.5 text-xs font-mono text-text-muted hover:text-text-secondary transition-colors mb-3"
       >
-        {showStageDetail ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-        {showStageDetail ? 'Hide stage details' : 'Show stage details'}
+        {showSources ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+        {showSources ? 'Hide source details' : 'Show source details'}
       </button>
 
-      {/* Stage cards */}
-      {showStageDetail && (
-        <div className="space-y-3">
-          {stageData.map(({ group, found, notFound, errors, total, stageStatus, foundPct, notFoundPct, errorPct, processedPct }, idx) => {
-            const isWorking = stageStatus === 'working';
-            const isComplete = stageStatus === 'complete';
-            return (
-              <div
-                key={group.id}
-                className={`relative p-5 rounded-sm border transition-all duration-500 ${
-                  isWorking
-                    ? 'bg-surface border-accent/30 shadow-[0_0_20px_rgba(212,245,60,0.05)]'
-                    : isComplete
-                      ? 'bg-surface/50 border-[#1a1a1a]'
-                      : 'bg-surface/30 border-[#141414]'
-                }`}
-              >
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-3">
-                    <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-mono font-medium transition-colors duration-300 ${
-                      isComplete ? 'bg-accent/20 text-accent' : isWorking ? 'bg-accent/10 text-accent' : 'bg-surface-highlight text-text-muted'
-                    }`}>
-                      {isComplete ? <CheckCircle size={14} /> : idx + 1}
-                    </div>
-                    <div>
-                      <h3 className={`text-sm font-medium tracking-tight transition-colors duration-300 ${
-                        isWorking ? 'text-text-primary' : isComplete ? 'text-text-secondary' : 'text-text-muted'
-                      }`}>{group.label}</h3>
-                      <p className="text-[11px] font-mono text-text-muted/70 mt-0.5">{group.description}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {isWorking && (
-                      <span className="flex items-center gap-1.5 text-[10px] font-mono text-accent uppercase tracking-wider">
-                        <Zap size={10} className="animate-pulse" />
-                        Working
-                      </span>
-                    )}
-                    {isComplete && (
-                      <span className="flex items-center gap-1.5 text-[10px] font-mono text-text-muted uppercase tracking-wider">
-                        <CheckCircle size={10} />
-                        Complete
-                      </span>
-                    )}
-                  </div>
+      {/* Per-source rows */}
+      {showSources && (
+        <div className="space-y-2">
+          {sourceData.map(src => (
+            <div
+              key={src.key}
+              className={`p-3 rounded-sm border transition-all duration-300 ${
+                src.isActive
+                  ? 'bg-surface border-accent/20'
+                  : src.hasData
+                    ? 'bg-surface/50 border-[#1a1a1a]'
+                    : 'bg-surface/30 border-[#141414]'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  {src.isActive && <Zap size={10} className="text-accent animate-pulse flex-shrink-0" />}
+                  <span className={`text-xs font-medium truncate ${
+                    src.isActive ? 'text-text-primary' : src.hasData ? 'text-text-secondary' : 'text-text-muted'
+                  }`}>{src.label}</span>
+                  <span className="text-[10px] font-mono text-text-muted/50 hidden sm:inline">{src.description}</span>
                 </div>
-
-                <div className="relative h-2 bg-surface-highlight rounded-full overflow-hidden mb-3">
-                  <div className="absolute top-0 left-0 h-full bg-accent transition-all duration-500 ease-out" style={{ width: `${foundPct}%` }} />
-                  <div className="absolute top-0 h-full bg-text-muted/50 transition-all duration-500 ease-out" style={{ left: `${foundPct}%`, width: `${notFoundPct}%` }} />
-                  <div className="absolute top-0 h-full bg-red-500/70 transition-all duration-500 ease-out" style={{ left: `${foundPct + notFoundPct}%`, width: `${errorPct}%` }} />
-                  {isWorking && (
-                    <div className="absolute top-0 h-full overflow-hidden" style={{ left: `${processedPct}%`, width: `${100 - processedPct}%` }}>
-                      <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent animate-shimmer" />
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-4 text-[11px] font-mono">
-                  <span className="text-accent">{found.toLocaleString()} found</span>
-                  <span className="text-text-muted">{notFound.toLocaleString()} not found</span>
-                  {errors > 0 && <span className="text-red-400">{errors.toLocaleString()} errors</span>}
-                  <span className="ml-auto text-text-muted/60">{(found + notFound + errors).toLocaleString()} / {total.toLocaleString()}</span>
-                </div>
+                <span className="text-[10px] font-mono text-text-muted/60 flex-shrink-0 ml-2">
+                  {src.hasData ? `${(src.found + src.notFound + src.errors).toLocaleString()} / ${src.total.toLocaleString()}` : '—'}
+                </span>
               </div>
-            );
-          })}
+
+              <div className="relative h-1.5 bg-surface-highlight rounded-full overflow-hidden">
+                <div className="absolute top-0 left-0 h-full bg-accent transition-all duration-500 ease-out" style={{ width: `${src.foundPct}%` }} />
+                <div className="absolute top-0 h-full bg-red-500/50 transition-all duration-500 ease-out" style={{ left: `${src.foundPct}%`, width: `${src.notFoundPct}%` }} />
+                <div className="absolute top-0 h-full bg-red-500/70 transition-all duration-500 ease-out" style={{ left: `${src.foundPct + src.notFoundPct}%`, width: `${src.errorPct}%` }} />
+                {src.isActive && src.processedPct < 100 && (
+                  <div className="absolute top-0 h-full overflow-hidden" style={{ left: `${src.processedPct}%`, width: `${100 - src.processedPct}%` }}>
+                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent animate-shimmer" />
+                  </div>
+                )}
+              </div>
+
+              {src.hasData && (
+                <div className="flex items-center gap-3 mt-1.5 text-[10px] font-mono">
+                  <span className="text-accent">{src.found.toLocaleString()} found</span>
+                  {src.notFound > 0 && <span className="text-red-400/70">{src.notFound.toLocaleString()} not found</span>}
+                  {src.errors > 0 && <span className="text-red-400">{src.errors.toLocaleString()} errors</span>}
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -540,9 +532,27 @@ export function SettingsPage({ toast }: SettingsPageProps) {
             elapsedMs={elapsedMs}
             onRunFull={() => {
               reset();
-              enrichmentApi.runFull().catch(() => toast.error('Failed to start enrichment'));
+              enrichmentApi.runFull()
+                .then(() => {
+                  // Safety net: if pipeline completes before first WS event, reseed from REST
+                  setTimeout(() => {
+                    enrichmentApi.status()
+                      .then(s => {
+                        if (!s.running && useEnrichmentStore.getState().running) {
+                          useEnrichmentStore.getState().setFromStatus(s);
+                        }
+                      })
+                      .catch(() => {});
+                  }, 3000);
+                })
+                .catch(() => toast.error('Failed to start enrichment'));
             }}
-            onStop={() => enrichmentApi.stop().catch(() => {})}
+            onStop={() => {
+              enrichmentApi.stop()
+                .then(() => enrichmentApi.status())
+                .then(useEnrichmentStore.getState().setFromStatus)
+                .catch(() => {});
+            }}
           />
         </div>
 
