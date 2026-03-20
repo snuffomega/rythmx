@@ -13,6 +13,7 @@
  *   useEffect(() => { wsConnect(); return () => wsDisconnect(); }, []);
  */
 import { useEnrichmentStore } from '../stores/useEnrichmentStore';
+import { enrichmentApi } from './api';
 // import { usePlayerStore } from '../stores/usePlayerStore';  // ← Phase 22+
 
 const WS_INITIAL_DELAY = 3000;
@@ -46,6 +47,10 @@ function connect(): void {
 
   ws.onopen = () => {
     _retryDelay = WS_INITIAL_DELAY;
+    // Reseed store on every (re)connect — catches any events missed during disconnect.
+    enrichmentApi.status()
+      .then(useEnrichmentStore.getState().setFromStatus)
+      .catch(() => {});
   };
 
   ws.onmessage = (e: MessageEvent) => {

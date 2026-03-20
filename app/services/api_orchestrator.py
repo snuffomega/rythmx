@@ -305,10 +305,10 @@ class EnrichmentOrchestrator:
             lib_agg: dict = {"found": 0, "not_found": 0, "errors": 0, "pending": 0, "running": False}
             for src in _lib_sources:
                 if src in workers:
+                    src_data = workers.pop(src)
                     for field in ("found", "not_found", "errors", "pending"):
-                        lib_agg[field] += workers.pop(src)[field]
-            if any(lib_agg[f] > 0 for f in ("found", "not_found", "errors")):
-                workers["library"] = lib_agg
+                        lib_agg[field] += src_data[field]
+            workers["library"] = lib_agg
             broadcast("enrichment_complete", {"workers": workers})
         except Exception as e:
             logger.warning("EnrichmentOrchestrator: broadcast_complete failed: %s", e)

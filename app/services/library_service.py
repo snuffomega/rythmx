@@ -699,6 +699,11 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
                 enriched += 1
                 if on_progress:
                     on_progress(enriched, skipped, failed, _total_pending)
+            else:
+                # Artist found on APIs but no album title hit match threshold — count as not_found
+                skipped += 1
+                if on_progress:
+                    on_progress(enriched, skipped, failed, _total_pending)
 
     # Count remaining unenriched albums
     try:
