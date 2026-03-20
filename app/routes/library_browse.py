@@ -6,26 +6,15 @@ All SQL uses ? placeholders. No business logic — raw queries only.
 Router registered at /api/v1 in main.py (no prefix in route strings).
 """
 import logging
-import sqlite3
 from typing import Any, Optional
 
 from fastapi import APIRouter, Body, Depends, Query
 from fastapi.responses import JSONResponse
 
-from app import config
 from app.db import rythmx_store
 from app.dependencies import verify_api_key
 
 logger = logging.getLogger(__name__)
-
-
-def _connect():
-    """WAL connection to rythmx.db for lib_* read/write (audit routes)."""
-    conn = sqlite3.connect(config.RYTHMX_DB)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
 
 
 router = APIRouter(dependencies=[Depends(verify_api_key)])
@@ -358,7 +347,7 @@ def library_audit(
     """
     offset = (page - 1) * per_page
 
-    with _connect() as conn:
+    with rythmx_store._connect() as conn:
         total_row = conn.execute(
             """
             SELECT COUNT(DISTINCT ar.id)
@@ -449,7 +438,7 @@ def library_audit_confirm(data: Optional[dict[str, Any]] = Body(default=None)):
     id_col = id_col_map.get(source) if entity_type == "album" else None
 
     try:
-        with _connect() as conn:
+        with rythmx_store._connect() as conn:
             if id_col and entity_type == "album":
                 conn.execute(
                     f"""
@@ -503,7 +492,7 @@ def library_audit_reject(data: Optional[dict[str, Any]] = Body(default=None)):
     id_col = id_col_map.get(source) if entity_type == "album" else None
 
     try:
-        with _connect() as conn:
+        with rythmx_store._connect() as conn:
             if id_col and entity_type == "album":
                 conn.execute(
                     f"""
