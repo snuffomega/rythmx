@@ -97,14 +97,17 @@ def broadcast(event: str, payload: dict) -> None:
     for ws in clients_snapshot:
         try:
             fut = asyncio.run_coroutine_threadsafe(ws.send_text(message), _event_loop)
-            fut.result(timeout=2)
+            fut.result(timeout=5)
+        except TimeoutError:
+            # Event loop busy — do NOT prune. Client is likely still alive.
+            logger.debug("ws.broadcast: send to client timed out (kept alive)")
         except Exception:
             dead.add(ws)
 
     if dead:
         with _clients_lock:
             _clients -= dead
-        logger.debug("ws.broadcast: pruned %d dead connection(s)", len(dead))
+        logger.info("ws.broadcast: pruned %d dead connection(s)", len(dead))
 
 
 # ---------------------------------------------------------------------------
