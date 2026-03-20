@@ -100,11 +100,11 @@ def enrich_full(data: Optional[dict[str, Any]] = Body(default=None)):
     from app.services.api_orchestrator import EnrichmentOrchestrator
 
     data = data or {}
-    batch_size = data.get("batch_size", 50)
+    batch_size = data.get("batch_size", 10_000)
 
-    if not isinstance(batch_size, int) or not (1 <= batch_size <= 200):
+    if not isinstance(batch_size, int) or batch_size < 1:
         return JSONResponse(
-            {"status": "error", "message": "batch_size must be integer 1–200"},
+            {"status": "error", "message": "batch_size must be a positive integer"},
             status_code=400,
         )
 

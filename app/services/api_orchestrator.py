@@ -238,8 +238,10 @@ class EnrichmentOrchestrator:
                     cls._instance = cls()
         return cls._instance
 
-    def run_full(self, batch_size: int = 50) -> None:
-        """Start full pipeline in background thread. No-op if already running."""
+    def run_full(self, batch_size: int = 10_000) -> None:
+        """Start full pipeline in background thread. No-op if already running.
+        batch_size is effectively unlimited — rate limiter + stop_event are the real throttle.
+        Callers like run_auto_pipeline() may pass a lower cap."""
         with self._lock:
             if self._thread and self._thread.is_alive():
                 return
