@@ -26,6 +26,29 @@ logger = logging.getLogger(__name__)
 _ITUNES_BASE = "https://itunes.apple.com"
 
 
+def _persist_artist_catalog(conn, artist_id: str, source: str, catalog: list[dict]) -> None:
+    """
+    Store an API-fetched album catalog for later gap analysis.
+    Idempotent: INSERT OR REPLACE so re-enrichment refreshes stale rows.
+    catalog items: {id, title} (iTunes) or {id, title, record_type} (Deezer).
+    """
+    if not catalog:
+        return
+    for item in catalog:
+        album_id = item.get("id", "")
+        title = item.get("title", "")
+        if not album_id or not title:
+            continue
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO lib_artist_catalog
+                (artist_id, source, album_id, album_title, record_type, fetched_at)
+            VALUES (?, ?, ?, ?, ?, datetime('now'))
+            """,
+            (artist_id, source, album_id, title, item.get("record_type")),
+        )
+
+
 _TITLE_SUFFIX_RE = re.compile(
     r'\s*[\(\[](single|ep|deluxe|deluxe\s+edition|explicit|remaster(ed)?|'
     r'expanded|anniversary\s+edition|bonus\s+track[s]?|special\s+edition|'
@@ -502,6 +525,10 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
                 else:
                     _write_enrichment_meta(conn, "deezer_artist", "artist", artist_id,
                                            "not_found")
+
+            # --- Persist catalogs for gap analysis (missing-album hints) ---
+            _persist_artist_catalog(conn, artist_id, "itunes", itunes_catalog)
+            _persist_artist_catalog(conn, artist_id, "deezer", deezer_catalog)
 
             # --- Album matching against pre-fetched catalogs ---
             itunes_titles = {c["title"]: c["id"] for c in itunes_catalog if c.get("title")}
