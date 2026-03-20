@@ -244,8 +244,12 @@ export interface LibArtist {
   name: string;
   album_count: number;
   match_confidence: number;
-  source_backend: string | null;
+  source_platform: string | null;
   lastfm_tags_json: string | null;
+  genres_json: string | null;
+  popularity: number | null;
+  listener_count: number | null;
+  global_play_count: number | null;
 }
 
 export interface LibAlbum {
@@ -257,7 +261,11 @@ export interface LibAlbum {
   record_type: string | null;
   match_confidence: number;
   needs_verification: number;
-  source_backend: string | null;
+  source_platform: string | null;
+  release_date: string | null;
+  genre: string | null;
+  thumb_url: string | null;
+  lastfm_tags_json: string | null;
 }
 
 export interface LibTrack {
@@ -270,6 +278,7 @@ export interface LibTrack {
   duration: number | null;
   rating: number;
   play_count: number;
+  tempo: number | null;
   album_title?: string;
   artist_name?: string;
 }

@@ -159,7 +159,7 @@ function ArtistCard({ artist, onClick, viewMode }: ArtistCardProps) {
       </div>
       <div className="flex items-center gap-2 flex-shrink-0">
         <ConfidenceBadge value={artist.match_confidence} />
-        <SourceChip backend={artist.source_backend} />
+        <SourceChip backend={artist.source_platform} />
       </div>
     </button>
   );
@@ -208,7 +208,7 @@ function AlbumCard({ album, onClick, viewMode }: AlbumCardProps) {
       <div className="flex items-center gap-2 flex-shrink-0 text-text-muted text-xs font-mono">
         {album.year && <span>{album.year}</span>}
         {album.record_type && <span className="capitalize">{album.record_type}</span>}
-        <SourceChip backend={album.source_backend} />
+        <SourceChip backend={album.source_platform} />
       </div>
     </button>
   );
@@ -269,7 +269,7 @@ function ArtistDetail({ artistId, onAlbumClick, onBack, onPlay }: ArtistDetailPr
           {genre && <p className="font-mono text-sm text-text-secondary mb-2">{genre}</p>}
           <div className="flex items-center gap-2 mt-3">
             <ConfidenceBadge value={artist.match_confidence} />
-            <SourceChip backend={artist.source_backend} />
+            <SourceChip backend={artist.source_platform} />
             <span className="font-mono text-[10px] text-text-muted">{artist.album_count} albums</span>
           </div>
         </div>
@@ -406,7 +406,7 @@ function AlbumDetail({ albumId, onArtistClick, onBack, onLibrary, onPlay }: Albu
           </div>
           <div className="flex items-center gap-2 mt-3">
             <ConfidenceBadge value={album.match_confidence} />
-            <SourceChip backend={album.source_backend} />
+            <SourceChip backend={album.source_platform} />
             {album.needs_verification === 1 && (
               <span className="font-mono text-[10px] text-yellow-400 border border-yellow-400/30 px-1.5 py-0.5 rounded">verify</span>
             )}
