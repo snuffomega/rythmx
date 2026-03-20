@@ -638,8 +638,8 @@ def _should_library_sync(settings: dict) -> bool:
     Return True if it's time to run the library auto-pipeline.
     Checks: lib_auto_sync enabled, interval elapsed, not already running.
     """
-    from app.services.library_service import _pipeline_running
-    if _pipeline_running:
+    from app.services.enrichment.pipeline import is_pipeline_running
+    if is_pipeline_running():
         return False
     auto_sync = settings.get("lib_auto_sync")
     if auto_sync is not None and str(auto_sync).lower() in ("false", "0", "no"):
