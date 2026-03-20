@@ -283,10 +283,18 @@ export interface LibTrack {
   artist_name?: string;
 }
 
+export interface MissingAlbum {
+  album_title: string;
+  source: 'itunes' | 'deezer';
+  record_type: string | null;
+  album_id: string;
+}
+
 export interface LibArtistDetail {
   artist: LibArtist;
   albums: LibAlbum[];
   top_tracks: LibTrack[];
+  missing_albums?: MissingAlbum[];
 }
 
 export interface LibAlbumDetail {
