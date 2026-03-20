@@ -46,11 +46,24 @@ SPOTIFY_CLIENT_SECRET = _optional("SPOTIFY_CLIENT_SECRET")
 # Lower if you hit 429s; Spotify's actual limit varies and changes over time.
 SPOTIFY_RATE_LIMIT_RPM = int(_optional("SPOTIFY_RATE_LIMIT_RPM", "100"))
 
-# --- Flask ---
-FLASK_HOST = _optional("FLASK_HOST", "0.0.0.0")
-FLASK_PORT = int(_optional("FLASK_PORT", "8009"))
-FLASK_DEBUG = _optional("FLASK_DEBUG", "false").lower() == "true"
-LOG_LEVEL = _optional("LOG_LEVEL", "DEBUG" if FLASK_DEBUG else "INFO").upper()
+# --- Server ---
+# Primary: RYTHMX_HOST / RYTHMX_PORT / RYTHMX_DEBUG
+# Deprecated fallback: FLASK_HOST / FLASK_PORT / FLASK_DEBUG (still works, warns once)
+def _server_var(new_key: str, old_key: str, default: str) -> str:
+    """Read new env var, fall back to deprecated Flask-era name, then default."""
+    val = os.environ.get(new_key, "")
+    if val:
+        return val
+    old_val = os.environ.get(old_key, "")
+    if old_val:
+        logger.warning("%s env var is deprecated — rename to %s in your .env", old_key, new_key)
+        return old_val
+    return default
+
+RYTHMX_HOST = _server_var("RYTHMX_HOST", "FLASK_HOST", "0.0.0.0")
+RYTHMX_PORT = int(_server_var("RYTHMX_PORT", "FLASK_PORT", "8009"))
+RYTHMX_DEBUG = _server_var("RYTHMX_DEBUG", "FLASK_DEBUG", "false").lower() == "true"
+LOG_LEVEL = _optional("LOG_LEVEL", "DEBUG" if RYTHMX_DEBUG else "INFO").upper()
 
 # --- Cruise Control / app defaults ---
 SCHEDULER_ENABLED = _optional("SCHEDULER_ENABLED", "false").lower() == "true"

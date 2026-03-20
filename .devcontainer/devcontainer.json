@@ -10,14 +10,13 @@
   ],
   "forwardPorts": [8009, 5173],
   "portsAttributes": {
-    "8009": { "label": "Flask API", "onAutoForward": "notify" },
+    "8009": { "label": "Rythmx API", "onAutoForward": "notify" },
     "5173": { "label": "Vite Dev Server", "onAutoForward": "openBrowser" }
   },
   // Re-install deps in case requirements.txt or package.json changed since image build
   "postCreateCommand": "pip install -r requirements.txt && cd frontend && npm install",
   "remoteEnv": {
-    "FLASK_ENV": "development",
-    "FLASK_DEBUG": "true"
+    "RYTHMX_DEBUG": "true"
   },
   "customizations": {
     "vscode": {

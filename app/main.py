@@ -156,7 +156,7 @@ async def lifespan(app: FastAPI):
     except Exception as _e:
         logger.warning("Startup library sync check failed (non-fatal): %s", _e)
 
-    logger.info("Rythmx started on %s:%d", config.FLASK_HOST, config.FLASK_PORT)
+    logger.info("Rythmx started on %s:%d", config.RYTHMX_HOST, config.RYTHMX_PORT)
 
     yield
     # shutdown — no cleanup needed currently
