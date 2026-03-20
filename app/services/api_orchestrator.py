@@ -15,11 +15,11 @@ Two-layer design:
 
 Domain limits (requests per minute):
   itunes:        20/min  (Apple free tier — enforced; no auth required)
-  deezer:        50/min  (Deezer documented free limit)
+  deezer:       300/min  (Deezer allows 50 req/5s; 300/min is conservative)
   lastfm:       200/min  (generous free tier)
   spotify:      100/min  (varies by endpoint; conservative baseline)
   fanart:       120/min  (2/sec — within limits for personal projects)
-  musicbrainz:    1/min  (strict: 1/sec; resets aggressively in Docker)
+  musicbrainz:   50/min  (MB allows 1/sec = 60/min; 50/min is conservative)
 
 Usage in any client:
     from app.services.api_orchestrator import rate_limiter
@@ -54,11 +54,11 @@ logger = logging.getLogger(__name__)
 
 _DOMAIN_CONFIGS: dict[str, dict] = {
     "itunes":       {"rate": 20 / 60,   "capacity": 3},
-    "deezer":       {"rate": 50 / 60,   "capacity": 5},
+    "deezer":       {"rate": 300 / 60,  "capacity": 10},   # Deezer allows 50 req/5s; 300/min is conservative
     "lastfm":       {"rate": 200 / 60,  "capacity": 10},
     "spotify":      {"rate": 100 / 60,  "capacity": 5},
     "fanart":       {"rate": 120 / 60,  "capacity": 5},
-    "musicbrainz":  {"rate": 1 / 60,    "capacity": 1},
+    "musicbrainz":  {"rate": 50 / 60,   "capacity": 2},    # MB allows 1 req/s (60/min); 50/min is conservative
 }
 
 _CIRCUIT_BREAKER_THRESHOLD = 3    # consecutive 429s before tripping

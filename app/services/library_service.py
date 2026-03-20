@@ -23,58 +23,6 @@ from app.services.api_orchestrator import rate_limiter
 
 logger = logging.getLogger(__name__)
 
-# Enrichment source registry — defines all possible enrichment passes.
-# priority: order of execution (lower = first)
-# fills: columns populated on lib_albums / lib_artists
-# rate_limit_rpm: requests per minute ceiling
-# implemented: True = active now; False = registered but deferred
-ENRICH_SOURCES = [
-    {
-        "name": "itunes",
-        "priority": 1,
-        "fills": ["itunes_album_id", "itunes_artist_id"],
-        "rate_limit_rpm": 20,
-        "implemented": True,
-    },
-    {
-        "name": "deezer",
-        "priority": 2,
-        "fills": ["deezer_id"],
-        "rate_limit_rpm": 50,
-        "implemented": True,
-    },
-    {
-        "name": "musicbrainz",
-        "priority": 3,
-        "fills": ["musicbrainz_id", "musicbrainz_release_id"],
-        "rate_limit_rpm": 1,
-        "implemented": False,  # Phase 10
-    },
-    {
-        "name": "spotify",
-        "priority": 4,
-        "fills": ["spotify_artist_id", "spotify_album_id", "genres_json", "popularity"],
-        # NOTE: audio features (energy, valence, etc.) removed Nov 2024 by Spotify for new apps.
-        # Columns retained in lib_tracks schema for possible future re-addition.
-        "rate_limit_rpm": 100,
-        "implemented": True,
-    },
-    {
-        "name": "lastfm_tags",
-        "priority": 5,
-        "fills": ["lastfm_tags_json"],   # on both lib_artists and lib_albums
-        "rate_limit_rpm": 200,
-        "implemented": True,
-    },
-    {
-        "name": "deezer_bpm",
-        "priority": 6,
-        "fills": ["lib_tracks.tempo"],   # BPM from Deezer track endpoint
-        "rate_limit_rpm": 50,
-        "implemented": True,
-    },
-]
-
 _ITUNES_BASE = "https://itunes.apple.com"
 
 
