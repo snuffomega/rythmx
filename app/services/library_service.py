@@ -408,46 +408,46 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
         artist_id = artist["id"]
         artist_name = artist["name"]
 
-        # Load this artist's albums that still need IDs
+        # One connection per artist — all reads + writes inside this block
         try:
-            with _connect() as conn:
-                album_rows = conn.execute(
-                    """
-                    SELECT id, title, local_title, itunes_album_id, deezer_id
-                    FROM lib_albums
-                    WHERE artist_id = ? AND removed_at IS NULL
-                      AND (itunes_album_id IS NULL OR deezer_id IS NULL)
-                    """,
-                    (artist_id,),
-                ).fetchall()
+            conn = _connect()
         except Exception as e:
-            logger.warning("enrich_library: could not load albums for '%s': %s", artist_name, e)
+            logger.warning("enrich_library: could not open connection for '%s': %s", artist_name, e)
             failed += 1
             continue
 
-        if not album_rows:
-            continue
+        try:
+            # Load this artist's albums that still need IDs
+            album_rows = conn.execute(
+                """
+                SELECT id, title, local_title, itunes_album_id, deezer_id
+                FROM lib_albums
+                WHERE artist_id = ? AND removed_at IS NULL
+                  AND (itunes_album_id IS NULL OR deezer_id IS NULL)
+                """,
+                (artist_id,),
+            ).fetchall()
 
-        lib_titles = [_strip_title_suffixes(r["local_title"] or r["title"]) for r in album_rows]
+            if not album_rows:
+                continue
 
-        # --- iTunes: fast path or validation ---
-        itunes_catalog: list[dict] = []
-        itunes_artist_id = artist["itunes_artist_id"]
+            lib_titles = [_strip_title_suffixes(r["local_title"] or r["title"]) for r in album_rows]
 
-        if itunes_artist_id:
-            # Fast path: stored ID — fetch catalog directly, skip validation
-            from app.clients.music_client import get_artist_albums_itunes
-            itunes_catalog = get_artist_albums_itunes(itunes_artist_id)
-            logger.debug("enrich_library: iTunes fast path for '%s' (id=%s, %d albums)",
-                         artist_name, itunes_artist_id, len(itunes_catalog))
-        else:
-            # Validation path: search + album overlap scoring
-            val = _validate_artist(artist_name, lib_titles, "itunes")
-            if val:
-                itunes_artist_id = val["artist_id"]
-                itunes_catalog = val["album_catalog"]
-                try:
-                    with _connect() as conn:
+            # --- iTunes: fast path or validation ---
+            itunes_catalog: list[dict] = []
+            itunes_artist_id = artist["itunes_artist_id"]
+
+            if itunes_artist_id:
+                from app.clients.music_client import get_artist_albums_itunes
+                itunes_catalog = get_artist_albums_itunes(itunes_artist_id)
+                logger.debug("enrich_library: iTunes fast path for '%s' (id=%s, %d albums)",
+                             artist_name, itunes_artist_id, len(itunes_catalog))
+            else:
+                val = _validate_artist(artist_name, lib_titles, "itunes")
+                if val:
+                    itunes_artist_id = val["artist_id"]
+                    itunes_catalog = val["album_catalog"]
+                    try:
                         conn.execute(
                             """
                             UPDATE lib_artists
@@ -459,38 +459,32 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
                         )
                         _write_enrichment_meta(conn, "itunes_artist", "artist", artist_id,
                                                "found", confidence=val["confidence"])
-                    logger.debug(
-                        "enrich_library: iTunes validated '%s' → id=%s conf=%d",
-                        artist_name, itunes_artist_id, val["confidence"],
-                    )
-                except Exception as e:
-                    logger.warning("enrich_library: iTunes artist write failed for '%s': %s",
-                                   artist_name, e)
+                        logger.debug(
+                            "enrich_library: iTunes validated '%s' → id=%s conf=%d",
+                            artist_name, itunes_artist_id, val["confidence"],
+                        )
+                    except Exception as e:
+                        logger.warning("enrich_library: iTunes artist write failed for '%s': %s",
+                                       artist_name, e)
+                else:
+                    _write_enrichment_meta(conn, "itunes_artist", "artist", artist_id,
+                                           "not_found")
+
+            # --- Deezer: fast path or validation ---
+            deezer_catalog: list[dict] = []
+            deezer_artist_id = artist["deezer_artist_id"]
+
+            if deezer_artist_id:
+                from app.clients.music_client import get_artist_albums_deezer
+                deezer_catalog = get_artist_albums_deezer(deezer_artist_id)
+                logger.debug("enrich_library: Deezer fast path for '%s' (id=%s, %d albums)",
+                             artist_name, deezer_artist_id, len(deezer_catalog))
             else:
-                try:
-                    with _connect() as conn:
-                        _write_enrichment_meta(conn, "itunes_artist", "artist", artist_id,
-                                               "not_found")
-                except Exception:
-                    pass
-
-        # --- Deezer: fast path or validation ---
-        deezer_catalog: list[dict] = []
-        deezer_artist_id = artist["deezer_artist_id"]
-
-        if deezer_artist_id:
-            # Fast path: stored ID
-            from app.clients.music_client import get_artist_albums_deezer
-            deezer_catalog = get_artist_albums_deezer(deezer_artist_id)
-            logger.debug("enrich_library: Deezer fast path for '%s' (id=%s, %d albums)",
-                         artist_name, deezer_artist_id, len(deezer_catalog))
-        else:
-            val = _validate_artist(artist_name, lib_titles, "deezer")
-            if val:
-                deezer_artist_id = val["artist_id"]
-                deezer_catalog = val["album_catalog"]
-                try:
-                    with _connect() as conn:
+                val = _validate_artist(artist_name, lib_titles, "deezer")
+                if val:
+                    deezer_artist_id = val["artist_id"]
+                    deezer_catalog = val["album_catalog"]
+                    try:
                         conn.execute(
                             """
                             UPDATE lib_artists
@@ -502,37 +496,32 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
                         )
                         _write_enrichment_meta(conn, "deezer_artist", "artist", artist_id,
                                                "found", confidence=val["confidence"])
-                except Exception as e:
-                    logger.warning("enrich_library: Deezer artist write failed for '%s': %s",
-                                   artist_name, e)
-            else:
-                try:
-                    with _connect() as conn:
-                        _write_enrichment_meta(conn, "deezer_artist", "artist", artist_id,
-                                               "not_found")
-                except Exception:
-                    pass
+                    except Exception as e:
+                        logger.warning("enrich_library: Deezer artist write failed for '%s': %s",
+                                       artist_name, e)
+                else:
+                    _write_enrichment_meta(conn, "deezer_artist", "artist", artist_id,
+                                           "not_found")
 
-        # --- Album matching against pre-fetched catalogs ---
-        itunes_titles = {c["title"]: c["id"] for c in itunes_catalog if c.get("title")}
-        deezer_titles = {c["title"]: c.get("id", "") for c in deezer_catalog if c.get("title")}
+            # --- Album matching against pre-fetched catalogs ---
+            itunes_titles = {c["title"]: c["id"] for c in itunes_catalog if c.get("title")}
+            deezer_titles = {c["title"]: c.get("id", "") for c in deezer_catalog if c.get("title")}
 
-        for album in album_rows:
-            album_id = album["id"]
-            album_title = _strip_title_suffixes(album["local_title"] or album["title"])
-            album_enriched = False
+            for album in album_rows:
+                album_id = album["id"]
+                album_title = _strip_title_suffixes(album["local_title"] or album["title"])
+                album_enriched = False
 
-            # iTunes album match
-            if album["itunes_album_id"] is None and itunes_titles:
-                best_itunes = max(
-                    ((t, _match_album_title(album_title, t)) for t in itunes_titles),
-                    key=lambda x: x[1],
-                    default=(None, 0.0),
-                )
-                if best_itunes[1] >= 0.82:
-                    matched_id = itunes_titles[best_itunes[0]]
-                    try:
-                        with _connect() as conn:
+                # iTunes album match
+                if album["itunes_album_id"] is None and itunes_titles:
+                    best_itunes = max(
+                        ((t, _match_album_title(album_title, t)) for t in itunes_titles),
+                        key=lambda x: x[1],
+                        default=(None, 0.0),
+                    )
+                    if best_itunes[1] >= 0.82:
+                        matched_id = itunes_titles[best_itunes[0]]
+                        try:
                             conn.execute(
                                 """
                                 UPDATE lib_albums
@@ -546,37 +535,32 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
                             )
                             _write_enrichment_meta(conn, "itunes", "album", album_id,
                                                    "found", confidence=90)
-                        album_enriched = True
-                        logger.debug(
-                            "enrich_library: iTunes album hit '%s / %s' → id=%s (score=%.2f)",
-                            artist_name, album_title, matched_id, best_itunes[1],
-                        )
-                    except Exception as e:
-                        logger.warning("enrich_library: iTunes album write failed '%s / %s': %s",
-                                       artist_name, album_title, e)
-                        failed += 1
-                        if on_progress:
-                            on_progress(enriched, skipped, failed, _total_pending)
-                        continue
-                else:
-                    try:
-                        with _connect() as conn:
-                            _write_enrichment_meta(conn, "itunes", "album", album_id,
-                                                   "not_found", confidence=0)
-                    except Exception:
-                        pass
+                            album_enriched = True
+                            logger.debug(
+                                "enrich_library: iTunes album hit '%s / %s' → id=%s (score=%.2f)",
+                                artist_name, album_title, matched_id, best_itunes[1],
+                            )
+                        except Exception as e:
+                            logger.warning("enrich_library: iTunes album write failed '%s / %s': %s",
+                                           artist_name, album_title, e)
+                            failed += 1
+                            if on_progress:
+                                on_progress(enriched, skipped, failed, _total_pending)
+                            continue
+                    else:
+                        _write_enrichment_meta(conn, "itunes", "album", album_id,
+                                               "not_found", confidence=0)
 
-            # Deezer album match (always runs — not a fallback)
-            if album["deezer_id"] is None and deezer_titles:
-                best_deezer = max(
-                    ((t, _match_album_title(album_title, t)) for t in deezer_titles),
-                    key=lambda x: x[1],
-                    default=(None, 0.0),
-                )
-                if best_deezer[1] >= 0.82:
-                    matched_id = deezer_titles[best_deezer[0]]
-                    try:
-                        with _connect() as conn:
+                # Deezer album match (always runs — not a fallback)
+                if album["deezer_id"] is None and deezer_titles:
+                    best_deezer = max(
+                        ((t, _match_album_title(album_title, t)) for t in deezer_titles),
+                        key=lambda x: x[1],
+                        default=(None, 0.0),
+                    )
+                    if best_deezer[1] >= 0.82:
+                        matched_id = deezer_titles[best_deezer[0]]
+                        try:
                             conn.execute(
                                 """
                                 UPDATE lib_albums
@@ -593,53 +577,54 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
                             conf = 95 if album["itunes_album_id"] or album_enriched else 75
                             _write_enrichment_meta(conn, "deezer", "album", album_id,
                                                    "found", confidence=conf)
-                        album_enriched = True
-                        logger.debug(
-                            "enrich_library: Deezer album hit '%s / %s' → id=%s (score=%.2f)",
-                            artist_name, album_title, matched_id, best_deezer[1],
-                        )
-                    except Exception as e:
-                        logger.warning("enrich_library: Deezer album write failed '%s / %s': %s",
-                                       artist_name, album_title, e)
-                        failed += 1
-                        if on_progress:
-                            on_progress(enriched, skipped, failed, _total_pending)
-                        continue
-                else:
-                    try:
-                        with _connect() as conn:
-                            _write_enrichment_meta(conn, "deezer", "album", album_id,
-                                                   "not_found", confidence=0)
-                    except Exception:
-                        pass
+                            album_enriched = True
+                            logger.debug(
+                                "enrich_library: Deezer album hit '%s / %s' → id=%s (score=%.2f)",
+                                artist_name, album_title, matched_id, best_deezer[1],
+                            )
+                        except Exception as e:
+                            logger.warning("enrich_library: Deezer album write failed '%s / %s': %s",
+                                           artist_name, album_title, e)
+                            failed += 1
+                            if on_progress:
+                                on_progress(enriched, skipped, failed, _total_pending)
+                            continue
+                    else:
+                        _write_enrichment_meta(conn, "deezer", "album", album_id,
+                                               "not_found", confidence=0)
 
-            # Album with no artist catalog match at all → flag for review
-            if not album_enriched and not itunes_titles and not deezer_titles:
-                try:
-                    with _connect() as conn:
-                        conn.execute(
-                            """
-                            UPDATE lib_albums
-                            SET match_confidence = 0, needs_verification = 1,
-                                updated_at = CURRENT_TIMESTAMP
-                            WHERE id = ?
-                            """,
-                            (album_id,),
-                        )
-                except Exception:
-                    pass
-                skipped += 1
-                if on_progress:
-                    on_progress(enriched, skipped, failed, _total_pending)
-            elif album_enriched:
-                enriched += 1
-                if on_progress:
-                    on_progress(enriched, skipped, failed, _total_pending)
-            else:
-                # Artist found on APIs but no album title hit match threshold — count as not_found
-                skipped += 1
-                if on_progress:
-                    on_progress(enriched, skipped, failed, _total_pending)
+                # Album with no artist catalog match at all → flag for review
+                if not album_enriched and not itunes_titles and not deezer_titles:
+                    conn.execute(
+                        """
+                        UPDATE lib_albums
+                        SET match_confidence = 0, needs_verification = 1,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                        """,
+                        (album_id,),
+                    )
+                    skipped += 1
+                    if on_progress:
+                        on_progress(enriched, skipped, failed, _total_pending)
+                elif album_enriched:
+                    enriched += 1
+                    if on_progress:
+                        on_progress(enriched, skipped, failed, _total_pending)
+                else:
+                    skipped += 1
+                    if on_progress:
+                        on_progress(enriched, skipped, failed, _total_pending)
+
+        except Exception as e:
+            logger.warning("enrich_library: failed processing artist '%s': %s", artist_name, e)
+            failed += 1
+        finally:
+            try:
+                conn.commit()
+                conn.close()
+            except Exception:
+                pass
 
     # Count remaining unenriched albums
     try:
@@ -716,28 +701,29 @@ def enrich_artist_ids_spotify(batch_size: int = 20, stop_event: threading.Event 
         artist_name = artist["name"]
 
         try:
+            conn = _connect()
+        except Exception:
+            failed += 1
+            continue
+
+        try:
             from app.clients.music_client import norm
 
-            try:
-                with _connect() as conn:
-                    lib_titles = [
-                        _strip_title_suffixes(r["local_title"] or r["title"])
-                        for r in conn.execute(
-                            "SELECT title, local_title FROM lib_albums WHERE artist_id = ? AND removed_at IS NULL",
-                            (artist_id,),
-                        ).fetchall()
-                    ]
-            except Exception:
-                lib_titles = []
+            lib_titles = [
+                _strip_title_suffixes(r["local_title"] or r["title"])
+                for r in conn.execute(
+                    "SELECT title, local_title FROM lib_albums WHERE artist_id = ? AND removed_at IS NULL",
+                    (artist_id,),
+                ).fetchall()
+            ]
 
             rate_limiter.acquire("spotify")
             results = sp.search(q=f'artist:"{artist_name}"', type="artist", limit=5)
             items = results.get("artists", {}).get("items", [])
 
             if not items:
-                with _connect() as conn:
-                    _write_enrichment_meta(conn, "spotify_id", "artist", artist_id,
-                                           "not_found", confidence=0)
+                _write_enrichment_meta(conn, "spotify_id", "artist", artist_id,
+                                       "not_found", confidence=0)
                 skipped += 1
                 if on_progress:
                     on_progress(enriched, skipped, failed, len(rows))
@@ -768,28 +754,26 @@ def enrich_artist_ids_spotify(batch_size: int = 20, stop_event: threading.Event 
                     best_conf = 95 if overlap >= 3 else (85 if overlap >= 1 else 70)
 
             if best_candidate is None:
-                with _connect() as conn:
-                    _write_enrichment_meta(conn, "spotify_id", "artist", artist_id,
-                                           "not_found", confidence=0)
+                _write_enrichment_meta(conn, "spotify_id", "artist", artist_id,
+                                       "not_found", confidence=0)
                 skipped += 1
                 if on_progress:
                     on_progress(enriched, skipped, failed, len(rows))
                 continue
 
             needs_verification = 1 if best_conf < 85 else 0
-            with _connect() as conn:
-                conn.execute(
-                    """
-                    UPDATE lib_artists
-                    SET spotify_artist_id = ?,
-                        needs_verification = CASE WHEN ? = 1 THEN 1 ELSE needs_verification END,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ? AND spotify_artist_id IS NULL
-                    """,
-                    (best_candidate["id"], needs_verification, artist_id),
-                )
-                _write_enrichment_meta(conn, "spotify_id", "artist", artist_id,
-                                       "found", confidence=best_conf)
+            conn.execute(
+                """
+                UPDATE lib_artists
+                SET spotify_artist_id = ?,
+                    needs_verification = CASE WHEN ? = 1 THEN 1 ELSE needs_verification END,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND spotify_artist_id IS NULL
+                """,
+                (best_candidate["id"], needs_verification, artist_id),
+            )
+            _write_enrichment_meta(conn, "spotify_id", "artist", artist_id,
+                                   "found", confidence=best_conf)
             enriched += 1
             if on_progress:
                 on_progress(enriched, skipped, failed, len(rows))
@@ -802,15 +786,17 @@ def enrich_artist_ids_spotify(batch_size: int = 20, stop_event: threading.Event 
                 logger.warning("enrich_artist_ids_spotify: rate limit hit on '%s' — stopping", artist_name)
                 break
             logger.warning("enrich_artist_ids_spotify: failed for '%s': %s", artist_name, e)
-            try:
-                with _connect() as conn:
-                    _write_enrichment_meta(conn, "spotify_id", "artist", artist_id,
-                                           "error", error_msg=str(e)[:200])
-            except Exception:
-                pass
+            _write_enrichment_meta(conn, "spotify_id", "artist", artist_id,
+                                   "error", error_msg=str(e)[:200])
             failed += 1
             if on_progress:
                 on_progress(enriched, skipped, failed, len(rows))
+        finally:
+            try:
+                conn.commit()
+                conn.close()
+            except Exception:
+                pass
 
     try:
         with _connect() as conn:
@@ -899,6 +885,12 @@ def enrich_genres_spotify(batch_size: int = 20, stop_event: threading.Event | No
         spotify_artist_id = artist["spotify_artist_id"]
 
         try:
+            conn = _connect()
+        except Exception:
+            failed += 1
+            continue
+
+        try:
             rate_limiter.acquire("spotify")
             artist_data = sp.artist(spotify_artist_id)
 
@@ -907,36 +899,35 @@ def enrich_genres_spotify(batch_size: int = 20, stop_event: threading.Event | No
                 spotify_artist_id, include_groups="appears_on", limit=20
             )
 
-            with _connect() as conn:
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO spotify_raw_cache
-                        (query_type, entity_id, entity_name, raw_json, fetched_at)
-                    VALUES ('artist', ?, ?, ?, datetime('now'))
-                    """,
-                    (spotify_artist_id, artist_name, json.dumps(artist_data)),
-                )
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO spotify_raw_cache
-                        (query_type, entity_id, entity_name, raw_json, fetched_at)
-                    VALUES ('appears_on', ?, ?, ?, datetime('now'))
-                    """,
-                    (spotify_artist_id, artist_name, json.dumps(appears_on_data)),
-                )
-                genres_json = json.dumps(artist_data.get("genres", []))
-                popularity = artist_data.get("popularity")
-                conn.execute(
-                    """
-                    UPDATE lib_artists
-                    SET genres_json = ?,
-                        popularity = ?,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                    """,
-                    (genres_json, popularity, artist_id),
-                )
-                _write_enrichment_meta(conn, "spotify_genres", "artist", artist_id, "found")
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO spotify_raw_cache
+                    (query_type, entity_id, entity_name, raw_json, fetched_at)
+                VALUES ('artist', ?, ?, ?, datetime('now'))
+                """,
+                (spotify_artist_id, artist_name, json.dumps(artist_data)),
+            )
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO spotify_raw_cache
+                    (query_type, entity_id, entity_name, raw_json, fetched_at)
+                VALUES ('appears_on', ?, ?, ?, datetime('now'))
+                """,
+                (spotify_artist_id, artist_name, json.dumps(appears_on_data)),
+            )
+            genres_json = json.dumps(artist_data.get("genres", []))
+            popularity = artist_data.get("popularity")
+            conn.execute(
+                """
+                UPDATE lib_artists
+                SET genres_json = ?,
+                    popularity = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (genres_json, popularity, artist_id),
+            )
+            _write_enrichment_meta(conn, "spotify_genres", "artist", artist_id, "found")
             enriched += 1
             if on_progress:
                 on_progress(enriched, skipped, failed, len(rows))
@@ -949,15 +940,17 @@ def enrich_genres_spotify(batch_size: int = 20, stop_event: threading.Event | No
                 logger.warning("enrich_genres_spotify: rate limit hit on '%s' — stopping", artist_name)
                 break
             logger.warning("enrich_genres_spotify: failed for '%s': %s", artist_name, e)
-            try:
-                with _connect() as conn:
-                    _write_enrichment_meta(conn, "spotify_genres", "artist", artist_id,
-                                           "error", error_msg=str(e)[:200])
-            except Exception:
-                pass
+            _write_enrichment_meta(conn, "spotify_genres", "artist", artist_id,
+                                   "error", error_msg=str(e)[:200])
             failed += 1
             if on_progress:
                 on_progress(enriched, skipped, failed, len(rows))
+        finally:
+            try:
+                conn.commit()
+                conn.close()
+            except Exception:
+                pass
 
     try:
         with _connect() as conn:
@@ -1088,59 +1081,61 @@ def enrich_artist_ids_lastfm(batch_size: int = 50, stop_event: threading.Event |
         artist_name = artist["name"]
 
         try:
-            try:
-                with _connect() as conn:
-                    lib_titles = [
-                        _strip_title_suffixes(r["local_title"] or r["title"])
-                        for r in conn.execute(
-                            "SELECT title, local_title FROM lib_albums WHERE artist_id = ? AND removed_at IS NULL",
-                            (artist_id,),
-                        ).fetchall()
-                    ]
-            except Exception:
-                lib_titles = []
+            conn = _connect()
+        except Exception:
+            failed += 1
+            continue
+
+        try:
+            lib_titles = [
+                _strip_title_suffixes(r["local_title"] or r["title"])
+                for r in conn.execute(
+                    "SELECT title, local_title FROM lib_albums WHERE artist_id = ? AND removed_at IS NULL",
+                    (artist_id,),
+                ).fetchall()
+            ]
 
             val = _validate_artist(artist_name, lib_titles, "lastfm")
             if val and val["confidence"] >= 70:
                 mbid = val["artist_id"]
                 needs_verification = 1 if val["confidence"] < 85 else 0
-                with _connect() as conn:
-                    conn.execute(
-                        """
-                        UPDATE lib_artists
-                        SET lastfm_mbid = ?,
-                            needs_verification = CASE WHEN ? = 1 THEN 1 ELSE needs_verification END,
-                            updated_at = CURRENT_TIMESTAMP
-                        WHERE id = ? AND lastfm_mbid IS NULL
-                        """,
-                        (mbid, needs_verification, artist_id),
-                    )
-                    _write_enrichment_meta(conn, "lastfm_id", "artist", artist_id,
-                                           "found", confidence=val["confidence"])
+                conn.execute(
+                    """
+                    UPDATE lib_artists
+                    SET lastfm_mbid = ?,
+                        needs_verification = CASE WHEN ? = 1 THEN 1 ELSE needs_verification END,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ? AND lastfm_mbid IS NULL
+                    """,
+                    (mbid, needs_verification, artist_id),
+                )
+                _write_enrichment_meta(conn, "lastfm_id", "artist", artist_id,
+                                       "found", confidence=val["confidence"])
                 enriched += 1
                 if on_progress:
                     on_progress(enriched, skipped, failed, len(rows))
                 logger.debug("enrich_artist_ids_lastfm: '%s' → mbid=%s conf=%d",
                              artist_name, mbid, val["confidence"])
             else:
-                with _connect() as conn:
-                    _write_enrichment_meta(conn, "lastfm_id", "artist", artist_id,
-                                           "not_found", confidence=0)
+                _write_enrichment_meta(conn, "lastfm_id", "artist", artist_id,
+                                       "not_found", confidence=0)
                 skipped += 1
                 if on_progress:
                     on_progress(enriched, skipped, failed, len(rows))
 
         except Exception as e:
             logger.warning("enrich_artist_ids_lastfm: failed for '%s': %s", artist_name, e)
-            try:
-                with _connect() as conn:
-                    _write_enrichment_meta(conn, "lastfm_id", "artist", artist_id,
-                                           "error", error_msg=str(e)[:200])
-            except Exception:
-                pass
+            _write_enrichment_meta(conn, "lastfm_id", "artist", artist_id,
+                                   "error", error_msg=str(e)[:200])
             failed += 1
             if on_progress:
                 on_progress(enriched, skipped, failed, len(rows))
+        finally:
+            try:
+                conn.commit()
+                conn.close()
+            except Exception:
+                pass
 
     try:
         with _connect() as conn:
@@ -1213,31 +1208,38 @@ def enrich_tags_lastfm(batch_size: int = 50, stop_event: threading.Event | None 
         artist_name = artist["name"]
 
         try:
+            conn = _connect()
+        except Exception:
+            failed += 1
+            continue
+
+        try:
             raw_tags = get_artist_tags(artist_name)
             canonical = _normalize_lastfm_tags(raw_tags)
             tags_json = json.dumps(canonical)
             status = "found" if canonical else "not_found"
-            with _connect() as conn:
-                conn.execute(
-                    "UPDATE lib_artists SET lastfm_tags_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                    (tags_json, artist_id),
-                )
-                _write_enrichment_meta(conn, "lastfm_tags", "artist", artist_id, status)
+            conn.execute(
+                "UPDATE lib_artists SET lastfm_tags_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (tags_json, artist_id),
+            )
+            _write_enrichment_meta(conn, "lastfm_tags", "artist", artist_id, status)
             enriched_artists += 1
             if on_progress:
                 on_progress(enriched_artists + enriched_albums, skipped, failed, len(artist_rows))
             logger.debug("enrich_tags_lastfm artist '%s': %s", artist_name, canonical)
         except Exception as e:
             logger.warning("enrich_tags_lastfm: artist '%s' failed: %s", artist_name, e)
-            try:
-                with _connect() as conn:
-                    _write_enrichment_meta(conn, "lastfm_tags", "artist", artist_id, "error",
-                                           error_msg=str(e)[:200])
-            except Exception:
-                pass
+            _write_enrichment_meta(conn, "lastfm_tags", "artist", artist_id, "error",
+                                   error_msg=str(e)[:200])
             failed += 1
             if on_progress:
                 on_progress(enriched_artists + enriched_albums, skipped, failed, len(artist_rows))
+        finally:
+            try:
+                conn.commit()
+                conn.close()
+            except Exception:
+                pass
 
     # --- Album pass ---
     try:
@@ -1270,6 +1272,13 @@ def enrich_tags_lastfm(batch_size: int = 50, stop_event: threading.Event | None 
         album_title = album["title"]
         artist_name = album["artist_name"]
         artist_tags_json = album["artist_tags"]
+
+        try:
+            conn = _connect()
+        except Exception:
+            failed += 1
+            continue
+
         try:
             raw_tags = get_album_tags(artist_name, album_title)
             if raw_tags:
@@ -1277,15 +1286,13 @@ def enrich_tags_lastfm(batch_size: int = 50, stop_event: threading.Event | None 
                 tags_json = json.dumps(canonical)
                 status = "found"
             else:
-                # Fallback: use parent artist's already-normalized tags
                 tags_json = artist_tags_json or json.dumps([])
                 status = "fallback"
-            with _connect() as conn:
-                conn.execute(
-                    "UPDATE lib_albums SET lastfm_tags_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                    (tags_json, album_id),
-                )
-                _write_enrichment_meta(conn, "lastfm_tags", "album", album_id, status)
+            conn.execute(
+                "UPDATE lib_albums SET lastfm_tags_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (tags_json, album_id),
+            )
+            _write_enrichment_meta(conn, "lastfm_tags", "album", album_id, status)
             enriched_albums += 1
             if on_progress:
                 on_progress(enriched_artists + enriched_albums, skipped, failed, len(artist_rows) + len(album_rows))
@@ -1294,15 +1301,17 @@ def enrich_tags_lastfm(batch_size: int = 50, stop_event: threading.Event | None 
         except Exception as e:
             logger.warning("enrich_tags_lastfm: album '%s / %s' failed: %s",
                            artist_name, album_title, e)
-            try:
-                with _connect() as conn:
-                    _write_enrichment_meta(conn, "lastfm_tags", "album", album_id, "error",
-                                           error_msg=str(e)[:200])
-            except Exception:
-                pass
+            _write_enrichment_meta(conn, "lastfm_tags", "album", album_id, "error",
+                                   error_msg=str(e)[:200])
             failed += 1
             if on_progress:
                 on_progress(enriched_artists + enriched_albums, skipped, failed, len(artist_rows) + len(album_rows))
+        finally:
+            try:
+                conn.commit()
+                conn.close()
+            except Exception:
+                pass
 
     # Count remaining
     try:
@@ -1476,43 +1485,49 @@ def enrich_itunes_rich(batch_size: int = 50, stop_event: threading.Event | None 
         album_title = album["title"]
 
         try:
+            conn = _connect()
+        except Exception:
+            failed += 1
+            continue
+
+        try:
             result = get_album_itunes_rich(itunes_album_id)
             if result and (result.get("genre") or result.get("release_date")):
-                with _connect() as conn:
-                    conn.execute(
-                        """
-                        UPDATE lib_albums
-                        SET genre = COALESCE(genre, ?),
-                            release_date = COALESCE(release_date, ?),
-                            updated_at = CURRENT_TIMESTAMP
-                        WHERE id = ?
-                        """,
-                        (result.get("genre") or None, result.get("release_date") or None, album_id),
-                    )
-                    _write_enrichment_meta(conn, "itunes_rich", "album", album_id, "found")
+                conn.execute(
+                    """
+                    UPDATE lib_albums
+                    SET genre = COALESCE(genre, ?),
+                        release_date = COALESCE(release_date, ?),
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (result.get("genre") or None, result.get("release_date") or None, album_id),
+                )
+                _write_enrichment_meta(conn, "itunes_rich", "album", album_id, "found")
                 enriched += 1
                 if on_progress:
                     on_progress(enriched, skipped, failed, len(rows))
                 logger.debug("enrich_itunes_rich: '%s' → genre=%s release=%s",
                              album_title, result.get("genre"), result.get("release_date"))
             else:
-                with _connect() as conn:
-                    _write_enrichment_meta(conn, "itunes_rich", "album", album_id, "not_found")
+                _write_enrichment_meta(conn, "itunes_rich", "album", album_id, "not_found")
                 skipped += 1
                 if on_progress:
                     on_progress(enriched, skipped, failed, len(rows))
 
         except Exception as e:
             logger.warning("enrich_itunes_rich: album '%s' failed: %s", album_title, e)
-            try:
-                with _connect() as conn:
-                    _write_enrichment_meta(conn, "itunes_rich", "album", album_id, "error",
-                                           error_msg=str(e)[:200])
-            except Exception:
-                pass
+            _write_enrichment_meta(conn, "itunes_rich", "album", album_id, "error",
+                                   error_msg=str(e)[:200])
             failed += 1
             if on_progress:
                 on_progress(enriched, skipped, failed, len(rows))
+        finally:
+            try:
+                conn.commit()
+                conn.close()
+            except Exception:
+                pass
 
     try:
         with _connect() as conn:
@@ -1586,30 +1601,33 @@ def enrich_deezer_release(batch_size: int = 50, stop_event: threading.Event | No
         album_title = album["title"]
 
         try:
+            conn = _connect()
+        except Exception:
+            failed += 1
+            continue
+        try:
             result = get_deezer_album_info(deezer_id)
             if result:
-                with _connect() as conn:
-                    conn.execute(
-                        """
-                        UPDATE lib_albums
-                        SET record_type = COALESCE(record_type, ?),
-                            thumb_url = COALESCE(thumb_url, ?),
-                            updated_at = CURRENT_TIMESTAMP
-                        WHERE id = ?
-                        """,
-                        (result.get("record_type") or None,
-                         result.get("thumb_url") or None,
-                         album_id),
-                    )
-                    _write_enrichment_meta(conn, "deezer_rich", "album", album_id, "found")
+                conn.execute(
+                    """
+                    UPDATE lib_albums
+                    SET record_type = COALESCE(record_type, ?),
+                        thumb_url = COALESCE(thumb_url, ?),
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (result.get("record_type") or None,
+                     result.get("thumb_url") or None,
+                     album_id),
+                )
+                _write_enrichment_meta(conn, "deezer_rich", "album", album_id, "found")
                 enriched += 1
                 if on_progress:
                     on_progress(enriched, skipped, failed, len(rows))
                 logger.debug("enrich_deezer_release: '%s' → type=%s thumb=%s",
                              album_title, result.get("record_type"), bool(result.get("thumb_url")))
             else:
-                with _connect() as conn:
-                    _write_enrichment_meta(conn, "deezer_rich", "album", album_id, "not_found")
+                _write_enrichment_meta(conn, "deezer_rich", "album", album_id, "not_found")
                 skipped += 1
                 if on_progress:
                     on_progress(enriched, skipped, failed, len(rows))
@@ -1617,14 +1635,19 @@ def enrich_deezer_release(batch_size: int = 50, stop_event: threading.Event | No
         except Exception as e:
             logger.warning("enrich_deezer_release: album '%s' failed: %s", album_title, e)
             try:
-                with _connect() as conn:
-                    _write_enrichment_meta(conn, "deezer_rich", "album", album_id, "error",
-                                           error_msg=str(e)[:200])
+                _write_enrichment_meta(conn, "deezer_rich", "album", album_id, "error",
+                                       error_msg=str(e)[:200])
             except Exception:
                 pass
             failed += 1
             if on_progress:
                 on_progress(enriched, skipped, failed, len(rows))
+        finally:
+            try:
+                conn.commit()
+                conn.close()
+            except Exception:
+                pass
 
     try:
         with _connect() as conn:
@@ -1697,28 +1720,31 @@ def enrich_stats_lastfm(batch_size: int = 50, stop_event: threading.Event | None
         mbid = artist["lastfm_mbid"]
 
         try:
+            conn = _connect()
+        except Exception:
+            failed += 1
+            continue
+        try:
             stats = get_artist_info_lastfm(mbid=mbid, name=artist_name)
             if stats:
-                with _connect() as conn:
-                    conn.execute(
-                        """
-                        UPDATE lib_artists
-                        SET listener_count = ?,
-                            global_play_count = ?,
-                            updated_at = CURRENT_TIMESTAMP
-                        WHERE id = ?
-                        """,
-                        (stats["listeners"], stats["playcount"], artist_id),
-                    )
-                    _write_enrichment_meta(conn, "lastfm_stats", "artist", artist_id, "found")
+                conn.execute(
+                    """
+                    UPDATE lib_artists
+                    SET listener_count = ?,
+                        global_play_count = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (stats["listeners"], stats["playcount"], artist_id),
+                )
+                _write_enrichment_meta(conn, "lastfm_stats", "artist", artist_id, "found")
                 enriched += 1
                 if on_progress:
                     on_progress(enriched, skipped, failed, len(rows))
                 logger.debug("enrich_stats_lastfm: '%s' → listeners=%d plays=%d",
                              artist_name, stats["listeners"], stats["playcount"])
             else:
-                with _connect() as conn:
-                    _write_enrichment_meta(conn, "lastfm_stats", "artist", artist_id, "not_found")
+                _write_enrichment_meta(conn, "lastfm_stats", "artist", artist_id, "not_found")
                 skipped += 1
                 if on_progress:
                     on_progress(enriched, skipped, failed, len(rows))
@@ -1726,14 +1752,19 @@ def enrich_stats_lastfm(batch_size: int = 50, stop_event: threading.Event | None
         except Exception as e:
             logger.warning("enrich_stats_lastfm: artist '%s' failed: %s", artist_name, e)
             try:
-                with _connect() as conn:
-                    _write_enrichment_meta(conn, "lastfm_stats", "artist", artist_id, "error",
-                                           error_msg=str(e)[:200])
+                _write_enrichment_meta(conn, "lastfm_stats", "artist", artist_id, "error",
+                                       error_msg=str(e)[:200])
             except Exception:
                 pass
             failed += 1
             if on_progress:
                 on_progress(enriched, skipped, failed, len(rows))
+        finally:
+            try:
+                conn.commit()
+                conn.close()
+            except Exception:
+                pass
 
     try:
         with _connect() as conn:
@@ -1880,40 +1911,40 @@ def enrich_deezer_bpm(batch_size: int = 30, stop_event: threading.Event | None =
 
         deezer_tracks = _fetch_deezer_album_tracks(deezer_album_id)
 
-        if not deezer_tracks:
-            try:
-                with _connect() as conn:
-                    _write_enrichment_meta(conn, "deezer_bpm", "album", album_id, "not_found")
+        try:
+            conn = _connect()
+        except Exception:
+            failed += 1
+            continue
+        try:
+            if not deezer_tracks:
+                _write_enrichment_meta(conn, "deezer_bpm", "album", album_id, "not_found")
                 skipped += 1
                 if on_progress:
                     on_progress(enriched_albums, skipped, failed, len(rows))
-            except Exception:
-                pass
-            continue
+                continue
 
-        # Build lookup: title_lower → bpm
-        bpm_map = {t["title"].lower(): t["bpm"] for t in deezer_tracks}
+            # Build lookup: title_lower → bpm
+            bpm_map = {t["title"].lower(): t["bpm"] for t in deezer_tracks}
 
-        try:
-            with _connect() as conn:
-                # Match lib_tracks for this album by title_lower
-                lib_tracks = conn.execute(
-                    "SELECT id, title_lower FROM lib_tracks WHERE album_id = ?",
-                    (album_id,),
-                ).fetchall()
+            # Match lib_tracks for this album by title_lower
+            lib_tracks = conn.execute(
+                "SELECT id, title_lower FROM lib_tracks WHERE album_id = ?",
+                (album_id,),
+            ).fetchall()
 
-                updated = 0
-                for track in lib_tracks:
-                    bpm = bpm_map.get(track["title_lower"])
-                    if bpm:
-                        conn.execute(
-                            "UPDATE lib_tracks SET tempo = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                            (bpm, track["id"]),
-                        )
-                        updated += 1
+            updated = 0
+            for track in lib_tracks:
+                bpm = bpm_map.get(track["title_lower"])
+                if bpm:
+                    conn.execute(
+                        "UPDATE lib_tracks SET tempo = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        (bpm, track["id"]),
+                    )
+                    updated += 1
 
-                _write_enrichment_meta(conn, "deezer_bpm", "album", album_id,
-                                       "found" if updated > 0 else "not_found")
+            _write_enrichment_meta(conn, "deezer_bpm", "album", album_id,
+                                   "found" if updated > 0 else "not_found")
 
             enriched_tracks += updated
             enriched_albums += 1
@@ -1927,14 +1958,19 @@ def enrich_deezer_bpm(batch_size: int = 30, stop_event: threading.Event | None =
             logger.warning("enrich_deezer_bpm: failed for '%s / %s': %s",
                            artist_name, album_title, e)
             try:
-                with _connect() as conn:
-                    _write_enrichment_meta(conn, "deezer_bpm", "album", album_id,
-                                           "error", error_msg=str(e)[:200])
+                _write_enrichment_meta(conn, "deezer_bpm", "album", album_id,
+                                       "error", error_msg=str(e)[:200])
             except Exception:
                 pass
             failed += 1
             if on_progress:
                 on_progress(enriched_albums, skipped, failed, len(rows))
+        finally:
+            try:
+                conn.commit()
+                conn.close()
+            except Exception:
+                pass
 
     logger.info(
         "enrich_deezer_bpm: enriched_tracks=%d enriched_albums=%d failed=%d skipped=%d",
