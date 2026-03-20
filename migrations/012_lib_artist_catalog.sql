@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS lib_artist_catalog (
     source      TEXT    NOT NULL,   -- 'itunes' or 'deezer'
     album_id    TEXT    NOT NULL,   -- source-specific album ID
     album_title TEXT    NOT NULL,
-    record_type TEXT,               -- Deezer: album/single/compile; iTunes: NULL
+    record_type TEXT,               -- Deezer: album/single/compile | iTunes: NULL
     fetched_at  TEXT    NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (artist_id, source, album_id)
 );
