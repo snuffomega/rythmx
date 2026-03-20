@@ -106,7 +106,7 @@ def broadcast(event: str, payload: dict) -> None:
 
     if dead:
         with _clients_lock:
-            _clients -= dead
+            _clients.difference_update(dead)
         logger.info("ws.broadcast: pruned %d dead connection(s)", len(dead))
 
 
