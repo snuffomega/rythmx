@@ -14,28 +14,16 @@ import concurrent.futures
 import difflib
 import logging
 import re
-import sqlite3
 import threading
 from datetime import datetime
 from app import config
 from app.db import rythmx_store
+from app.db.rythmx_store import _connect
 from app.services.api_orchestrator import rate_limiter
 
 logger = logging.getLogger(__name__)
 
 _ITUNES_BASE = "https://itunes.apple.com"
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-def _connect():
-    """WAL connection to rythmx.db for lib_* read/write."""
-    conn = sqlite3.connect(config.RYTHMX_DB)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    return conn
 
 
 _TITLE_SUFFIX_RE = re.compile(
