@@ -13,15 +13,31 @@ PGID="${PGID:-1000}"
 
 echo "Starting Rythmx with UID=${PUID} GID=${PGID}"
 
-# Create group and user with the requested IDs
-addgroup --gid "$PGID" rythmx 2>/dev/null || true
-adduser --disabled-password --gecos "" --uid "$PUID" --ingroup rythmx --no-create-home rythmx 2>/dev/null || true
+# Resolve or create the target group
+EXISTING_GROUP=$(getent group "$PGID" | cut -d: -f1 || true)
+if [ -z "$EXISTING_GROUP" ]; then
+  groupadd -g "$PGID" rythmx
+  TARGET_GROUP="rythmx"
+else
+  TARGET_GROUP="$EXISTING_GROUP"
+fi
+
+# Resolve or create the target user
+EXISTING_USER=$(getent passwd "$PUID" | cut -d: -f1 || true)
+if [ -z "$EXISTING_USER" ]; then
+  useradd -u "$PUID" -g "$TARGET_GROUP" -M -s /bin/sh rythmx
+  TARGET_USER="rythmx"
+else
+  TARGET_USER="$EXISTING_USER"
+fi
+
+echo "Mapped to user=${TARGET_USER} group=${TARGET_GROUP}"
 
 # Ensure data directories exist (survives fresh volume mounts)
 mkdir -p /data/rythmx /data/soulsync
 
 # Own the writable data directory and app directory
-chown -R rythmx:rythmx /data/rythmx /rythmx
+chown -R "${PUID}:${PGID}" /data/rythmx /rythmx
 
 # Drop privileges and exec the CMD (uvicorn becomes PID 1)
-exec gosu rythmx "$@"
+exec gosu "${TARGET_USER}" "$@"
