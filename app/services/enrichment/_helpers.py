@@ -22,11 +22,18 @@ _TITLE_SUFFIX_RE = re.compile(
     r'reissue)[\s\w]*[\)\]]',
     re.IGNORECASE,
 )
+# iTunes uses " - Single", " - EP", etc. as a trailing suffix (no brackets)
+_ITUNES_TRAILING_RE = re.compile(
+    r'\s+-\s+(Single|EP|Remixes)$',
+    re.IGNORECASE,
+)
 
 
 def strip_title_suffixes(title: str) -> str:
-    """Strip Plex-appended suffixes like [Single], [EP], (Deluxe Edition) before search."""
-    return _TITLE_SUFFIX_RE.sub("", title).strip()
+    """Strip Plex/iTunes suffixes like [Single], (Deluxe Edition), ' - Single' before matching."""
+    title = _TITLE_SUFFIX_RE.sub("", title).strip()
+    title = _ITUNES_TRAILING_RE.sub("", title).strip()
+    return title
 
 
 def match_album_title(lib_title: str, api_title: str) -> float:
@@ -85,7 +92,7 @@ def persist_artist_catalog(conn, artist_id: str, source: str, catalog: list[dict
     """
     Store an API-fetched album catalog for later gap analysis.
     Idempotent: INSERT OR REPLACE so re-enrichment refreshes stale rows.
-    catalog items: {id, title} (iTunes) or {id, title, record_type} (Deezer).
+    catalog items: {id, title, track_count?, record_type?}.
     """
     if not catalog:
         return
@@ -97,10 +104,11 @@ def persist_artist_catalog(conn, artist_id: str, source: str, catalog: list[dict
         conn.execute(
             """
             INSERT OR REPLACE INTO lib_artist_catalog
-                (artist_id, source, album_id, album_title, record_type, fetched_at)
-            VALUES (?, ?, ?, ?, ?, datetime('now'))
+                (artist_id, source, album_id, album_title, record_type, track_count, fetched_at)
+            VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
             """,
-            (artist_id, source, album_id, title, item.get("record_type")),
+            (artist_id, source, album_id, title,
+             item.get("record_type"), item.get("track_count")),
         )
 
 

@@ -220,11 +220,24 @@ def search_artist_candidates_itunes(name: str, limit: int = 5) -> list[dict]:
     return results
 
 
+def _derive_collection_type(item: dict) -> str:
+    """Derive album/single/ep from iTunes collectionType + title suffix."""
+    kind = (item.get("collectionType") or "Album").lower()
+    if kind == "album":
+        title = (item.get("collectionName") or "").lower()
+        if "- single" in title or title.endswith(" single"):
+            return "single"
+        if " - ep" in title or title.endswith(" ep"):
+            return "ep"
+    return kind
+
+
 def get_artist_albums_itunes(itunes_artist_id: str) -> list[dict]:
     """
-    Return the full album catalog for an iTunes artist ID as [{id, title}].
-    Returns up to 200 albums (covers essentially all discographies).
-    Used by _validate_artist() to score album-catalog overlap.
+    Return the full album catalog for an iTunes artist ID.
+    Returns up to 200 albums as [{id, title, track_count, record_type}].
+    Used by validate_artist() to score album-catalog overlap and by
+    enrich_library() for album matching with track-count tiebreakers.
     """
     data = _itunes_get("/lookup", {
         "id": itunes_artist_id,
@@ -237,6 +250,8 @@ def get_artist_albums_itunes(itunes_artist_id: str) -> list[dict]:
         {
             "id": str(item.get("collectionId", "")),
             "title": item.get("collectionName", ""),
+            "track_count": item.get("trackCount") or 0,
+            "record_type": _derive_collection_type(item),
         }
         for item in data["results"]
         if item.get("wrapperType") == "collection" and item.get("collectionName")
