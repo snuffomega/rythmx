@@ -45,7 +45,7 @@ def _classify_kind(record_type: str | None, track_count: int | None) -> str:
             return rt
         return "album"
 
-    if track_count is not None:
+    if track_count is not None and track_count > 0:
         if track_count <= 3:
             return "single"
         if track_count <= 6:
@@ -63,13 +63,16 @@ _DEEZER_UPSERT_SQL = """
 INSERT INTO lib_releases
     (id, artist_id, artist_name, artist_name_lower, title, title_lower,
      normalized_title, version_type, kind, deezer_album_id,
-     track_count, thumb_url, catalog_source, confidence, user_dismissed,
+     track_count, thumb_url, release_date, explicit,
+     catalog_source, confidence, user_dismissed,
      first_seen_at, last_checked_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'deezer', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'deezer', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(artist_name_lower, title_lower, kind) DO UPDATE SET
     deezer_album_id = COALESCE(excluded.deezer_album_id, lib_releases.deezer_album_id),
     track_count = COALESCE(excluded.track_count, lib_releases.track_count),
     thumb_url = COALESCE(NULLIF(excluded.thumb_url, ''), lib_releases.thumb_url),
+    release_date = COALESCE(excluded.release_date, lib_releases.release_date),
+    explicit = MAX(lib_releases.explicit, excluded.explicit),
     catalog_source = CASE
         WHEN lib_releases.catalog_source IS NULL THEN excluded.catalog_source
         WHEN lib_releases.catalog_source != excluded.catalog_source THEN 'both'
@@ -85,13 +88,18 @@ _ITUNES_UPSERT_SQL = """
 INSERT INTO lib_releases
     (id, artist_id, artist_name, artist_name_lower, title, title_lower,
      normalized_title, version_type, kind, itunes_album_id,
-     track_count, thumb_url, catalog_source, confidence, user_dismissed,
+     track_count, thumb_url, release_date, explicit, label, genre_itunes,
+     catalog_source, confidence, user_dismissed,
      first_seen_at, last_checked_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'itunes', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'itunes', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(artist_name_lower, title_lower, kind) DO UPDATE SET
     itunes_album_id = COALESCE(excluded.itunes_album_id, lib_releases.itunes_album_id),
     track_count = COALESCE(excluded.track_count, lib_releases.track_count),
     thumb_url = COALESCE(NULLIF(excluded.thumb_url, ''), lib_releases.thumb_url),
+    release_date = COALESCE(excluded.release_date, lib_releases.release_date),
+    explicit = MAX(lib_releases.explicit, excluded.explicit),
+    label = COALESCE(NULLIF(excluded.label, ''), lib_releases.label),
+    genre_itunes = COALESCE(NULLIF(excluded.genre_itunes, ''), lib_releases.genre_itunes),
     catalog_source = CASE
         WHEN lib_releases.catalog_source IS NULL THEN excluded.catalog_source
         WHEN lib_releases.catalog_source != excluded.catalog_source THEN 'both'
@@ -173,7 +181,7 @@ def promote_catalog_to_releases(
 
             # Classify kind
             record_type = item.get("record_type")
-            track_count = item.get("track_count")
+            track_count = item.get("track_count") or None
             kind = _classify_kind(record_type, track_count)
 
             # Build release_id
@@ -182,39 +190,79 @@ def promote_catalog_to_releases(
             # Artwork URL (already in API response — zero extra calls)
             artwork_url = item.get("artwork_url") or ""
 
+            # Release date
+            release_date = item.get("release_date") or None
+            # iTunes returns ISO 8601 (2024-01-15T08:00:00Z) — trim to date
+            if release_date and "T" in release_date:
+                release_date = release_date.split("T")[0]
+
             # Auto-dismiss compilations
             user_dismissed = 1 if _COMPILATION_PATTERNS.search(title) else 0
             if user_dismissed:
                 dismissed += 1
 
-            title_lower = title.lower()
+            # Use cleaned title for dedup key — strips " - Single", "(Deluxe)" etc.
+            # so "Renegade" and "Renegade - Single" collapse to the same row
+            title_lower = cleaned_title.lower()
 
             # Check existence before upsert to track promoted vs merged
             exists = conn.execute(
                 _EXISTS_SQL, (artist_name_lower, title_lower, kind)
             ).fetchone()
 
-            # Execute upsert
+            # Extract source-specific fields
+            is_explicit = 1 if item.get("explicit") else 0
+            label = item.get("label") or ""
+            genre = item.get("genre") or ""
+
+            # Execute upsert — params differ per source
             try:
-                conn.execute(
-                    sql,
-                    (
-                        release_id,
-                        artist_id,
-                        artist_name,
-                        artist_name_lower,
-                        title,
-                        title_lower,
-                        normalized_title,
-                        version_type,
-                        kind,
-                        album_id_str,
-                        track_count,
-                        artwork_url or None,
-                        validation_confidence,
-                        user_dismissed,
-                    ),
-                )
+                if source == "deezer":
+                    conn.execute(
+                        sql,
+                        (
+                            release_id,
+                            artist_id,
+                            artist_name,
+                            artist_name_lower,
+                            title,
+                            title_lower,
+                            normalized_title,
+                            version_type,
+                            kind,
+                            album_id_str,
+                            track_count,
+                            artwork_url or None,
+                            release_date,
+                            is_explicit,
+                            validation_confidence,
+                            user_dismissed,
+                        ),
+                    )
+                else:
+                    conn.execute(
+                        sql,
+                        (
+                            release_id,
+                            artist_id,
+                            artist_name,
+                            artist_name_lower,
+                            title,
+                            title_lower,
+                            normalized_title,
+                            version_type,
+                            kind,
+                            album_id_str,
+                            track_count,
+                            artwork_url or None,
+                            release_date,
+                            is_explicit,
+                            label or None,
+                            genre or None,
+                            validation_confidence,
+                            user_dismissed,
+                        ),
+                    )
             except Exception as exc:
                 logger.warning(
                     "catalog_promotion: upsert failed for %s id=%s title=%r: %s",

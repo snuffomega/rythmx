@@ -257,6 +257,10 @@ def get_artist_albums_itunes(itunes_artist_id: str) -> list[dict]:
             "track_count": item.get("trackCount") or 0,
             "record_type": _derive_collection_type(item),
             "artwork_url": raw_art.replace("100x100bb", "600x600bb") if raw_art else "",
+            "release_date": item.get("releaseDate", ""),
+            "explicit": item.get("collectionExplicitness", "") == "explicit",
+            "label": item.get("copyright", ""),
+            "genre": item.get("primaryGenreName", ""),
         })
     return results
 
@@ -434,7 +438,10 @@ def get_artist_albums_deezer(artist_id: str) -> list[dict]:
             "id": str(album.get("id", "")),
             "title": album.get("title", ""),
             "record_type": album.get("record_type", "album"),
+            "track_count": album.get("nb_tracks") or 0,
             "artwork_url": album.get("cover_xl") or album.get("cover_medium") or "",
+            "release_date": album.get("release_date", ""),
+            "explicit": bool(album.get("explicit_lyrics")),
         }
         for album in data["data"]
         if album.get("title")

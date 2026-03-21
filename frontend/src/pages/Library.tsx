@@ -210,9 +210,7 @@ function AlbumCard({ album, viewMode }: AlbumCardProps) {
           <AlbumImage title={album.title} artist={album.artist_name} size={32} />
         </div>
         <p className="text-text-primary text-sm font-medium truncate">{album.title}</p>
-        <p className="text-text-muted text-xs font-mono truncate">
-          {album.artist_name}{album.year && ` · ${album.year}`}
-        </p>
+        {album.year && <p className="text-text-muted text-xs font-mono">{album.year}</p>}
       </Link>
     );
   }
@@ -258,10 +256,31 @@ function MissingAlbumCard({ release }: { release: MissingAlbum }) {
         </span>
       </div>
       <p className="text-text-primary text-sm font-medium truncate">{release.album_title}</p>
-      <p className="text-text-muted text-xs font-mono truncate">
-        {release.kind && release.kind !== 'album' && <span className="capitalize">{release.kind} · </span>}
-        {release.release_date?.slice(0, 4) || ''}
-      </p>
+      {release.release_date && (
+        <p className="text-text-muted text-xs font-mono">{release.release_date.slice(0, 4)}</p>
+      )}
+    </div>
+  );
+}
+
+function MissingKindGroup({ group }: { group: KindGroup<MissingAlbum & { record_type?: string | null }> }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mb-4 ml-5">
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-1.5 text-[10px] font-mono text-text-muted uppercase tracking-wider mb-2 hover:text-text-secondary transition-colors"
+      >
+        <ChevronRight size={12} className={`transition-transform ${open ? 'rotate-90' : ''}`} />
+        {group.label} ({group.items.length})
+      </button>
+      {open && (
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3">
+          {group.items.map(r => (
+            <MissingAlbumCard key={`${r.deezer_album_id || r.itunes_album_id || r.album_title}`} release={r} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -387,16 +406,7 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
               {missing_albums.length} Missing {missing_albums.length === 1 ? 'Release' : 'Releases'}
             </button>
             {showMissing && groupByKind(missing_albums as (MissingAlbum & { record_type?: string | null })[], 'kind').map(group => (
-              <div key={group.kind} className="mb-5 ml-5">
-                <h3 className="text-[10px] font-mono text-text-muted uppercase tracking-wider mb-2">
-                  {group.label} ({group.items.length})
-                </h3>
-                <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3">
-                  {group.items.map(r => (
-                    <MissingAlbumCard key={`${r.deezer_album_id || r.itunes_album_id || r.album_title}`} release={r} />
-                  ))}
-                </div>
-              </div>
+              <MissingKindGroup key={group.kind} group={group} />
             ))}
           </div>
         </>
