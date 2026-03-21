@@ -151,6 +151,106 @@ def library_artist_detail(artist_id: str):
     }
 
 
+@router.get("/library/artists/{artist_id}/match-debug")
+def library_artist_match_debug(artist_id: str):
+    """
+    Diagnostic endpoint: re-runs match_album_title() against stored catalogs.
+    Shows per-album match scores for both iTunes and Deezer so you can see
+    exactly WHY an album matched or didn't.  No API calls — reads from
+    lib_artist_catalog (populated during enrichment).
+    """
+    from app.services.enrichment._helpers import match_album_title
+
+    with rythmx_store._connect() as conn:
+        artist = conn.execute(
+            "SELECT id, name, itunes_artist_id, deezer_artist_id, match_confidence "
+            "FROM lib_artists WHERE id = ? AND removed_at IS NULL",
+            (artist_id,),
+        ).fetchone()
+        if not artist:
+            return JSONResponse({"status": "error", "message": "Artist not found"}, 404)
+
+        albums = conn.execute(
+            "SELECT id, title, local_title, itunes_album_id, deezer_id "
+            "FROM lib_albums WHERE artist_id = ? AND removed_at IS NULL "
+            "ORDER BY title COLLATE NOCASE",
+            (artist_id,),
+        ).fetchall()
+
+        # Load catalogs grouped by source
+        catalog_rows = conn.execute(
+            "SELECT source, album_id, album_title, record_type, track_count "
+            "FROM lib_artist_catalog WHERE artist_id = ?",
+            (artist_id,),
+        ).fetchall()
+
+        itunes_catalog = [r for r in catalog_rows if r["source"] == "itunes"]
+        deezer_catalog = [r for r in catalog_rows if r["source"] == "deezer"]
+
+        # Get track counts per album from lib_tracks
+        album_ids = [a["id"] for a in albums]
+        track_counts: dict[str, int] = {}
+        if album_ids:
+            ph = ",".join("?" * len(album_ids))
+            for row in conn.execute(
+                f"SELECT album_id, COUNT(*) AS cnt FROM lib_tracks WHERE album_id IN ({ph}) GROUP BY album_id",
+                album_ids,
+            ).fetchall():
+                track_counts[row["album_id"]] = row["cnt"]
+
+    def _best_match(album_title, catalog):
+        if not catalog:
+            return {"status": "no_catalog"}
+        best_title, best_score, best_entry = None, 0.0, None
+        for entry in catalog:
+            s = match_album_title(album_title, entry["album_title"])
+            if s > best_score:
+                best_score = s
+                best_title = entry["album_title"]
+                best_entry = entry
+        if best_entry is None:
+            return {"status": "no_catalog"}
+        result = {
+            "status": "matched" if best_score >= 0.82 else "below_threshold",
+            "best_title": best_title,
+            "best_id": best_entry["album_id"],
+            "score": round(best_score, 3),
+        }
+        if best_entry["track_count"]:
+            result["api_tracks"] = best_entry["track_count"]
+        if best_entry["record_type"]:
+            result["record_type"] = best_entry["record_type"]
+        return result
+
+    items = []
+    for album in albums:
+        title = album["local_title"] or album["title"]
+        entry = {
+            "album_id": album["id"],
+            "library_title": title,
+            "library_tracks": track_counts.get(album["id"], 0),
+            "itunes": _best_match(title, itunes_catalog),
+            "deezer": _best_match(title, deezer_catalog),
+        }
+        # Override status if already matched (stored ID exists)
+        if album["itunes_album_id"] and entry["itunes"].get("best_id"):
+            entry["itunes"]["status"] = "matched"
+        if album["deezer_id"] and entry["deezer"].get("best_id"):
+            entry["deezer"]["status"] = "matched"
+        items.append(entry)
+
+    return {
+        "status": "ok",
+        "artist": artist["name"],
+        "artist_id": artist["id"],
+        "itunes_artist_id": artist["itunes_artist_id"],
+        "deezer_artist_id": artist["deezer_artist_id"],
+        "artist_confidence": artist["match_confidence"],
+        "catalog_size": {"itunes": len(itunes_catalog), "deezer": len(deezer_catalog)},
+        "albums": items,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Albums
 # ---------------------------------------------------------------------------
