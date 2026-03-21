@@ -136,6 +136,10 @@ def promote_catalog_to_releases(
         ("deezer", deezer_catalog, _DEEZER_UPSERT_SQL),
         ("itunes", itunes_catalog, _ITUNES_UPSERT_SQL),
     ):
+        # Deduplicate by album_id — API can return same ID with variant titles
+        # (e.g., clean + explicit). Keep first occurrence.
+        seen_ids: set[str] = set()
+
         for item in catalog:
             album_id = item.get("id")
             title = item.get("title")
@@ -153,6 +157,11 @@ def promote_catalog_to_releases(
                 continue
 
             album_id_str = str(album_id)
+
+            # Skip duplicate album_ids within same source
+            if album_id_str in seen_ids:
+                continue
+            seen_ids.add(album_id_str)
 
             # Detect version type
             cleaned_title, version_type = detect_version_type(title)
@@ -181,24 +190,31 @@ def promote_catalog_to_releases(
             ).fetchone()
 
             # Execute upsert
-            conn.execute(
-                sql,
-                (
-                    release_id,
-                    artist_id,
-                    artist_name,
-                    artist_name_lower,
-                    title,
-                    title_lower,
-                    normalized_title,
-                    version_type,
-                    kind,
-                    album_id_str,
-                    track_count,
-                    validation_confidence,
-                    user_dismissed,
-                ),
-            )
+            try:
+                conn.execute(
+                    sql,
+                    (
+                        release_id,
+                        artist_id,
+                        artist_name,
+                        artist_name_lower,
+                        title,
+                        title_lower,
+                        normalized_title,
+                        version_type,
+                        kind,
+                        album_id_str,
+                        track_count,
+                        validation_confidence,
+                        user_dismissed,
+                    ),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "catalog_promotion: upsert failed for %s id=%s title=%r: %s",
+                    source, album_id_str, title, exc,
+                )
+                continue
 
             if exists:
                 merged += 1

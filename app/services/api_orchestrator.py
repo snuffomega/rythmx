@@ -333,6 +333,19 @@ class EnrichmentOrchestrator:
                 except Exception as e:
                     logger.error("EnrichmentOrchestrator: Stage 2 worker error: %s", e)
 
+            # --- Ownership sync (after Stage 2 IDs are resolved) ---
+            if not self._stop_event.is_set():
+                try:
+                    from app.services.enrichment.ownership_sync import sync_release_ownership
+                    own_result = sync_release_ownership()
+                    logger.info(
+                        "EnrichmentOrchestrator: ownership sync — id=%d title=%d",
+                        own_result.get("owned_by_id", 0),
+                        own_result.get("owned_by_title", 0),
+                    )
+                except Exception as e:
+                    logger.warning("EnrichmentOrchestrator: ownership sync failed: %s", e)
+
             if self._stop_event.is_set():
                 self._started_at = None
                 try:
