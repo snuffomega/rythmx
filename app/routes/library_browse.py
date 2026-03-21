@@ -125,9 +125,9 @@ def library_artist_detail(artist_id: str):
         try:
             missing_rows = conn.execute(
                 """
-                SELECT title AS album_title, kind, version_type, release_date,
-                       catalog_source AS source, deezer_album_id, itunes_album_id,
-                       thumb_url, track_count
+                SELECT title AS album_title, kind, kind AS record_type, version_type,
+                       release_date, catalog_source AS source,
+                       deezer_album_id, itunes_album_id, thumb_url, track_count
                 FROM lib_releases
                 WHERE artist_id = ? AND is_owned = 0 AND user_dismissed = 0
                 ORDER BY release_date DESC

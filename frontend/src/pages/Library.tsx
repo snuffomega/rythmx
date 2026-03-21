@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   Loader2, Search, Grid3X3, List, RefreshCw,
-  Library as LibraryIcon, ChevronLeft, Star,
+  Library as LibraryIcon, ChevronLeft, ChevronRight, Star,
   ListPlus, MoreHorizontal, User, Disc, Play,
 } from 'lucide-react';
 import { Link, useNavigate, useRouter } from '@tanstack/react-router';
@@ -10,7 +10,7 @@ import { useImage } from '../hooks/useImage';
 import { getImageUrl } from '../utils/imageUrl';
 import { usePlayerStore } from '../stores/usePlayerStore';
 import { ApiErrorBanner } from '../components/common';
-import type { LibArtist, LibAlbum, LibTrack, LibArtistDetail as LibArtistDetailType, LibAlbumDetail as LibAlbumDetailType, LibraryStatus } from '../types';
+import type { LibArtist, LibAlbum, LibTrack, LibArtistDetail as LibArtistDetailType, LibAlbumDetail as LibAlbumDetailType, LibraryStatus, MissingAlbum } from '../types';
 
 type Tab = 'artists' | 'albums' | 'tracks';
 type ViewMode = 'grid' | 'list';
@@ -34,6 +34,28 @@ function firstTag(json: string | null): string {
   } catch {
     return '';
   }
+}
+
+type KindGroup<T> = { kind: string; label: string; items: T[] };
+
+function groupByKind<T extends { kind?: string | null; record_type?: string | null }>(
+  items: T[],
+  kindField: 'kind' | 'record_type' = 'record_type'
+): KindGroup<T>[] {
+  const order = ['album', 'ep', 'single', 'compilation'];
+  const groups = new Map<string, T[]>();
+  for (const item of items) {
+    const k = (kindField === 'kind' ? item.kind : item.record_type)?.toLowerCase() || 'album';
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k)!.push(item);
+  }
+  return order
+    .filter(k => groups.has(k))
+    .map(k => ({
+      kind: k,
+      label: k === 'ep' ? 'EPs' : k.charAt(0).toUpperCase() + k.slice(1) + 's',
+      items: groups.get(k)!,
+    }));
 }
 
 // ---------------------------------------------------------------------------
@@ -218,6 +240,33 @@ function AlbumCard({ album, viewMode }: AlbumCardProps) {
 }
 
 // ---------------------------------------------------------------------------
+// Missing album card
+// ---------------------------------------------------------------------------
+
+function MissingAlbumCard({ release }: { release: MissingAlbum }) {
+  return (
+    <div className="text-left group rounded-sm p-2 opacity-70">
+      <div className="relative aspect-square bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center mb-2 border border-dashed border-[#333]">
+        {release.thumb_url ? (
+          <img src={release.thumb_url} alt={release.album_title}
+               className="w-full h-full object-cover" loading="lazy" />
+        ) : (
+          <Disc size={32} className="text-text-muted" />
+        )}
+        <span className="absolute top-1 right-1 bg-[#333] text-text-muted text-[9px] font-mono px-1.5 py-0.5 rounded-sm uppercase">
+          Missing
+        </span>
+      </div>
+      <p className="text-text-primary text-sm font-medium truncate">{release.album_title}</p>
+      <p className="text-text-muted text-xs font-mono truncate">
+        {release.kind && release.kind !== 'album' && <span className="capitalize">{release.kind} · </span>}
+        {release.release_date?.slice(0, 4) || ''}
+      </p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Artist detail
 // ---------------------------------------------------------------------------
 
@@ -229,13 +278,14 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
   const [data, setData] = useState<LibArtistDetailType | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showMissing, setShowMissing] = useState(false);
   const showPlayer = usePlayerStore(s => s.show);
 
   useEffect(() => {
     setLoading(true);
     setError(null);
     libraryBrowseApi.getArtist(artistId)
-      .then(res => { setData({ artist: res.artist, albums: res.albums, top_tracks: res.top_tracks }); })
+      .then(res => { setData({ artist: res.artist, albums: res.albums, top_tracks: res.top_tracks, missing_albums: res.missing_albums || [] }); })
       .catch(err => setError(err instanceof Error ? err.message : 'Failed to load artist'))
       .finally(() => setLoading(false));
   }, [artistId]);
@@ -247,7 +297,7 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
     return <ApiErrorBanner error={error ?? 'Not found'} onRetry={() => setLoading(true)} />;
   }
 
-  const { artist, albums, top_tracks } = data;
+  const { artist, albums, top_tracks, missing_albums = [] } = data;
   const genre = firstTag(artist.lastfm_tags_json);
   const totalDuration = top_tracks.reduce((s, t) => s + (t.duration ?? 0), 0);
 
@@ -307,15 +357,50 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
 
       <div className="border-t border-[#1a1a1a]" />
 
-      {/* Albums */}
+      {/* Owned Releases — grouped by kind */}
       <div className="px-8 py-5">
-        <h2 className="text-xs font-mono font-semibold text-text-muted uppercase tracking-widest mb-3">{albums.length} Albums</h2>
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3">
-          {albums.map(al => (
-            <AlbumCard key={al.id} album={al} viewMode="grid" />
-          ))}
-        </div>
+        <h2 className="text-xs font-mono font-semibold text-text-muted uppercase tracking-widest mb-3">
+          {albums.length} {albums.length === 1 ? 'Release' : 'Releases'}
+        </h2>
+        {groupByKind(albums, 'record_type').map(group => (
+          <div key={group.kind} className="mb-5">
+            <h3 className="text-[10px] font-mono text-text-muted uppercase tracking-wider mb-2">
+              {group.label} ({group.items.length})
+            </h3>
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3">
+              {group.items.map(al => <AlbumCard key={al.id} album={al} viewMode="grid" />)}
+            </div>
+          </div>
+        ))}
       </div>
+
+      {/* Missing Releases — collapsed by default */}
+      {missing_albums.length > 0 && (
+        <>
+          <div className="border-t border-[#1a1a1a]" />
+          <div className="px-8 py-5">
+            <button
+              onClick={() => setShowMissing(!showMissing)}
+              className="flex items-center gap-2 text-xs font-mono font-semibold text-text-muted uppercase tracking-widest mb-3 hover:text-text-secondary transition-colors"
+            >
+              <ChevronRight size={14} className={`transition-transform ${showMissing ? 'rotate-90' : ''}`} />
+              {missing_albums.length} Missing {missing_albums.length === 1 ? 'Release' : 'Releases'}
+            </button>
+            {showMissing && groupByKind(missing_albums as (MissingAlbum & { record_type?: string | null })[], 'kind').map(group => (
+              <div key={group.kind} className="mb-5 ml-5">
+                <h3 className="text-[10px] font-mono text-text-muted uppercase tracking-wider mb-2">
+                  {group.label} ({group.items.length})
+                </h3>
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3">
+                  {group.items.map(r => (
+                    <MissingAlbumCard key={`${r.deezer_album_id || r.itunes_album_id || r.album_title}`} release={r} />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
       <div className="h-4" />
     </div>
