@@ -82,7 +82,7 @@ def run_auto_pipeline() -> dict:
             processed_this_run = 0
             total_enriched = 0
             total_failed = 0
-            consecutive_all_fail = 0
+            consecutive_no_progress = 0
             remaining = -1
             while processed_this_run < per_run_cap:
                 r = enrich_library(batch_size=min(batch_size, per_run_cap - processed_this_run))
@@ -95,16 +95,17 @@ def run_auto_pipeline() -> dict:
                 remaining = r.get("remaining", 0)
                 if batch_processed == 0:
                     break  # nothing fetched — all done or all excluded by enrichment_meta
-                # Bail if entire batch failed (likely a code bug, not transient)
-                if batch_enriched == 0 and batch_skipped == 0 and batch_failed > 0:
-                    consecutive_all_fail += 1
-                    if consecutive_all_fail >= 3:
-                        logger.warning(
-                            "run_auto_pipeline: ID enrichment — 3 consecutive all-fail batches, stopping loop"
+                # Bail if no albums are actually being enriched (all skipped/failed)
+                if batch_enriched == 0:
+                    consecutive_no_progress += 1
+                    if consecutive_no_progress >= 2:
+                        logger.info(
+                            "run_auto_pipeline: ID enrichment — no progress for 2 batches, "
+                            "remaining=%d likely blocked by cooldown", remaining,
                         )
                         break
                 else:
-                    consecutive_all_fail = 0
+                    consecutive_no_progress = 0
                 processed_this_run += batch_processed
             result["enrich_ids"] = {
                 "enriched": total_enriched,
