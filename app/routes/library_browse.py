@@ -121,26 +121,21 @@ def library_artist_detail(artist_id: str):
             (artist_id,),
         ).fetchall()
 
-        # --- Missing albums: catalog entries not matched to any owned lib_album ---
+        # --- Missing albums: pre-computed from lib_releases ---
         try:
             missing_rows = conn.execute(
                 """
-                SELECT c.album_title, c.source, c.record_type, c.album_id
-                FROM lib_artist_catalog c
-                WHERE c.artist_id = ?
-                  AND NOT EXISTS (
-                      SELECT 1 FROM lib_albums la
-                      WHERE la.artist_id = c.artist_id
-                        AND la.removed_at IS NULL
-                        AND (la.itunes_album_id = c.album_id
-                             OR la.deezer_id = c.album_id)
-                  )
-                ORDER BY c.album_title
+                SELECT title AS album_title, kind, version_type, release_date,
+                       catalog_source AS source, deezer_album_id, itunes_album_id,
+                       thumb_url, track_count
+                FROM lib_releases
+                WHERE artist_id = ? AND is_owned = 0 AND user_dismissed = 0
+                ORDER BY release_date DESC
                 """,
                 (artist_id,),
             ).fetchall()
         except Exception:
-            missing_rows = []  # table may not exist yet pre-migration
+            missing_rows = []
 
     return {
         "status": "ok",
