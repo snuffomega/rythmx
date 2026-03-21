@@ -1,25 +1,22 @@
 import { useState, useEffect, useRef } from 'react';
-import { Zap, Sparkles } from 'lucide-react';
 import { useApi } from '../hooks/useApi';
 import { cruiseControlApi, releaseCacheApi } from '../services/api';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { CCConfigForm, CCHistory } from '../components/cc';
-import { PersonalDiscovery } from './PersonalDiscovery';
 import { ApiErrorBanner } from '../components/common';
+import { useToastStore } from '../stores/useToastStore';
 import type { CruiseControlConfig } from '../types';
 
-type CCTab = 'new-music' | 'personal-discovery';
+export function CruiseControlNewMusic() {
+  const toast = {
+    success: useToastStore(s => s.success),
+    error: useToastStore(s => s.error),
+  };
 
-interface CruiseControlProps {
-  toast: { success: (m: string) => void; error: (m: string) => void };
-}
-
-export function CruiseControl({ toast }: CruiseControlProps) {
   const { data: config, loading: configLoading, error: configError, refetch: refetchConfig } = useApi(() => cruiseControlApi.getConfig());
   const { data: history, loading: historyLoading, error: historyError, refetch: refetchHistory } = useApi(() => cruiseControlApi.getHistory());
   const { data: statusData, refetch: refetchStatus } = useApi(() => cruiseControlApi.getStatus());
 
-  const [tab, setTab] = useState<CCTab>('new-music');
   const [form, setForm] = useState<Partial<CruiseControlConfig>>({});
   const [advanced, setAdvanced] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -88,80 +85,44 @@ export function CruiseControl({ toast }: CruiseControlProps) {
   };
 
   return (
-    <div className="py-8 space-y-8">
-      <div className="space-y-6">
-        <div>
-          <h1 className="page-title">Cruise Control</h1>
-          <p className="text-text-muted text-sm mt-1">Automate and find the music you love</p>
+    <>
+      {configError ? (
+        <ApiErrorBanner error={configError} onRetry={refetchConfig} />
+      ) : configLoading ? (
+        <div className="space-y-3">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="h-10 bg-[#1c1c1c] animate-pulse" />
+          ))}
         </div>
-
-        <div className="flex items-center gap-1.5 bg-[#0e0e0e] border border-[#1a1a1a] p-1.5 w-fit">
-          <button
-            onClick={() => setTab('new-music')}
-            className={`flex items-center gap-2 px-5 py-2.5 text-sm font-semibold transition-all duration-150 ${
-              tab === 'new-music'
-                ? 'bg-[#1e1e1e] text-text-primary shadow-sm border border-[#2a2a2a]'
-                : 'text-[#3a3a3a] hover:text-[#666]'
-            }`}
-          >
-            <Zap size={14} className={tab === 'new-music' ? 'text-accent' : ''} />
-            New Music
-          </button>
-          <button
-            onClick={() => setTab('personal-discovery')}
-            className={`flex items-center gap-2 px-5 py-2.5 text-sm font-semibold transition-all duration-150 ${
-              tab === 'personal-discovery'
-                ? 'bg-[#1e1e1e] text-text-primary shadow-sm border border-[#2a2a2a]'
-                : 'text-[#3a3a3a] hover:text-[#666]'
-            }`}
-          >
-            <Sparkles size={14} className={tab === 'personal-discovery' ? 'text-accent' : ''} />
-            Personal Discovery
-          </button>
-        </div>
-      </div>
-
-      {tab === 'personal-discovery' && <PersonalDiscovery toast={toast} />}
-
-      {tab === 'new-music' && <>
-        {configError ? (
-          <ApiErrorBanner error={configError} onRetry={refetchConfig} />
-        ) : configLoading ? (
-          <div className="space-y-3">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="h-10 bg-[#1c1c1c] animate-pulse" />
-            ))}
-          </div>
-        ) : (
-          <CCConfigForm
-            form={form}
-            update={update}
-            advanced={advanced}
-            onAdvancedToggle={() => setAdvanced(a => !a)}
-            saving={saving}
-            onSave={handleSave}
-            onSaveAndRun={handleSaveAndRun}
-            onRequestClearCache={() => setConfirmClear(true)}
-            statusData={statusData}
-          />
-        )}
-
-        {historyError ? (
-          <ApiErrorBanner error={historyError} onRetry={refetchHistory} />
-        ) : (
-          <CCHistory history={history} loading={historyLoading} />
-        )}
-
-        <ConfirmDialog
-          open={confirmClear}
-          title="Clear Release Cache?"
-          description="This will remove all cached release data. Cruise Control will re-fetch everything on its next run."
-          confirmLabel="Clear Cache"
-          danger
-          onConfirm={handleClearCache}
-          onCancel={() => setConfirmClear(false)}
+      ) : (
+        <CCConfigForm
+          form={form}
+          update={update}
+          advanced={advanced}
+          onAdvancedToggle={() => setAdvanced(a => !a)}
+          saving={saving}
+          onSave={handleSave}
+          onSaveAndRun={handleSaveAndRun}
+          onRequestClearCache={() => setConfirmClear(true)}
+          statusData={statusData}
         />
-      </>}
-    </div>
+      )}
+
+      {historyError ? (
+        <ApiErrorBanner error={historyError} onRetry={refetchHistory} />
+      ) : (
+        <CCHistory history={history} loading={historyLoading} />
+      )}
+
+      <ConfirmDialog
+        open={confirmClear}
+        title="Clear Release Cache?"
+        description="This will remove all cached release data. Cruise Control will re-fetch everything on its next run."
+        confirmLabel="Clear Cache"
+        danger
+        onConfirm={handleClearCache}
+        onCancel={() => setConfirmClear(false)}
+      />
+    </>
   );
 }

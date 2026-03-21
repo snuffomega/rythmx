@@ -4,15 +4,16 @@ import {
   Library as LibraryIcon, ChevronLeft, Star,
   ListPlus, MoreHorizontal, User, Disc, Play,
 } from 'lucide-react';
+import { Link, useNavigate, useRouter } from '@tanstack/react-router';
 import { libraryBrowseApi, libraryApi } from '../services/api';
 import { useImage } from '../hooks/useImage';
 import { getImageUrl } from '../utils/imageUrl';
+import { usePlayerStore } from '../stores/usePlayerStore';
 import { ApiErrorBanner } from '../components/common';
-import type { LibArtist, LibAlbum, LibTrack, LibArtistDetail, LibAlbumDetail, LibraryStatus } from '../types';
+import type { LibArtist, LibAlbum, LibTrack, LibArtistDetail as LibArtistDetailType, LibAlbumDetail as LibAlbumDetailType, LibraryStatus } from '../types';
 
 type Tab = 'artists' | 'albums' | 'tracks';
 type ViewMode = 'grid' | 'list';
-type DrillType = 'root' | 'artist-detail' | 'album-detail';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -120,18 +121,18 @@ function ConfidenceBadge({ value }: { value: number }) {
 
 interface ArtistCardProps {
   artist: LibArtist;
-  onClick: (id: string) => void;
   viewMode: ViewMode;
 }
 
-function ArtistCard({ artist, onClick, viewMode }: ArtistCardProps) {
+function ArtistCard({ artist, viewMode }: ArtistCardProps) {
   const genre = firstTag(artist.lastfm_tags_json);
 
   if (viewMode === 'grid') {
     return (
-      <button
-        onClick={() => onClick(artist.id)}
-        className="text-left group hover:bg-[#111] rounded-sm p-2 transition-colors"
+      <Link
+        to="/library/artist/$id"
+        params={{ id: artist.id }}
+        className="text-left group hover:bg-[#111] rounded-sm p-2 transition-colors block"
       >
         <div className="aspect-square bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center mb-2 border border-[#222]">
           <ArtistImage name={artist.name} size={32} />
@@ -141,13 +142,14 @@ function ArtistCard({ artist, onClick, viewMode }: ArtistCardProps) {
           {artist.album_count} album{artist.album_count !== 1 ? 's' : ''}
           {genre && ` · ${genre}`}
         </p>
-      </button>
+      </Link>
     );
   }
 
   return (
-    <button
-      onClick={() => onClick(artist.id)}
+    <Link
+      to="/library/artist/$id"
+      params={{ id: artist.id }}
       className="w-full flex items-center gap-3 px-2 py-2 hover:bg-[#111] transition-colors rounded-sm"
     >
       <div className="w-10 h-10 flex-shrink-0 bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center border border-[#222]">
@@ -161,7 +163,7 @@ function ArtistCard({ artist, onClick, viewMode }: ArtistCardProps) {
         <ConfidenceBadge value={artist.match_confidence} />
         <SourceChip backend={artist.source_platform} />
       </div>
-    </button>
+    </Link>
   );
 }
 
@@ -171,16 +173,16 @@ function ArtistCard({ artist, onClick, viewMode }: ArtistCardProps) {
 
 interface AlbumCardProps {
   album: LibAlbum;
-  onClick: (id: string, artistId: string) => void;
   viewMode: ViewMode;
 }
 
-function AlbumCard({ album, onClick, viewMode }: AlbumCardProps) {
+function AlbumCard({ album, viewMode }: AlbumCardProps) {
   if (viewMode === 'grid') {
     return (
-      <button
-        onClick={() => onClick(album.id, album.artist_id)}
-        className="text-left group hover:bg-[#111] rounded-sm p-2 transition-colors"
+      <Link
+        to="/library/album/$id"
+        params={{ id: album.id }}
+        className="text-left group hover:bg-[#111] rounded-sm p-2 transition-colors block"
       >
         <div className="aspect-square bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center mb-2 border border-[#222]">
           <AlbumImage title={album.title} artist={album.artist_name} size={32} />
@@ -189,13 +191,14 @@ function AlbumCard({ album, onClick, viewMode }: AlbumCardProps) {
         <p className="text-text-muted text-xs font-mono truncate">
           {album.artist_name}{album.year && ` · ${album.year}`}
         </p>
-      </button>
+      </Link>
     );
   }
 
   return (
-    <button
-      onClick={() => onClick(album.id, album.artist_id)}
+    <Link
+      to="/library/album/$id"
+      params={{ id: album.id }}
       className="w-full flex items-center gap-3 px-2 py-2 hover:bg-[#111] transition-colors rounded-sm"
     >
       <div className="w-10 h-10 flex-shrink-0 bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center border border-[#222]">
@@ -210,7 +213,7 @@ function AlbumCard({ album, onClick, viewMode }: AlbumCardProps) {
         {album.record_type && <span className="capitalize">{album.record_type}</span>}
         <SourceChip backend={album.source_platform} />
       </div>
-    </button>
+    </Link>
   );
 }
 
@@ -220,15 +223,13 @@ function AlbumCard({ album, onClick, viewMode }: AlbumCardProps) {
 
 interface ArtistDetailProps {
   artistId: string;
-  onAlbumClick: (albumId: string, artistId: string) => void;
-  onBack: () => void;
-  onPlay?: () => void;
 }
 
-function ArtistDetail({ artistId, onAlbumClick, onBack, onPlay }: ArtistDetailProps) {
-  const [data, setData] = useState<LibArtistDetail | null>(null);
+export function ArtistDetail({ artistId }: ArtistDetailProps) {
+  const [data, setData] = useState<LibArtistDetailType | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const showPlayer = usePlayerStore(s => s.show);
 
   useEffect(() => {
     setLoading(true);
@@ -254,9 +255,9 @@ function ArtistDetail({ artistId, onAlbumClick, onBack, onPlay }: ArtistDetailPr
     <div className="flex-1 overflow-y-auto">
       {/* Breadcrumb */}
       <div className="px-8 pt-4 pb-2">
-        <button onClick={onBack} className="flex items-center gap-1.5 text-text-muted hover:text-text-primary text-xs font-mono uppercase tracking-wider transition-colors">
+        <Link to="/library" className="flex items-center gap-1.5 text-text-muted hover:text-text-primary text-xs font-mono uppercase tracking-wider transition-colors">
           <LibraryIcon size={13} /> Library
-        </button>
+        </Link>
       </div>
 
       {/* Hero */}
@@ -289,7 +290,7 @@ function ArtistDetail({ artistId, onAlbumClick, onBack, onPlay }: ArtistDetailPr
                 <span className="font-mono text-xs text-text-muted truncate">{t.album_title}</span>
                 <span className="font-mono text-xs text-text-muted tabular-nums text-right">{formatDuration(t.duration)}</span>
                 <button
-                  onClick={() => onPlay?.()}
+                  onClick={() => showPlayer()}
                   className="text-text-muted opacity-0 group-hover:opacity-100 hover:text-accent transition-all"
                   aria-label="Play"
                 >
@@ -311,12 +312,10 @@ function ArtistDetail({ artistId, onAlbumClick, onBack, onPlay }: ArtistDetailPr
         <h2 className="text-xs font-mono font-semibold text-text-muted uppercase tracking-widest mb-3">{albums.length} Albums</h2>
         <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3">
           {albums.map(al => (
-            <AlbumCard key={al.id} album={al} onClick={(id, aid) => onAlbumClick(id, aid)} viewMode="grid" />
+            <AlbumCard key={al.id} album={al} viewMode="grid" />
           ))}
         </div>
       </div>
-
-      {/* TODO Phase 14: similar artists (lib_similar_artists table) */}
 
       <div className="h-4" />
     </div>
@@ -329,17 +328,15 @@ function ArtistDetail({ artistId, onAlbumClick, onBack, onPlay }: ArtistDetailPr
 
 interface AlbumDetailProps {
   albumId: string;
-  onArtistClick: (artistId: string) => void;
-  onBack: () => void;
-  onLibrary: () => void;
-  onPlay?: () => void;
 }
 
-function AlbumDetail({ albumId, onArtistClick, onBack, onLibrary, onPlay }: AlbumDetailProps) {
-  const [data, setData] = useState<LibAlbumDetail | null>(null);
+export function AlbumDetail({ albumId }: AlbumDetailProps) {
+  const [data, setData] = useState<LibAlbumDetailType | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [ratings, setRatings] = useState<Record<string, number>>({});
+  const router = useRouter();
+  const showPlayer = usePlayerStore(s => s.show);
 
   useEffect(() => {
     setLoading(true);
@@ -375,11 +372,11 @@ function AlbumDetail({ albumId, onArtistClick, onBack, onLibrary, onPlay }: Albu
     <div className="flex-1 overflow-y-auto">
       {/* Breadcrumb */}
       <div className="px-8 pt-4 pb-2 flex items-center gap-3">
-        <button onClick={onLibrary} className="flex items-center gap-1.5 text-text-muted hover:text-text-primary text-xs font-mono uppercase tracking-wider transition-colors">
+        <Link to="/library" className="flex items-center gap-1.5 text-text-muted hover:text-text-primary text-xs font-mono uppercase tracking-wider transition-colors">
           <LibraryIcon size={13} /> Library
-        </button>
+        </Link>
         <span className="text-[#333]">/</span>
-        <button onClick={onBack} className="flex items-center gap-1.5 text-text-muted hover:text-text-primary text-xs font-mono uppercase tracking-wider transition-colors">
+        <button onClick={() => router.history.back()} className="flex items-center gap-1.5 text-text-muted hover:text-text-primary text-xs font-mono uppercase tracking-wider transition-colors">
           <ChevronLeft size={13} /> Back
         </button>
       </div>
@@ -390,12 +387,13 @@ function AlbumDetail({ albumId, onArtistClick, onBack, onLibrary, onPlay }: Albu
           <AlbumImage title={album.title} artist={album.artist_name} size={56} />
         </div>
         <div className="flex flex-col justify-center min-w-0 flex-1">
-          <button
-            onClick={() => onArtistClick(album.artist_id)}
+          <Link
+            to="/library/artist/$id"
+            params={{ id: album.artist_id }}
             className="font-mono text-base text-accent hover:text-accent/80 transition-colors text-left w-fit mb-1"
           >
             {album.artist_name}
-          </button>
+          </Link>
           <h1 className="text-3xl font-bold tracking-tighter text-text-primary mb-1">{album.title}</h1>
           <div className="flex items-center gap-3 text-xs font-mono text-text-muted mt-1">
             {album.year && <span>{album.year}</span>}
@@ -436,7 +434,7 @@ function AlbumDetail({ albumId, onArtistClick, onBack, onLibrary, onPlay }: Albu
             <StarRating value={ratings[t.id] ?? 0} onChange={v => handleRate(t.id, v)} size={12} />
             <span className="font-mono text-xs text-text-muted tabular-nums text-right">{formatDuration(t.duration)}</span>
             <button
-              onClick={() => onPlay?.()}
+              onClick={() => showPlayer()}
               className="text-text-muted opacity-0 group-hover:opacity-100 hover:text-accent transition-all"
               aria-label="Play"
             >
@@ -461,11 +459,7 @@ function AlbumDetail({ albumId, onArtistClick, onBack, onLibrary, onPlay }: Albu
 // Library page (root)
 // ---------------------------------------------------------------------------
 
-interface LibraryProps {
-  onPlay?: () => void;
-}
-
-export function Library({ onPlay }: LibraryProps) {
+export function LibraryRoot() {
   const [tab, setTab] = useState<Tab>('artists');
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [search, setSearch] = useState('');
@@ -476,12 +470,6 @@ export function Library({ onPlay }: LibraryProps) {
   // Status banner
   const [status, setStatus] = useState<LibraryStatus | null>(null);
   const [syncing, setSyncing] = useState(false);
-
-  // Drill state
-  const [drillType, setDrillType] = useState<DrillType>('root');
-  const [drillArtistId, setDrillArtistId] = useState<string | null>(null);
-  const [drillAlbumId, setDrillAlbumId] = useState<string | null>(null);
-  const [albumArtistId, setAlbumArtistId] = useState<string | null>(null);
 
   // Data
   const [artists, setArtists] = useState<LibArtist[]>([]);
@@ -554,11 +542,10 @@ export function Library({ onPlay }: LibraryProps) {
   }, []);
 
   useEffect(() => {
-    if (drillType !== 'root') return;
     if (tab === 'artists') fetchArtists(debouncedSearch, backendFilter);
     else if (tab === 'albums') fetchAlbums(debouncedSearch, backendFilter, recordTypeFilter);
     else fetchTracks(debouncedSearch);
-  }, [tab, drillType, debouncedSearch, backendFilter, recordTypeFilter, fetchArtists, fetchAlbums, fetchTracks]);
+  }, [tab, debouncedSearch, backendFilter, recordTypeFilter, fetchArtists, fetchAlbums, fetchTracks]);
 
   // Sync
   const handleSync = useCallback(async () => {
@@ -571,69 +558,10 @@ export function Library({ onPlay }: LibraryProps) {
     finally { setSyncing(false); }
   }, []);
 
-  // Navigation
-  const goToArtist = (id: string) => {
-    setDrillType('artist-detail');
-    setDrillArtistId(id);
-    setDrillAlbumId(null);
-  };
-
-  const goToAlbum = (albumId: string, fromArtistId?: string) => {
-    setAlbumArtistId(fromArtistId ?? drillArtistId);
-    setDrillType('album-detail');
-    setDrillAlbumId(albumId);
-  };
-
-  const goBack = () => {
-    if (drillType === 'album-detail' && albumArtistId) {
-      setDrillType('artist-detail');
-      setDrillArtistId(albumArtistId);
-      setDrillAlbumId(null);
-    } else {
-      goRoot();
-    }
-  };
-
-  const goRoot = () => {
-    setDrillType('root');
-    setDrillArtistId(null);
-    setDrillAlbumId(null);
-    setAlbumArtistId(null);
-  };
-
   const handleTabChange = (t: Tab) => {
     setTab(t);
-    goRoot();
     setSearch('');
   };
-
-  // Drill views
-  if (drillType === 'artist-detail' && drillArtistId) {
-    return (
-      <div className="flex flex-col h-full overflow-hidden">
-        <ArtistDetail
-          artistId={drillArtistId}
-          onAlbumClick={(aid, artId) => goToAlbum(aid, artId)}
-          onBack={goRoot}
-          onPlay={onPlay}
-        />
-      </div>
-    );
-  }
-
-  if (drillType === 'album-detail' && drillAlbumId) {
-    return (
-      <div className="flex flex-col h-full overflow-hidden">
-        <AlbumDetail
-          albumId={drillAlbumId}
-          onArtistClick={goToArtist}
-          onBack={goBack}
-          onLibrary={goRoot}
-          onPlay={onPlay}
-        />
-      </div>
-    );
-  }
 
   // Root view
   const footerText = loading ? null
@@ -781,11 +709,11 @@ export function Library({ onPlay }: LibraryProps) {
         {!loading && !fetchError && tab === 'artists' && (
           viewMode === 'grid' ? (
             <div className="p-4 grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-3">
-              {artists.map(a => <ArtistCard key={a.id} artist={a} onClick={goToArtist} viewMode="grid" />)}
+              {artists.map(a => <ArtistCard key={a.id} artist={a} viewMode="grid" />)}
             </div>
           ) : (
             <div className="py-2">
-              {artists.map(a => <ArtistCard key={a.id} artist={a} onClick={goToArtist} viewMode="list" />)}
+              {artists.map(a => <ArtistCard key={a.id} artist={a} viewMode="list" />)}
             </div>
           )
         )}
@@ -793,11 +721,11 @@ export function Library({ onPlay }: LibraryProps) {
         {!loading && !fetchError && tab === 'albums' && (
           viewMode === 'grid' ? (
             <div className="p-4 grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-3">
-              {albums.map(al => <AlbumCard key={al.id} album={al} onClick={(id, aid) => goToAlbum(id, aid)} viewMode="grid" />)}
+              {albums.map(al => <AlbumCard key={al.id} album={al} viewMode="grid" />)}
             </div>
           ) : (
             <div className="py-2">
-              {albums.map(al => <AlbumCard key={al.id} album={al} onClick={(id, aid) => goToAlbum(id, aid)} viewMode="list" />)}
+              {albums.map(al => <AlbumCard key={al.id} album={al} viewMode="list" />)}
             </div>
           )
         )}
