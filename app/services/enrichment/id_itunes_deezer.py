@@ -295,7 +295,7 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
                                                "not_found", confidence=0)
 
                 # Album with no artist catalog match at all → flag for review
-                if not album_enriched and not itunes_titles and not deezer_titles:
+                if not album_enriched and not itunes_by_title and not deezer_titles:
                     conn.execute(
                         """
                         UPDATE lib_albums
