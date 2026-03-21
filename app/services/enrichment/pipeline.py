@@ -82,15 +82,29 @@ def run_auto_pipeline() -> dict:
             processed_this_run = 0
             total_enriched = 0
             total_failed = 0
+            consecutive_all_fail = 0
             remaining = -1
             while processed_this_run < per_run_cap:
                 r = enrich_library(batch_size=min(batch_size, per_run_cap - processed_this_run))
-                batch_processed = r.get("enriched", 0) + r.get("skipped", 0) + r.get("failed", 0)
-                total_enriched += r.get("enriched", 0)
-                total_failed += r.get("failed", 0)
+                batch_enriched = r.get("enriched", 0)
+                batch_skipped = r.get("skipped", 0)
+                batch_failed = r.get("failed", 0)
+                batch_processed = batch_enriched + batch_skipped + batch_failed
+                total_enriched += batch_enriched
+                total_failed += batch_failed
                 remaining = r.get("remaining", 0)
                 if batch_processed == 0:
                     break  # nothing fetched — all done or all excluded by enrichment_meta
+                # Bail if entire batch failed (likely a code bug, not transient)
+                if batch_enriched == 0 and batch_skipped == 0 and batch_failed > 0:
+                    consecutive_all_fail += 1
+                    if consecutive_all_fail >= 3:
+                        logger.warning(
+                            "run_auto_pipeline: ID enrichment — 3 consecutive all-fail batches, stopping loop"
+                        )
+                        break
+                else:
+                    consecutive_all_fail = 0
                 processed_this_run += batch_processed
             result["enrich_ids"] = {
                 "enriched": total_enriched,
