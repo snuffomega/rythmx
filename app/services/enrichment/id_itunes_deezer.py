@@ -15,6 +15,7 @@ from app.services.enrichment._helpers import (
     validate_artist,
     persist_artist_catalog,
 )
+from app.services.enrichment.catalog_promotion import promote_catalog_to_releases
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,8 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
             artist_rows = conn.execute(
                 """
                 SELECT DISTINCT ar.id, ar.name,
-                       ar.itunes_artist_id, ar.deezer_artist_id
+                       ar.itunes_artist_id, ar.deezer_artist_id,
+                       ar.match_confidence
                 FROM lib_artists ar
                 JOIN lib_albums la ON la.artist_id = ar.id
                 WHERE la.removed_at IS NULL
@@ -102,6 +104,8 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
 
             lib_titles = [strip_title_suffixes(r["local_title"] or r["title"]) for r in album_rows]
 
+            _best_confidence = artist["match_confidence"] or 0
+
             # --- iTunes: fast path or validation ---
             itunes_catalog: list[dict] = []
             itunes_artist_id = artist["itunes_artist_id"]
@@ -116,6 +120,7 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
                 if val:
                     itunes_artist_id = val["artist_id"]
                     itunes_catalog = val["album_catalog"]
+                    _best_confidence = max(_best_confidence, val["confidence"])
                     try:
                         conn.execute(
                             """
@@ -153,6 +158,7 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
                 if val:
                     deezer_artist_id = val["artist_id"]
                     deezer_catalog = val["album_catalog"]
+                    _best_confidence = max(_best_confidence, val["confidence"])
                     try:
                         conn.execute(
                             """
@@ -175,6 +181,13 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
             # --- Persist catalogs for gap analysis (missing-album hints) ---
             persist_artist_catalog(conn, artist_id, "itunes", itunes_catalog)
             persist_artist_catalog(conn, artist_id, "deezer", deezer_catalog)
+
+            # --- Promote catalog entries to lib_releases (Phase 1.5) ---
+            promote_catalog_to_releases(
+                conn, artist_id, artist_name,
+                itunes_catalog, deezer_catalog,
+                validation_confidence=_best_confidence,
+            )
 
             # --- Album matching against pre-fetched catalogs ---
             # Build rich lookup: title → {id, track_count, record_type}

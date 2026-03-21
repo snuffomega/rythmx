@@ -118,6 +118,19 @@ def run_auto_pipeline() -> dict:
                 total_enriched, total_failed, processed_this_run, remaining,
             )
 
+        # ---- Phase 1.5: Ownership sync on lib_releases ----
+        from app.services.enrichment.ownership_sync import sync_release_ownership
+        try:
+            own_result = sync_release_ownership()
+            result["ownership_sync"] = own_result
+            logger.info(
+                "run_auto_pipeline: ownership sync — id=%d title=%d",
+                own_result.get("owned_by_id", 0),
+                own_result.get("owned_by_title", 0),
+            )
+        except Exception as e:
+            logger.warning("run_auto_pipeline: ownership sync failed: %s", e)
+
         # ---- Phase 2: Last.fm tags (always-on) + bonus Spotify (parallel) ----
         phase2_tasks: dict[str, concurrent.futures.Future] = {}
         with concurrent.futures.ThreadPoolExecutor(
