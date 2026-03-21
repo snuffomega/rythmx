@@ -177,23 +177,50 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
             persist_artist_catalog(conn, artist_id, "deezer", deezer_catalog)
 
             # --- Album matching against pre-fetched catalogs ---
-            itunes_titles = {c["title"]: c["id"] for c in itunes_catalog if c.get("title")}
+            # Build rich lookup: title → {id, track_count, record_type}
+            itunes_by_title = {c["title"]: c for c in itunes_catalog if c.get("title")}
             deezer_titles = {c["title"]: c.get("id", "") for c in deezer_catalog if c.get("title")}
 
             for album in album_rows:
                 album_id = album["id"]
-                album_title = strip_title_suffixes(album["local_title"] or album["title"])
+                raw_title = album["local_title"] or album["title"]
+                album_title = strip_title_suffixes(raw_title)
                 album_enriched = False
 
-                # iTunes album match
-                if album["itunes_album_id"] is None and itunes_titles:
-                    best_itunes = max(
-                        ((t, match_album_title(album_title, t)) for t in itunes_titles),
-                        key=lambda x: x[1],
-                        default=(None, 0.0),
-                    )
-                    if best_itunes[1] >= 0.82:
-                        matched_id = itunes_titles[best_itunes[0]]
+                # iTunes album match (with track-count tiebreaker)
+                if album["itunes_album_id"] is None and itunes_by_title:
+                    scored = []
+                    for t, entry in itunes_by_title.items():
+                        s = match_album_title(album_title, t)
+                        if s >= 0.82:
+                            scored.append((t, s, entry))
+
+                    if scored:
+                        # Primary: best title score. Tiebreaker: track count proximity.
+                        lib_track_count = conn.execute(
+                            "SELECT COUNT(*) FROM lib_tracks WHERE album_id = ?",
+                            (album_id,),
+                        ).fetchone()[0]
+
+                        def _rank(candidate):
+                            title, title_score, entry = candidate
+                            # Primary: title similarity (higher is better)
+                            rank = title_score * 10000
+                            # Tiebreaker 1: track count proximity (lower diff = better)
+                            api_tc = entry.get("track_count", 0)
+                            if lib_track_count > 0 and api_tc > 0:
+                                rank -= abs(lib_track_count - api_tc) * 10
+                            # Tiebreaker 2: release type match (if library title hints at type)
+                            raw_lower = raw_title.lower()
+                            api_type = entry.get("record_type", "")
+                            if ("[single]" in raw_lower or "(single)" in raw_lower) and api_type == "single":
+                                rank += 50
+                            elif ("[ep]" in raw_lower or "(ep)" in raw_lower) and api_type == "ep":
+                                rank += 50
+                            return rank
+
+                        best_title, best_score, best_entry = max(scored, key=_rank)
+                        matched_id = best_entry["id"]
                         try:
                             conn.execute(
                                 """
@@ -204,14 +231,15 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
                                     updated_at = CURRENT_TIMESTAMP
                                 WHERE id = ? AND itunes_album_id IS NULL
                                 """,
-                                (matched_id, best_itunes[0], album_id),
+                                (matched_id, best_title, album_id),
                             )
                             write_enrichment_meta(conn, "itunes", "album", album_id,
                                                    "found", confidence=90)
                             album_enriched = True
                             logger.debug(
-                                "enrich_library: iTunes album hit '%s / %s' → id=%s (score=%.2f)",
-                                artist_name, album_title, matched_id, best_itunes[1],
+                                "enrich_library: iTunes album hit '%s / %s' → id=%s (score=%.2f, tracks=%d)",
+                                artist_name, album_title, matched_id, best_score,
+                                best_entry.get("track_count", 0),
                             )
                         except Exception as e:
                             logger.warning("enrich_library: iTunes album write failed '%s / %s': %s",
