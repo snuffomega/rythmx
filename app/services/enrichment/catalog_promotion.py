@@ -18,9 +18,9 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _COMPILATION_PATTERNS = re.compile(
-    r"greatest\s+hits|best\s+of|complete\s+collection|"
-    r"anthology|retrospective|essential|definitive\s+collection|"
-    r"the\s+very\s+best|gold|platinum|ultimate\s+collection",
+    r"greatest\s+hits|best\s+of\b|complete\s+collection|"
+    r"\banthology\b|\bretrospective\b|(?:^the\s+)?essential\s+\w|definitive\s+collection|"
+    r"the\s+very\s+best|ultimate\s+collection",
     re.IGNORECASE,
 )
 
@@ -63,12 +63,13 @@ _DEEZER_UPSERT_SQL = """
 INSERT INTO lib_releases
     (id, artist_id, artist_name, artist_name_lower, title, title_lower,
      normalized_title, version_type, kind, deezer_album_id,
-     track_count, catalog_source, confidence, user_dismissed,
+     track_count, thumb_url, catalog_source, confidence, user_dismissed,
      first_seen_at, last_checked_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'deezer', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'deezer', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(artist_name_lower, title_lower, kind) DO UPDATE SET
     deezer_album_id = COALESCE(excluded.deezer_album_id, lib_releases.deezer_album_id),
     track_count = COALESCE(excluded.track_count, lib_releases.track_count),
+    thumb_url = COALESCE(NULLIF(excluded.thumb_url, ''), lib_releases.thumb_url),
     catalog_source = CASE
         WHEN lib_releases.catalog_source IS NULL THEN excluded.catalog_source
         WHEN lib_releases.catalog_source != excluded.catalog_source THEN 'both'
@@ -84,12 +85,13 @@ _ITUNES_UPSERT_SQL = """
 INSERT INTO lib_releases
     (id, artist_id, artist_name, artist_name_lower, title, title_lower,
      normalized_title, version_type, kind, itunes_album_id,
-     track_count, catalog_source, confidence, user_dismissed,
+     track_count, thumb_url, catalog_source, confidence, user_dismissed,
      first_seen_at, last_checked_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'itunes', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'itunes', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(artist_name_lower, title_lower, kind) DO UPDATE SET
     itunes_album_id = COALESCE(excluded.itunes_album_id, lib_releases.itunes_album_id),
     track_count = COALESCE(excluded.track_count, lib_releases.track_count),
+    thumb_url = COALESCE(NULLIF(excluded.thumb_url, ''), lib_releases.thumb_url),
     catalog_source = CASE
         WHEN lib_releases.catalog_source IS NULL THEN excluded.catalog_source
         WHEN lib_releases.catalog_source != excluded.catalog_source THEN 'both'
@@ -177,6 +179,9 @@ def promote_catalog_to_releases(
             # Build release_id
             release_id = kind + "_" + source + "_" + album_id_str
 
+            # Artwork URL (already in API response — zero extra calls)
+            artwork_url = item.get("artwork_url") or ""
+
             # Auto-dismiss compilations
             user_dismissed = 1 if _COMPILATION_PATTERNS.search(title) else 0
             if user_dismissed:
@@ -205,6 +210,7 @@ def promote_catalog_to_releases(
                         kind,
                         album_id_str,
                         track_count,
+                        artwork_url or None,
                         validation_confidence,
                         user_dismissed,
                     ),

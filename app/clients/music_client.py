@@ -246,16 +246,19 @@ def get_artist_albums_itunes(itunes_artist_id: str) -> list[dict]:
     })
     if not data or not data.get("results"):
         return []
-    return [
-        {
+    results = []
+    for item in data["results"]:
+        if item.get("wrapperType") != "collection" or not item.get("collectionName"):
+            continue
+        raw_art = item.get("artworkUrl100", "")
+        results.append({
             "id": str(item.get("collectionId", "")),
             "title": item.get("collectionName", ""),
             "track_count": item.get("trackCount") or 0,
             "record_type": _derive_collection_type(item),
-        }
-        for item in data["results"]
-        if item.get("wrapperType") == "collection" and item.get("collectionName")
-    ]
+            "artwork_url": raw_art.replace("100x100bb", "600x600bb") if raw_art else "",
+        })
+    return results
 
 
 def get_artist_top_tracks_itunes(itunes_artist_id: str, limit: int = 10) -> list[str]:
@@ -431,6 +434,7 @@ def get_artist_albums_deezer(artist_id: str) -> list[dict]:
             "id": str(album.get("id", "")),
             "title": album.get("title", ""),
             "record_type": album.get("record_type", "album"),
+            "artwork_url": album.get("cover_xl") or album.get("cover_medium") or "",
         }
         for album in data["data"]
         if album.get("title")
