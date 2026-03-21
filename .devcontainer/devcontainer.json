@@ -14,7 +14,7 @@
     "5173": { "label": "Vite Dev Server", "onAutoForward": "openBrowser" }
   },
   // Re-install deps in case requirements.txt or package.json changed since image build
-  "postCreateCommand": "pip install -r requirements.txt && cd frontend && npm install",
+  "postCreateCommand": "pip install -r requirements-dev.txt && cd frontend && npm install",
   "remoteEnv": {
     "RYTHMX_DEBUG": "true"
   },
