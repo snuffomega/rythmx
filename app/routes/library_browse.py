@@ -96,12 +96,24 @@ def library_artist_detail(artist_id: str):
 
         albums = conn.execute(
             """
-            SELECT id, artist_id, title, year, record_type,
-                   match_confidence, needs_verification, source_platform,
-                   release_date, genre, thumb_url, lastfm_tags_json
-            FROM lib_albums
-            WHERE artist_id = ? AND removed_at IS NULL
-            ORDER BY year DESC
+            SELECT la.id, la.artist_id, la.title, la.year,
+                   COALESCE(la.record_type,
+                       CASE
+                           WHEN tc.cnt IS NOT NULL AND tc.cnt <= 3 THEN 'single'
+                           WHEN tc.cnt IS NOT NULL AND tc.cnt <= 6 THEN 'ep'
+                           ELSE 'album'
+                       END
+                   ) AS record_type,
+                   la.match_confidence, la.needs_verification, la.source_platform,
+                   la.release_date, la.genre, la.thumb_url, la.lastfm_tags_json
+            FROM lib_albums la
+            LEFT JOIN (
+                SELECT album_id, COUNT(*) AS cnt
+                FROM lib_tracks WHERE removed_at IS NULL
+                GROUP BY album_id
+            ) tc ON tc.album_id = la.id
+            WHERE la.artist_id = ? AND la.removed_at IS NULL
+            ORDER BY la.year DESC
             """,
             (artist_id,),
         ).fetchall()
