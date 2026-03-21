@@ -17,10 +17,33 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _TITLE_SUFFIX_RE = re.compile(
-    r'\s*[\(\[](single|ep|deluxe|deluxe\s+edition|explicit|remaster(ed)?|'
-    r'expanded|anniversary\s+edition|bonus\s+track[s]?|special\s+edition|'
-    r'reissue)[\s\w]*[\)\]]',
-    re.IGNORECASE,
+    r"""\s*[\(\[]                       # opening paren/bracket
+    (
+        single|ep
+        |(?:super\s+)?deluxe(?:\s+edition)?
+        |collector'?s?\s+edition
+        |explicit|clean
+        |remaster(?:ed)?
+        |expanded(?:\s+edition)?
+        |(?:\d+(?:st|nd|rd|th)\s+)?anniversary\s+edition
+        |bonus\s+track[s]?
+        |special\s+edition
+        |reissue
+        |demo(?:\s+edition)?
+        |\d{4}\s+mix                    # (2024 Mix)
+        |live(?:\s+(?:at|in|from)\s+[\w\s,]+)?   # (Live), (Live at Venue)
+        |(?:feat(?:uring)?|ft)\.?\s+[\w\s.&,'-]+  # (feat. Artist), (ft. Artist), (featuring Artist)
+        |(?:japan|uk|us|eu|international)\s+(?:edition|version)
+        |acoustic|stripped|unplugged
+        |piano\s+version
+        |instrumental|karaoke|backing\s+track
+        |(?:club|extended)\s+mix
+        |remix
+    )
+    [\s\w]*                             # trailing words before close bracket
+    [\)\]]                              # closing paren/bracket
+    """,
+    re.IGNORECASE | re.VERBOSE,
 )
 # iTunes uses " - Single", " - EP", etc. as a trailing suffix (no brackets)
 _ITUNES_TRAILING_RE = re.compile(
@@ -34,6 +57,62 @@ def strip_title_suffixes(title: str) -> str:
     title = _TITLE_SUFFIX_RE.sub("", title).strip()
     title = _ITUNES_TRAILING_RE.sub("", title).strip()
     return title
+
+
+def detect_version_type(title: str) -> tuple[str, str]:
+    """
+    Classify an album title into (cleaned_title, version_type).
+
+    version_type is one of: 'original', 'remaster', 'deluxe', 'anniversary',
+    'explicit', 'clean', 'demo', 'acoustic', 'live_recording', 'expanded',
+    'special', 'remix', 'instrumental'.
+
+    Detection works by comparing the raw title against the stripped title to
+    see what was removed, then classifying the removed text.  Priority order
+    ensures the most specific label wins.
+    """
+    cleaned = strip_title_suffixes(title)
+
+    # Derive removed text directly from regex matches so mid-title substring
+    # positions can never produce false positives (e.g. "alive" matching "live").
+    removed = " ".join(m.group(0) for m in _TITLE_SUFFIX_RE.finditer(title))
+    _itunes_match = _ITUNES_TRAILING_RE.search(title)
+    if _itunes_match:
+        removed += _itunes_match.group(0)
+    removed_lower = removed.lower()
+
+    # Priority-ordered checks (most specific first).
+    # Note: reissue, single, feat., and region markers are intentionally matched
+    # by _TITLE_SUFFIX_RE and stripped into `removed`, but they fall through all
+    # checks below and return 'original' by design — they are metadata modifiers,
+    # not version-type classifiers.
+    if "remaster" in removed_lower:
+        return cleaned, "remaster"
+    if "deluxe" in removed_lower or "collector" in removed_lower:
+        return cleaned, "deluxe"
+    if "anniversary" in removed_lower:
+        return cleaned, "anniversary"
+    if "explicit" in removed_lower:
+        return cleaned, "explicit"
+    if "clean" in removed_lower:
+        return cleaned, "clean"
+    if "demo" in removed_lower:
+        return cleaned, "demo"
+    if any(kw in removed_lower for kw in ("acoustic", "stripped", "unplugged", "piano version")):
+        return cleaned, "acoustic"
+    # Word-boundary match prevents "alive", "relive", "delivered" from triggering.
+    if re.search(r'\blive\b', removed_lower):
+        return cleaned, "live_recording"
+    if "expanded" in removed_lower:
+        return cleaned, "expanded"
+    # Word-boundary match for "mix" prevents "mixing" / "premix" false positives.
+    if any(kw in removed_lower for kw in ("remix", "club mix", "extended mix")) or re.search(r'\bmix\b', removed_lower):
+        return cleaned, "remix"
+    if any(kw in removed_lower for kw in ("instrumental", "karaoke", "backing track")):
+        return cleaned, "instrumental"
+    if "special edition" in removed_lower or "bonus track" in removed_lower:
+        return cleaned, "special"
+    return cleaned, "original"
 
 
 def match_album_title(lib_title: str, api_title: str) -> float:
