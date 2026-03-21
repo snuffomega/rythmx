@@ -25,7 +25,7 @@ fi
 # Resolve or create the target user
 EXISTING_USER=$(getent passwd "$PUID" | cut -d: -f1 || true)
 if [ -z "$EXISTING_USER" ]; then
-  useradd -u "$PUID" -g "$TARGET_GROUP" -M -s /bin/sh rythmx
+  useradd -r -u "$PUID" -g "$TARGET_GROUP" -M -s /bin/sh rythmx
   TARGET_USER="rythmx"
 else
   TARGET_USER="$EXISTING_USER"
