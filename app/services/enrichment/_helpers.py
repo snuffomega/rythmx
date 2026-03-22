@@ -23,7 +23,7 @@ _TITLE_SUFFIX_RE = re.compile(
         |(?:super\s+)?deluxe(?:\s+edition)?
         |collector'?s?\s+edition
         |explicit|clean
-        |remaster(?:ed)?
+        |(?:\d{4}\s+)?re-?master(?:ed)?
         |expanded(?:\s+edition)?
         |(?:\d+(?:st|nd|rd|th)\s+)?anniversary\s+edition
         |bonus\s+track[s]?
@@ -86,7 +86,7 @@ def detect_version_type(title: str) -> tuple[str, str]:
     # by _TITLE_SUFFIX_RE and stripped into `removed`, but they fall through all
     # checks below and return 'original' by design — they are metadata modifiers,
     # not version-type classifiers.
-    if "remaster" in removed_lower:
+    if "remaster" in removed_lower or "re-master" in removed_lower:
         return cleaned, "remaster"
     if "deluxe" in removed_lower or "collector" in removed_lower:
         return cleaned, "deluxe"

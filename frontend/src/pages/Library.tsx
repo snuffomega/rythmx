@@ -1031,7 +1031,6 @@ export function ReleaseDetailView({ releaseId }: ReleaseDetailViewProps) {
   const [prefs, setPrefs] = useState<UserReleasePrefs | null>(null);
   const [prefsLoading, setPrefsLoading] = useState(false);
   const [notes, setNotes] = useState('');
-  const router = useRouter();
 
   useEffect(() => {
     setLoading(true);
@@ -1066,11 +1065,20 @@ export function ReleaseDetailView({ releaseId }: ReleaseDetailViewProps) {
 
   return (
     <div className="flex-1 overflow-y-auto custom-scrollbar">
-      {/* Back button */}
-      <div className="px-8 pt-4">
-        <button onClick={() => router.history.back()} className="flex items-center gap-1 text-text-muted hover:text-text-secondary text-xs font-mono transition-colors">
-          <ChevronLeft size={14} /> Back
-        </button>
+      {/* Breadcrumb */}
+      <div className="px-8 pt-4 pb-2 flex items-center gap-1.5">
+        <Link to="/library" className="flex items-center gap-1 text-text-muted hover:text-text-primary text-xs font-mono uppercase tracking-wider transition-colors">
+          <LibraryIcon size={13} /> Library
+        </Link>
+        {release && (
+          <>
+            <ChevronRight size={12} className="text-text-muted" />
+            <Link to="/library/artist/$id" params={{ id: release.artist_id }}
+                  className="text-text-muted hover:text-text-primary text-xs font-mono uppercase tracking-wider transition-colors truncate max-w-[200px]">
+              {release.artist_name}
+            </Link>
+          </>
+        )}
       </div>
 
       {/* Release header */}

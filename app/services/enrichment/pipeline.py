@@ -139,6 +139,18 @@ def run_auto_pipeline() -> dict:
         except Exception as e:
             logger.warning("run_auto_pipeline: missing_count refresh failed: %s", e)
 
+        # ---- Phase 1.65: Recompute normalized_title + version_type for all releases ----
+        # Runs on every pipeline cycle — pure SQLite, no API calls, cheap.
+        # Ensures any regex improvements to detect_version_type() are reflected
+        # in existing rows before canonical_release_id groupings are refreshed.
+        from app.db.rythmx_store import recompute_normalized_titles
+        try:
+            recomputed = recompute_normalized_titles()
+            result["recompute_titles"] = recomputed
+            logger.info("run_auto_pipeline: normalized_title recomputed for %d rows", recomputed)
+        except Exception as e:
+            logger.warning("run_auto_pipeline: normalized_title recompute failed: %s", e)
+
         # ---- Phase 1.7: Refresh canonical_release_id groupings ----
         from app.db.rythmx_store import populate_canonical_release_ids
         try:

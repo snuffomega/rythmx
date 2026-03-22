@@ -991,6 +991,33 @@ def backfill_normalized_titles() -> int:
     return updated
 
 
+def recompute_normalized_titles() -> int:
+    """Recompute normalized_title and version_type for ALL lib_releases rows.
+
+    Unlike backfill_normalized_titles() which skips rows where normalized_title
+    is already set, this overwrites all rows. Use after updating the title
+    normalization regex so existing rows pick up the new logic.
+
+    Returns count of rows updated.
+    """
+    from app.services.enrichment._helpers import detect_version_type
+    from app.clients.music_client import norm
+
+    updated = 0
+    with _connect() as conn:
+        rows = conn.execute("SELECT id, title FROM lib_releases").fetchall()
+        for row in rows:
+            cleaned_title, version_type = detect_version_type(row["title"])
+            normalized_title = norm(cleaned_title)
+            conn.execute(
+                "UPDATE lib_releases SET normalized_title = ?, version_type = ? WHERE id = ?",
+                (normalized_title, version_type, row["id"]),
+            )
+            updated += 1
+    logger.info("recompute_normalized_titles: reprocessed %d lib_releases rows", updated)
+    return updated
+
+
 def refresh_missing_counts() -> int:
     """Recompute lib_artists.missing_count from lib_releases with full dedup logic.
 
