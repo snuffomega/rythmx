@@ -10,7 +10,7 @@ import { useImage } from '../hooks/useImage';
 import { getImageUrl } from '../utils/imageUrl';
 import { usePlayerStore } from '../stores/usePlayerStore';
 import { ApiErrorBanner } from '../components/common';
-import type { LibArtist, LibAlbum, LibTrack, LibArtistDetail as LibArtistDetailType, LibAlbumDetail as LibAlbumDetailType, LibraryStatus, MissingAlbum } from '../types';
+import type { LibArtist, LibAlbum, LibTrack, LibArtistDetail as LibArtistDetailType, LibAlbumDetail as LibAlbumDetailType, LibraryStatus, MissingAlbum, ReleaseDetail, ReleaseTrack } from '../types';
 
 type Tab = 'artists' | 'albums' | 'tracks';
 type ViewMode = 'grid' | 'list';
@@ -242,8 +242,8 @@ function AlbumCard({ album, viewMode }: AlbumCardProps) {
 // ---------------------------------------------------------------------------
 
 function MissingAlbumCard({ release }: { release: MissingAlbum }) {
-  return (
-    <div className="text-left group rounded-sm p-2 opacity-70">
+  const inner = (
+    <div className="text-left group rounded-sm p-2 opacity-70 hover:opacity-90 transition-opacity">
       <div className="relative aspect-square bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center mb-2 border border-dashed border-[#333]">
         {release.thumb_url ? (
           <img src={release.thumb_url} alt={release.album_title}
@@ -261,10 +261,15 @@ function MissingAlbumCard({ release }: { release: MissingAlbum }) {
       )}
     </div>
   );
+  if (release.id) {
+    return <Link to="/library/release/$id" params={{ id: release.id }}>{inner}</Link>;
+  }
+  return inner;
 }
 
 function MissingKindGroup({ group }: { group: KindGroup<MissingAlbum & { record_type?: string | null }> }) {
   const [open, setOpen] = useState(false);
+  const previewItems = group.items.slice(0, 8);
   return (
     <div className="mb-4 ml-5">
       <button
@@ -274,10 +279,29 @@ function MissingKindGroup({ group }: { group: KindGroup<MissingAlbum & { record_
         <ChevronRight size={12} className={`transition-transform ${open ? 'rotate-90' : ''}`} />
         {group.label} ({group.items.length})
       </button>
+      {!open && (
+        <div className="flex gap-1.5 ml-5 overflow-x-auto pb-1">
+          {previewItems.map(r => (
+            <div key={r.id || r.deezer_album_id || r.itunes_album_id || r.album_title}
+                 className="w-10 h-10 flex-shrink-0 rounded-sm overflow-hidden bg-[#1a1a1a] border border-dashed border-[#333] flex items-center justify-center opacity-60">
+              {r.thumb_url ? (
+                <img src={r.thumb_url} alt={r.album_title} className="w-full h-full object-cover" loading="lazy" />
+              ) : (
+                <Disc size={14} className="text-text-muted" />
+              )}
+            </div>
+          ))}
+          {group.items.length > 8 && (
+            <div className="w-10 h-10 flex-shrink-0 rounded-sm bg-[#1a1a1a] border border-dashed border-[#333] flex items-center justify-center opacity-60">
+              <span className="text-text-muted text-[9px] font-mono">+{group.items.length - 8}</span>
+            </div>
+          )}
+        </div>
+      )}
       {open && (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3">
           {group.items.map(r => (
-            <MissingAlbumCard key={`${r.deezer_album_id || r.itunes_album_id || r.album_title}`} release={r} />
+            <MissingAlbumCard key={r.id || r.deezer_album_id || r.itunes_album_id || r.album_title} release={r} />
           ))}
         </div>
       )}
@@ -865,6 +889,110 @@ export function LibraryRoot() {
       )}
 
       {/* TODO Phase 14: PlayerBar */}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Release detail (missing release click-through)
+// ---------------------------------------------------------------------------
+
+interface ReleaseDetailViewProps {
+  releaseId: string;
+}
+
+export function ReleaseDetailView({ releaseId }: ReleaseDetailViewProps) {
+  const [release, setRelease] = useState<ReleaseDetail | null>(null);
+  const [tracks, setTracks] = useState<ReleaseTrack[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
+
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    libraryBrowseApi.getRelease(releaseId)
+      .then(res => {
+        setRelease(res.release);
+        setTracks(res.tracks || []);
+      })
+      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load release'))
+      .finally(() => setLoading(false));
+  }, [releaseId]);
+
+  if (loading) {
+    return <div className="flex-1 flex items-center justify-center"><Loader2 size={20} className="animate-spin text-text-muted" /></div>;
+  }
+  if (error || !release) {
+    return <ApiErrorBanner error={error ?? 'Not found'} onRetry={() => setLoading(true)} />;
+  }
+
+  return (
+    <div className="flex-1 overflow-y-auto custom-scrollbar">
+      {/* Back button */}
+      <div className="px-8 pt-4">
+        <button onClick={() => router.history.back()} className="flex items-center gap-1 text-text-muted hover:text-text-secondary text-xs font-mono transition-colors">
+          <ChevronLeft size={14} /> Back
+        </button>
+      </div>
+
+      {/* Release header */}
+      <div className="flex gap-6 px-8 py-5">
+        <div className="w-48 h-48 flex-shrink-0 rounded-sm overflow-hidden bg-[#1a1a1a] border border-dashed border-[#333] flex items-center justify-center">
+          {release.thumb_url ? (
+            <img src={release.thumb_url} alt={release.title} className="w-full h-full object-cover" />
+          ) : (
+            <Disc size={48} className="text-text-muted" />
+          )}
+        </div>
+        <div className="flex flex-col justify-end">
+          <p className="text-[10px] font-mono text-text-muted uppercase tracking-wider mb-1">
+            {release.kind}{release.version_type && release.version_type !== 'original' && ` · ${release.version_type}`}
+            <span className="ml-2 px-1.5 py-0.5 bg-[#333] rounded-sm text-[9px]">Missing</span>
+          </p>
+          <h1 className="text-2xl font-bold text-text-primary mb-1">{release.title}</h1>
+          <p className="text-sm text-text-secondary font-mono">{release.artist_name}</p>
+          <div className="flex gap-3 mt-2 text-[10px] font-mono text-text-muted">
+            {release.release_date && <span>{release.release_date}</span>}
+            {release.track_count != null && <span>{release.track_count} tracks</span>}
+            {release.label && <span>{release.label}</span>}
+            {release.genre_itunes && <span>{release.genre_itunes}</span>}
+          </div>
+          <div className="flex gap-2 mt-2">
+            {release.catalog_source && (
+              <span className="text-[9px] font-mono px-1.5 py-0.5 bg-[#222] text-text-muted rounded-sm uppercase">{release.catalog_source}</span>
+            )}
+            {release.explicit === 1 && (
+              <span className="text-[9px] font-mono px-1.5 py-0.5 bg-[#333] text-text-muted rounded-sm">E</span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Track listing */}
+      {tracks.length > 0 && (
+        <div className="px-8 py-4 border-t border-[#1a1a1a]">
+          <h2 className="text-xs font-mono font-semibold text-text-muted uppercase tracking-widest mb-3">
+            Track Listing
+          </h2>
+          <div className="space-y-0.5">
+            {tracks.map((t, i) => (
+              <div key={i} className="flex items-center gap-3 py-1.5 px-2 rounded-sm hover:bg-[#1a1a1a] transition-colors">
+                <span className="text-text-muted font-mono text-xs w-6 text-right flex-shrink-0">{t.track_number}</span>
+                <span className="text-text-primary text-sm flex-1 truncate">{t.title}</span>
+                <span className="text-text-muted font-mono text-xs flex-shrink-0">{formatDuration(t.duration_ms)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {tracks.length === 0 && !loading && (
+        <div className="px-8 py-4 border-t border-[#1a1a1a]">
+          <p className="text-text-muted text-xs font-mono">No track listing available</p>
+        </div>
+      )}
+
+      <div className="h-4" />
     </div>
   );
 }

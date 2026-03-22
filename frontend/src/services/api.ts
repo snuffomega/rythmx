@@ -30,6 +30,8 @@ import type {
   AuditResponse,
   EnrichmentPipelineStatus,
   EnrichmentStopResponse,
+  ReleaseDetail,
+  ReleaseTrack,
 } from '../types';
 
 const BASE_URL = '/api/v1';
@@ -382,6 +384,8 @@ export const libraryBrowseApi = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+  getRelease: (id: string) =>
+    request<{ status: string; release: ReleaseDetail; tracks: ReleaseTrack[] }>(`/library/releases/${encodeURIComponent(id)}`),
 };
 
 export const enrichmentApi = {

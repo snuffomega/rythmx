@@ -284,6 +284,7 @@ export interface LibTrack {
 }
 
 export interface MissingAlbum {
+  id?: string;
   album_title: string;
   source: string;
   record_type?: string | null;
@@ -307,6 +308,32 @@ export interface LibArtistDetail {
 export interface LibAlbumDetail {
   album: LibAlbum;
   tracks: LibTrack[];
+}
+
+export interface ReleaseDetail {
+  id: string;
+  artist_id: string;
+  artist_name: string;
+  title: string;
+  release_date: string | null;
+  kind: string;
+  version_type: string | null;
+  track_count: number | null;
+  thumb_url: string | null;
+  catalog_source: string | null;
+  deezer_album_id: string | null;
+  itunes_album_id: string | null;
+  explicit: number;
+  label: string | null;
+  genre_itunes: string | null;
+}
+
+export interface ReleaseTrack {
+  title: string;
+  track_number: number;
+  disc_number: number;
+  duration_ms: number;
+  preview_url: string;
 }
 
 // ---------------------------------------------------------------------------
