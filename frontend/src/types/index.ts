@@ -251,6 +251,7 @@ export interface LibArtist {
   popularity: number | null;
   listener_count: number | null;
   global_play_count: number | null;
+  image_url: string | null;
 }
 
 export interface LibAlbum {

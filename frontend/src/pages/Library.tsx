@@ -100,15 +100,19 @@ function StarRating({ value, onChange, size = 14, readonly = false }: StarRating
 // ArtistImage — thin wrapper so each card gets its own hook instance
 // ---------------------------------------------------------------------------
 
-function ArtistImage({ name, size }: { name: string; size: number }) {
-  const url = useImage('artist', name);
-  if (url) return <img src={getImageUrl(url)} alt={name} className="w-full h-full object-cover" />;
+function ArtistImage({ name, size, imageUrl }: { name: string; size: number; imageUrl?: string | null }) {
+  const hasDirectUrl = imageUrl && imageUrl.startsWith('http');
+  const resolvedUrl = useImage('artist', name, '', !!hasDirectUrl);
+  const src = hasDirectUrl ? imageUrl : resolvedUrl;
+  if (src) return <img src={getImageUrl(src)} alt={name} className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} />;
   return <User size={size} className="text-text-muted" />;
 }
 
-function AlbumImage({ title, artist, size }: { title: string; artist: string; size: number }) {
-  const url = useImage('album', title, artist);
-  if (url) return <img src={getImageUrl(url)} alt={title} className="w-full h-full object-cover" />;
+function AlbumImage({ title, artist, size, thumbUrl }: { title: string; artist: string; size: number; thumbUrl?: string | null }) {
+  const hasDirectUrl = thumbUrl && thumbUrl.startsWith('http');
+  const resolvedUrl = useImage('album', title, artist, !!hasDirectUrl);
+  const src = hasDirectUrl ? thumbUrl : resolvedUrl;
+  if (src) return <img src={getImageUrl(src)} alt={title} className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} />;
   return <Disc size={size} className="text-text-muted" />;
 }
 
@@ -157,7 +161,7 @@ function ArtistCard({ artist, viewMode }: ArtistCardProps) {
         className="text-left group hover:bg-[#111] rounded-sm p-2 transition-colors block"
       >
         <div className="aspect-square bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center mb-2 border border-[#222]">
-          <ArtistImage name={artist.name} size={32} />
+          <ArtistImage name={artist.name} size={32} imageUrl={artist.image_url} />
         </div>
         <p className="text-text-primary text-sm font-medium truncate">{artist.name}</p>
         <p className="text-text-muted text-xs font-mono truncate">
@@ -178,7 +182,7 @@ function ArtistCard({ artist, viewMode }: ArtistCardProps) {
       className="w-full flex items-center gap-3 px-2 py-2 hover:bg-[#111] transition-colors rounded-sm"
     >
       <div className="w-10 h-10 flex-shrink-0 bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center border border-[#222]">
-        <ArtistImage name={artist.name} size={18} />
+        <ArtistImage name={artist.name} size={18} imageUrl={artist.image_url} />
       </div>
       <div className="flex-1 min-w-0 text-left">
         <p className="text-text-primary text-sm font-medium truncate">{artist.name}</p>
@@ -215,7 +219,7 @@ function AlbumCard({ album, viewMode }: AlbumCardProps) {
         className="text-left group hover:bg-[#111] rounded-sm p-2 transition-colors block"
       >
         <div className="aspect-square bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center mb-2 border border-[#222]">
-          <AlbumImage title={album.title} artist={album.artist_name} size={32} />
+          <AlbumImage title={album.title} artist={album.artist_name} size={32} thumbUrl={album.thumb_url} />
         </div>
         <p className="text-text-primary text-sm font-medium truncate">{album.title}</p>
         {album.year && <p className="text-text-muted text-xs font-mono">{album.year}</p>}
@@ -230,7 +234,7 @@ function AlbumCard({ album, viewMode }: AlbumCardProps) {
       className="w-full flex items-center gap-3 px-2 py-2 hover:bg-[#111] transition-colors rounded-sm"
     >
       <div className="w-10 h-10 flex-shrink-0 bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center border border-[#222]">
-        <AlbumImage title={album.title} artist={album.artist_name} size={18} />
+        <AlbumImage title={album.title} artist={album.artist_name} size={18} thumbUrl={album.thumb_url} />
       </div>
       <div className="flex-1 min-w-0 text-left">
         <p className="text-text-primary text-sm font-medium truncate">{album.title}</p>
@@ -263,8 +267,8 @@ function MissingAlbumCard({ release, onDismiss }: { release: MissingAlbum; onDis
       )}
       <div className="relative aspect-square bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center mb-2 border border-dashed border-[#333]">
         {release.thumb_url ? (
-          <img src={release.thumb_url} alt={release.album_title}
-               className="w-full h-full object-cover" loading="lazy" />
+          <img src={getImageUrl(release.thumb_url)} alt={release.album_title}
+               className="w-full h-full object-cover" loading="lazy" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
         ) : (
           <Disc size={32} className="text-text-muted" />
         )}
@@ -328,8 +332,8 @@ function MissingGroupCard({ group, onDismiss }: { group: MissingReleaseGroup; on
     <div className="text-left group relative rounded-sm p-2 opacity-70 hover:opacity-90 transition-opacity">
       <div className="relative aspect-square bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center mb-2 border border-dashed border-[#333]">
         {primary.thumb_url ? (
-          <img src={primary.thumb_url} alt={primary.album_title}
-               className="w-full h-full object-cover" loading="lazy" />
+          <img src={getImageUrl(primary.thumb_url)} alt={primary.album_title}
+               className="w-full h-full object-cover" loading="lazy" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
         ) : (
           <Disc size={32} className="text-text-muted" />
         )}
@@ -1060,7 +1064,7 @@ export function ReleaseDetailView({ releaseId }: ReleaseDetailViewProps) {
       <div className="flex gap-6 px-8 py-5">
         <div className="w-48 h-48 flex-shrink-0 rounded-sm overflow-hidden bg-[#1a1a1a] border border-dashed border-[#333] flex items-center justify-center">
           {release.thumb_url ? (
-            <img src={release.thumb_url} alt={release.title} className="w-full h-full object-cover" />
+            <img src={getImageUrl(release.thumb_url)} alt={release.title} className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
           ) : (
             <Disc size={48} className="text-text-muted" />
           )}

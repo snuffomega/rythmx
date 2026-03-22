@@ -58,6 +58,7 @@ function AlbumTile({
             src={getImageUrl(src)}
             alt={title}
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+            onError={(e) => { e.currentTarget.style.display = 'none'; }}
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center">
@@ -88,6 +89,7 @@ function ArtistTile({ artist }: { artist: Artist }) {
             src={getImageUrl(src)}
             alt={artist.name}
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+            onError={(e) => { e.currentTarget.style.display = 'none'; }}
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center">

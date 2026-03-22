@@ -56,6 +56,7 @@ def library_artists(
             SELECT a.id, a.name, a.match_confidence, a.source_platform,
                    a.lastfm_tags_json, a.genres_json, a.popularity,
                    a.listener_count, a.global_play_count, a.missing_count,
+                   a.image_url,
                    COUNT(al.id) AS album_count
             FROM lib_artists a
             LEFT JOIN lib_albums al
@@ -80,6 +81,7 @@ def library_artist_detail(artist_id: str):
             SELECT a.id, a.name, a.match_confidence, a.source_platform,
                    a.lastfm_tags_json, a.genres_json, a.popularity,
                    a.listener_count, a.global_play_count,
+                   a.image_url,
                    COUNT(al.id) AS album_count
             FROM lib_artists a
             LEFT JOIN lib_albums al

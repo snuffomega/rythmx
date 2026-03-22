@@ -146,7 +146,7 @@ function StatsModal({ open, onClose, contentType, period }: StatsModalProps) {
               <span className="text-[11px] font-black text-[#444] w-6 text-right flex-shrink-0">{i + 1}</span>
               <div className="w-10 h-10 flex-shrink-0 overflow-hidden bg-[#1a1a1a]">
                 {item.image ? (
-                  <img src={getImageUrl(item.image)} alt={item.name} loading="lazy" className="w-full h-full object-cover" />
+                  <img src={getImageUrl(item.image)} alt={item.name} loading="lazy" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
                 ) : (
                   <div className="w-full h-full" style={{ background: `hsl(${item.name.charCodeAt(0) % 360},20%,12%)` }} />
                 )}

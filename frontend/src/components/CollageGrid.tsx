@@ -225,6 +225,7 @@ function CollageCard({ item, rank, contentType, overlays, className = '' }: Coll
           alt={item.name}
           loading="lazy"
           className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+          onError={(e) => { e.currentTarget.style.display = 'none'; }}
         />
       ) : (
         <div
