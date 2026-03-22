@@ -320,6 +320,23 @@ class EnrichmentOrchestrator:
         logger.info("EnrichmentOrchestrator: pipeline start (batch_size=%d)", batch_size)
 
         try:
+            # --- Stage 1: Library sync (no API calls, fast) ---
+            try:
+                from app.services.enrichment.sync import sync_library
+                sync_result = sync_library()
+                logger.info(
+                    "EnrichmentOrchestrator: sync — artists=%d albums=%d tracks=%d",
+                    sync_result.get("artist_count", 0),
+                    sync_result.get("album_count", 0),
+                    sync_result.get("track_count", 0),
+                )
+            except Exception as e:
+                logger.warning("EnrichmentOrchestrator: sync_library failed: %s", e)
+
+            if self._stop_event.is_set():
+                self._started_at = None
+                return
+
             # --- Stage 2: sequential (IDs must be resolved before Stage 3) ---
             for worker_fn, worker_key in [
                 (lambda k="library": ls.enrich_library(batch_size, self._stop_event, self._make_progress_fn(k)), "library"),

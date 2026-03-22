@@ -138,12 +138,10 @@ async def lifespan(app: FastAPI):
             pass
         if _lib_empty or _check_lib_sync(_startup_settings):
             import threading as _threading
-            from app.services import library_service as _lib_svc
 
             def _startup_pipeline():
-                _lib_svc.run_auto_pipeline()
-                import time as _time
-                _time.sleep(30)
+                # Single unified pipeline: Orchestrator handles sync + all enrichment
+                # with WS progress events.  No more dual run_auto_pipeline + run_full.
                 from app.services.api_orchestrator import EnrichmentOrchestrator
                 EnrichmentOrchestrator.get().run_full()
 
