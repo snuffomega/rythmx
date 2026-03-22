@@ -131,6 +131,23 @@ def run_auto_pipeline() -> dict:
         except Exception as e:
             logger.warning("run_auto_pipeline: ownership sync failed: %s", e)
 
+        # ---- Phase 1.6: Refresh missing_count on lib_artists ----
+        from app.db.rythmx_store import refresh_missing_counts
+        try:
+            refresh_missing_counts()
+            logger.info("run_auto_pipeline: missing_count refresh complete")
+        except Exception as e:
+            logger.warning("run_auto_pipeline: missing_count refresh failed: %s", e)
+
+        # ---- Phase 1.7: Refresh canonical_release_id groupings ----
+        from app.db.rythmx_store import populate_canonical_release_ids
+        try:
+            canonical_updated = populate_canonical_release_ids()
+            result["canonical_refresh"] = canonical_updated
+            logger.info("run_auto_pipeline: canonical refresh — %d rows", canonical_updated)
+        except Exception as e:
+            logger.warning("run_auto_pipeline: canonical refresh failed: %s", e)
+
         # ---- Phase 2: Last.fm tags (always-on) + bonus Spotify (parallel) ----
         phase2_tasks: dict[str, concurrent.futures.Future] = {}
         with concurrent.futures.ThreadPoolExecutor(

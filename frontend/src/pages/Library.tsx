@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Loader2, Search, Grid3X3, List, RefreshCw,
   Library as LibraryIcon, ChevronLeft, ChevronRight, Star,
-  ListPlus, MoreHorizontal, User, Disc, Play,
+  ListPlus, MoreHorizontal, User, Disc, Play, X,
 } from 'lucide-react';
 import { Link, useNavigate, useRouter } from '@tanstack/react-router';
 import { libraryBrowseApi, libraryApi } from '../services/api';
@@ -10,7 +10,7 @@ import { useImage } from '../hooks/useImage';
 import { getImageUrl } from '../utils/imageUrl';
 import { usePlayerStore } from '../stores/usePlayerStore';
 import { ApiErrorBanner } from '../components/common';
-import type { LibArtist, LibAlbum, LibTrack, LibArtistDetail as LibArtistDetailType, LibAlbumDetail as LibAlbumDetailType, LibraryStatus, MissingAlbum, ReleaseDetail, ReleaseTrack } from '../types';
+import type { LibArtist, LibAlbum, LibTrack, LibArtistDetail as LibArtistDetailType, LibAlbumDetail as LibAlbumDetailType, LibraryStatus, MissingAlbum, MissingReleaseGroup, ReleaseDetail, ReleaseTrack, UserReleasePrefs } from '../types';
 
 type Tab = 'artists' | 'albums' | 'tracks';
 type ViewMode = 'grid' | 'list';
@@ -164,6 +164,9 @@ function ArtistCard({ artist, viewMode }: ArtistCardProps) {
           {artist.album_count} album{artist.album_count !== 1 ? 's' : ''}
           {genre && ` · ${genre}`}
         </p>
+        {artist.missing_count > 0 && (
+          <p className="text-[10px] font-mono text-amber-400 mt-0.5">{artist.missing_count} missing</p>
+        )}
       </Link>
     );
   }
@@ -182,6 +185,11 @@ function ArtistCard({ artist, viewMode }: ArtistCardProps) {
         <p className="text-text-muted text-xs font-mono">{artist.album_count} albums{genre && ` · ${genre}`}</p>
       </div>
       <div className="flex items-center gap-2 flex-shrink-0">
+        {artist.missing_count > 0 && (
+          <span className="font-mono text-[10px] text-amber-400 bg-amber-400/10 px-1.5 py-0.5 rounded border border-amber-400/20">
+            {artist.missing_count}
+          </span>
+        )}
         <ConfidenceBadge value={artist.match_confidence} />
         <SourceChip backend={artist.source_platform} />
       </div>
@@ -241,9 +249,18 @@ function AlbumCard({ album, viewMode }: AlbumCardProps) {
 // Missing album card
 // ---------------------------------------------------------------------------
 
-function MissingAlbumCard({ release }: { release: MissingAlbum }) {
+function MissingAlbumCard({ release, onDismiss }: { release: MissingAlbum; onDismiss?: (id: string) => void }) {
   const inner = (
-    <div className="text-left group rounded-sm p-2 opacity-70 hover:opacity-90 transition-opacity">
+    <div className="text-left group relative rounded-sm p-2 opacity-70 hover:opacity-90 transition-opacity">
+      {onDismiss && release.id && (
+        <button
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDismiss(release.id!); }}
+          className="absolute top-3 left-3 z-10 opacity-0 group-hover:opacity-100 bg-black/70 hover:bg-red-500/80 text-text-muted hover:text-white rounded-full p-0.5 transition-all"
+          aria-label="Dismiss"
+        >
+          <X size={12} />
+        </button>
+      )}
       <div className="relative aspect-square bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center mb-2 border border-dashed border-[#333]">
         {release.thumb_url ? (
           <img src={release.thumb_url} alt={release.album_title}
@@ -267,7 +284,7 @@ function MissingAlbumCard({ release }: { release: MissingAlbum }) {
   return inner;
 }
 
-function MissingKindGroup({ group }: { group: KindGroup<MissingAlbum & { record_type?: string | null }> }) {
+function MissingKindGroup({ group, onDismiss }: { group: KindGroup<MissingAlbum & { record_type?: string | null }>; onDismiss?: (id: string) => void }) {
   const [open, setOpen] = useState(true);
   return (
     <div className="mb-4 ml-5">
@@ -281,7 +298,83 @@ function MissingKindGroup({ group }: { group: KindGroup<MissingAlbum & { record_
       {open && (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3">
           {group.items.map(r => (
-            <MissingAlbumCard key={r.id || r.deezer_album_id || r.itunes_album_id || r.album_title} release={r} />
+            <MissingAlbumCard key={r.id || r.deezer_album_id || r.itunes_album_id || r.album_title} release={r} onDismiss={onDismiss} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Missing release group card (auto-collapse editions)
+// ---------------------------------------------------------------------------
+
+function MissingGroupCard({ group, onDismiss }: { group: MissingReleaseGroup; onDismiss?: (id: string) => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const primary = group.primary;
+
+  // Single edition — render as regular MissingAlbumCard
+  if (group.edition_count === 1) {
+    return <MissingAlbumCard release={primary} onDismiss={onDismiss} />;
+  }
+
+  return (
+    <div className="text-left">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full text-left group rounded-sm p-2 opacity-70 hover:opacity-90 transition-opacity"
+      >
+        <div className="relative aspect-square bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center mb-2 border border-dashed border-[#333]">
+          {primary.thumb_url ? (
+            <img src={primary.thumb_url} alt={primary.album_title}
+                 className="w-full h-full object-cover" loading="lazy" />
+          ) : (
+            <Disc size={32} className="text-text-muted" />
+          )}
+          <span className="absolute top-1 right-1 bg-[#333] text-text-muted text-[9px] font-mono px-1.5 py-0.5 rounded-sm">
+            {group.edition_count} editions
+          </span>
+          {group.owned_count > 0 && (
+            <span className="absolute top-1 left-1 bg-green-500/20 text-green-400 text-[9px] font-mono px-1.5 py-0.5 rounded-sm">
+              {group.owned_count} owned
+            </span>
+          )}
+        </div>
+        <p className="text-text-primary text-sm font-medium truncate">{primary.album_title}</p>
+        {primary.release_date && (
+          <p className="text-text-muted text-xs font-mono">{primary.release_date.slice(0, 4)}</p>
+        )}
+      </button>
+
+      {expanded && (
+        <div className="ml-3 mt-1 space-y-0.5 border-l border-[#222] pl-3 mb-2">
+          {group.editions.map(e => (
+            <div key={e.id} className={`flex items-center gap-2 py-1 px-1 rounded-sm ${e.is_owned ? 'opacity-100' : 'opacity-60'}`}>
+              {e.id && !e.is_owned ? (
+                <Link to="/library/release/$id" params={{ id: e.id }} className="text-xs text-text-primary truncate flex-1 hover:text-accent transition-colors">
+                  {e.album_title}
+                </Link>
+              ) : (
+                <span className="text-xs text-text-primary truncate flex-1">{e.album_title}</span>
+              )}
+              {e.version_type && e.version_type !== 'original' && (
+                <span className="text-[9px] font-mono text-text-muted flex-shrink-0">{e.version_type}</span>
+              )}
+              {e.is_owned ? (
+                <span className="text-[9px] font-mono text-green-400 flex-shrink-0">owned</span>
+              ) : (
+                onDismiss && e.id && (
+                  <button
+                    onClick={() => onDismiss(e.id!)}
+                    className="text-text-muted hover:text-red-400 transition-colors flex-shrink-0"
+                    aria-label="Dismiss"
+                  >
+                    <X size={10} />
+                  </button>
+                )
+              )}
+            </div>
           ))}
         </div>
       )}
@@ -302,16 +395,44 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showMissing, setShowMissing] = useState(false);
+  const [dismissedCount, setDismissedCount] = useState(0);
+  const [missingGroups, setMissingGroups] = useState<MissingReleaseGroup[]>([]);
   const showPlayer = usePlayerStore(s => s.show);
 
   useEffect(() => {
     setLoading(true);
     setError(null);
     libraryBrowseApi.getArtist(artistId)
-      .then(res => { setData({ artist: res.artist, albums: res.albums, top_tracks: res.top_tracks, missing_albums: res.missing_albums || [] }); })
+      .then(res => {
+        setData({ artist: res.artist, albums: res.albums, top_tracks: res.top_tracks, missing_albums: res.missing_albums || [] });
+        setDismissedCount((res as any).dismissed_count ?? 0);
+        setMissingGroups((res as any).missing_groups ?? []);
+      })
       .catch(err => setError(err instanceof Error ? err.message : 'Failed to load artist'))
       .finally(() => setLoading(false));
   }, [artistId]);
+
+  const handleDismiss = useCallback((releaseId: string) => {
+    libraryBrowseApi.updateReleasePrefs(releaseId, { dismissed: true }).then(() => {
+      setData(prev => {
+        if (!prev) return prev;
+        return { ...prev, missing_albums: (prev.missing_albums || []).filter(r => r.id !== releaseId) };
+      });
+      // Also filter from groups — remove the edition, remove the group if empty
+      setMissingGroups(prev => prev
+        .map(g => ({
+          ...g,
+          editions: g.editions.filter(e => e.id !== releaseId),
+          edition_count: g.editions.filter(e => e.id !== releaseId).length,
+          primary: g.primary.id === releaseId && g.editions.length > 1
+            ? g.editions.find(e => e.id !== releaseId)!
+            : g.primary,
+        }))
+        .filter(g => g.editions.length > 0 && !g.editions.every(e => e.is_owned))
+      );
+      setDismissedCount(c => c + 1);
+    });
+  }, []);
 
   if (loading) {
     return <div className="flex-1 flex items-center justify-center"><Loader2 size={20} className="animate-spin text-text-muted" /></div>;
@@ -398,7 +519,7 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
       </div>
 
       {/* Missing Releases — collapsed by default */}
-      {missing_albums.length > 0 && (
+      {(missing_albums.length > 0 || missingGroups.length > 0) && (
         <>
           <div className="border-t border-[#1a1a1a]" />
           <div className="px-8 py-5">
@@ -407,11 +528,32 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
               className="flex items-center gap-2 text-xs font-mono font-semibold text-text-muted uppercase tracking-widest mb-3 hover:text-text-secondary transition-colors"
             >
               <ChevronRight size={14} className={`transition-transform ${showMissing ? 'rotate-90' : ''}`} />
-              {missing_albums.length} Missing {missing_albums.length === 1 ? 'Release' : 'Releases'}
+              {missingGroups.length > 0
+                ? `${missingGroups.length} Missing ${missingGroups.length === 1 ? 'Release' : 'Releases'}`
+                : `${missing_albums.length} Missing ${missing_albums.length === 1 ? 'Release' : 'Releases'}`
+              }
+              {dismissedCount > 0 && (
+                <span className="text-[9px] font-normal normal-case tracking-normal text-text-muted ml-1">({dismissedCount} dismissed)</span>
+              )}
             </button>
-            {showMissing && groupByKind(missing_albums as (MissingAlbum & { record_type?: string | null })[], 'kind').map(group => (
-              <MissingKindGroup key={group.kind} group={group} />
-            ))}
+            {showMissing && (
+              missingGroups.length > 0
+                ? groupByKind(missingGroups, 'kind').map(kindGroup => (
+                    <div key={kindGroup.kind} className="mb-4 ml-5">
+                      <h3 className="text-[10px] font-mono text-text-muted uppercase tracking-wider mb-2">
+                        {kindGroup.label} ({kindGroup.items.length})
+                      </h3>
+                      <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3">
+                        {kindGroup.items.map(g => (
+                          <MissingGroupCard key={g.canonical_release_id} group={g} onDismiss={handleDismiss} />
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                : groupByKind(missing_albums as (MissingAlbum & { record_type?: string | null })[], 'kind').map(group => (
+                    <MissingKindGroup key={group.kind} group={group} onDismiss={handleDismiss} />
+                  ))
+            )}
           </div>
         </>
       )}
@@ -886,6 +1028,9 @@ export function ReleaseDetailView({ releaseId }: ReleaseDetailViewProps) {
   const [tracks, setTracks] = useState<ReleaseTrack[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [prefs, setPrefs] = useState<UserReleasePrefs | null>(null);
+  const [prefsLoading, setPrefsLoading] = useState(false);
+  const [notes, setNotes] = useState('');
   const router = useRouter();
 
   useEffect(() => {
@@ -898,6 +1043,18 @@ export function ReleaseDetailView({ releaseId }: ReleaseDetailViewProps) {
       })
       .catch(err => setError(err instanceof Error ? err.message : 'Failed to load release'))
       .finally(() => setLoading(false));
+    libraryBrowseApi.getReleasePrefs(releaseId).then(res => {
+      setPrefs(res.prefs);
+      setNotes(res.prefs?.notes || '');
+    });
+  }, [releaseId]);
+
+  const updatePref = useCallback((patch: { dismissed?: boolean; priority?: number; notes?: string }) => {
+    setPrefsLoading(true);
+    libraryBrowseApi.updateReleasePrefs(releaseId, patch)
+      .then(() => libraryBrowseApi.getReleasePrefs(releaseId))
+      .then(res => { setPrefs(res.prefs); if (res.prefs?.notes != null) setNotes(res.prefs.notes); })
+      .finally(() => setPrefsLoading(false));
   }, [releaseId]);
 
   if (loading) {
@@ -946,6 +1103,46 @@ export function ReleaseDetailView({ releaseId }: ReleaseDetailViewProps) {
               <span className="text-[9px] font-mono px-1.5 py-0.5 bg-[#333] text-text-muted rounded-sm">E</span>
             )}
           </div>
+        </div>
+      </div>
+
+      {/* User controls */}
+      <div className="px-8 py-4 border-t border-[#1a1a1a] flex flex-wrap items-center gap-4">
+        <button
+          onClick={() => updatePref({ dismissed: !prefs?.dismissed })}
+          disabled={prefsLoading}
+          className={`text-xs font-mono px-3 py-1.5 rounded-sm border transition-colors ${
+            prefs?.dismissed
+              ? 'border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20'
+              : 'border-[#333] bg-[#1a1a1a] text-text-muted hover:text-text-secondary hover:border-[#444]'
+          }`}
+        >
+          {prefs?.dismissed ? 'Dismissed — Undo' : 'Dismiss'}
+        </button>
+        <label className="flex items-center gap-2 text-xs font-mono text-text-muted">
+          Priority
+          <select
+            value={prefs?.priority ?? 0}
+            onChange={e => updatePref({ priority: Number(e.target.value) })}
+            disabled={prefsLoading}
+            className="bg-[#1a1a1a] border border-[#333] text-text-secondary text-xs font-mono px-2 py-1 rounded-sm"
+          >
+            <option value={0}>None</option>
+            <option value={1}>Low</option>
+            <option value={2}>Medium</option>
+            <option value={3}>High</option>
+          </select>
+        </label>
+        <div className="flex-1 min-w-[200px]">
+          <input
+            type="text"
+            placeholder="Add a note..."
+            value={notes}
+            onChange={e => setNotes(e.target.value)}
+            onBlur={() => { if (notes !== (prefs?.notes || '')) updatePref({ notes: notes || '' }); }}
+            disabled={prefsLoading}
+            className="w-full bg-[#1a1a1a] border border-[#333] text-text-secondary text-xs font-mono px-3 py-1.5 rounded-sm placeholder:text-text-muted/50 focus:outline-none focus:border-[#444]"
+          />
         </div>
       </div>
 

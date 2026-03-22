@@ -176,10 +176,18 @@ def promote_catalog_to_releases(
             if release_date and "T" in release_date:
                 release_date = release_date.split("T")[0]
 
-            # Auto-dismiss compilations
-            user_dismissed = 1 if _COMPILATION_PATTERNS.search(title) else 0
-            if user_dismissed:
-                dismissed += 1
+            # Auto-dismiss compilations — unless user manually un-dismissed
+            user_dismissed = 0
+            if _COMPILATION_PATTERNS.search(title):
+                # Check if user manually overrode dismiss for this release
+                manual_override = conn.execute(
+                    "SELECT 1 FROM user_release_prefs "
+                    "WHERE release_id = ? AND dismissed = 0 AND source = 'manual'",
+                    (release_id,),
+                ).fetchone()
+                if not manual_override:
+                    user_dismissed = 1
+                    dismissed += 1
 
             # title_lower = raw title.lower() (NOT cleaned title)
             title_lower = title.lower()
@@ -261,5 +269,12 @@ def promote_catalog_to_releases(
         "catalog_promotion: artist='%s' promoted=%d merged=%d dismissed=%d",
         artist_name, promoted, merged, dismissed,
     )
+
+    # Refresh canonical_release_id groupings for this artist
+    try:
+        from app.db.rythmx_store import populate_canonical_release_ids
+        populate_canonical_release_ids(artist_id=artist_id)
+    except Exception as exc:
+        logger.warning("catalog_promotion: canonical refresh failed for %s: %s", artist_name, exc)
 
     return {"promoted": promoted, "merged": merged, "dismissed": dismissed}

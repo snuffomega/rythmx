@@ -243,6 +243,7 @@ export interface LibArtist {
   id: string;
   name: string;
   album_count: number;
+  missing_count: number;
   match_confidence: number;
   source_platform: string | null;
   lastfm_tags_json: string | null;
@@ -298,11 +299,31 @@ export interface MissingAlbum {
   track_count?: number;
 }
 
+export interface MissingReleaseGroup {
+  canonical_release_id: string;
+  primary: MissingAlbum & { is_owned?: number };
+  edition_count: number;
+  owned_count: number;
+  editions: (MissingAlbum & { is_owned?: number })[];
+  kind: string;
+}
+
 export interface LibArtistDetail {
   artist: LibArtist;
   albums: LibAlbum[];
   top_tracks: LibTrack[];
   missing_albums?: MissingAlbum[];
+  missing_groups?: MissingReleaseGroup[];
+  dismissed_count?: number;
+}
+
+export interface UserReleasePrefs {
+  release_id: string;
+  dismissed: number;
+  priority: number;
+  notes: string | null;
+  updated_at: string;
+  source: string;
 }
 
 export interface LibAlbumDetail {

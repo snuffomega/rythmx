@@ -32,6 +32,7 @@ import type {
   EnrichmentStopResponse,
   ReleaseDetail,
   ReleaseTrack,
+  UserReleasePrefs,
 } from '../types';
 
 const BASE_URL = '/api/v1';
@@ -386,6 +387,13 @@ export const libraryBrowseApi = {
     }),
   getRelease: (id: string) =>
     request<{ status: string; release: ReleaseDetail; tracks: ReleaseTrack[] }>(`/library/releases/${encodeURIComponent(id)}`),
+  getReleasePrefs: (id: string) =>
+    request<{ status: string; prefs: UserReleasePrefs | null }>(`/library/releases/${encodeURIComponent(id)}/prefs`),
+  updateReleasePrefs: (id: string, data: { dismissed?: boolean; priority?: number; notes?: string }) =>
+    request<{ status: string }>(`/library/releases/${encodeURIComponent(id)}/prefs`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
 };
 
 export const enrichmentApi = {
