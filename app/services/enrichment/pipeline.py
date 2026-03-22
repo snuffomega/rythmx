@@ -160,6 +160,19 @@ def run_auto_pipeline() -> dict:
         except Exception as e:
             logger.warning("run_auto_pipeline: canonical refresh failed: %s", e)
 
+        # ---- Phase 1.8: Artist artwork (Fanart.tv → Deezer fallback) ----
+        if _bool("lib_enrich_art"):
+            art_batch = _int("lib_enrich_art_batch", 100)
+            from app.services.enrichment.art_artist import enrich_artist_art
+            art_result = enrich_artist_art(batch_size=art_batch)
+            result["enrich_art"] = art_result
+            logger.info(
+                "run_auto_pipeline: artist art — enriched=%d failed=%d remaining=%d",
+                art_result.get("enriched", 0),
+                art_result.get("failed", 0),
+                art_result.get("remaining", 0),
+            )
+
         # ---- Phase 2: Last.fm tags (always-on) + bonus Spotify (parallel) ----
         phase2_tasks: dict[str, concurrent.futures.Future] = {}
         with concurrent.futures.ThreadPoolExecutor(

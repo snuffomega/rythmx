@@ -123,7 +123,7 @@ def _search_artist_itunes(name: str) -> str | None:
 # Fanart.tv helpers
 # ---------------------------------------------------------------------------
 
-def _fanart_get_artist(mbid: str) -> str:
+def fanart_get_artist(mbid: str) -> str:
     """
     Fetch artist thumbnail from Fanart.tv using a MusicBrainz ID.
     Returns image URL or "" if not found / not configured.
@@ -186,7 +186,7 @@ def _mb_lookup_mbid(artist_name: str) -> str | None:
 # Deezer helpers
 # ---------------------------------------------------------------------------
 
-def _deezer_get_artist_photo(deezer_id: str) -> str:
+def deezer_get_artist_photo(deezer_id: str) -> str:
     """
     Fetch artist photo URL from Deezer /artist/{id}.
     Returns picture_xl (1000px) or picture_big (500px), or "" if none available.
@@ -283,7 +283,7 @@ def _fetch_and_cache(entity_type: str, name: str, artist: str) -> None:
                         rythmx_store.cache_artist(name, mb_artist_id=mbid)
 
                 if mbid:
-                    url = _fanart_get_artist(mbid)
+                    url = fanart_get_artist(mbid)
 
             # --- Secondary: Deezer artist photo ---
             if not url:
@@ -296,7 +296,7 @@ def _fetch_and_cache(entity_type: str, name: str, artist: str) -> None:
                         rythmx_store.cache_artist(name, deezer_artist_id=deezer_id)
 
                 if deezer_id:
-                    url = _deezer_get_artist_photo(deezer_id)
+                    url = deezer_get_artist_photo(deezer_id)
 
             # --- Last resort: iTunes album art ---
             if not url:
