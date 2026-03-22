@@ -396,6 +396,24 @@ class EnrichmentOrchestrator:
                 logger.info("EnrichmentOrchestrator: stopped after Stage 2")
                 return
 
+            # --- Phase 1.8: Artist artwork (Fanart.tv → Deezer fallback) ---
+            if not self._stop_event.is_set():
+                try:
+                    from app.services.enrichment.art_artist import enrich_artist_art
+                    art_result = enrich_artist_art(
+                        batch_size=batch_size,
+                        stop_event=self._stop_event,
+                        on_progress=self._make_progress_fn("artist_art"),
+                    )
+                    logger.info(
+                        "EnrichmentOrchestrator: artist art — enriched=%d failed=%d remaining=%d",
+                        art_result.get("enriched", 0),
+                        art_result.get("failed", 0),
+                        art_result.get("remaining", 0),
+                    )
+                except Exception as e:
+                    logger.warning("EnrichmentOrchestrator: artist art failed: %s", e)
+
             # --- Stage 3: parallel (independent rich-data workers) ---
             stage3_workers = [
                 (ls.enrich_itunes_rich, batch_size, "itunes_rich"),
