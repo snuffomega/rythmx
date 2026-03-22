@@ -114,6 +114,13 @@ WS_ALLOWED_ORIGINS: list[str] = [
     if o.strip()
 ]
 
+# --- Music directory (optional) ---
+# Absolute path to your music files (same mount Plex reads from).
+# When set, enables local artwork lookup (folder.jpg / cover.png) and
+# future file-aware features (tag enrichment, embedded artwork, codec info).
+# When not set, all features depending on local files are silently skipped.
+MUSIC_DIR = _optional("MUSIC_DIR") or None  # normalize "" → None
+
 # --- Fanart.tv (optional) ---
 # Free API key from https://fanart.tv/get-an-api-key/
 # When set, artist images use real band photos from Fanart.tv.
@@ -229,5 +236,6 @@ def log_config_summary():
     logger.info("  LASTFM_API_KEY: %s", "set" if LASTFM_API_KEY else "NOT SET")
     logger.info("  SPOTIFY_CLIENT_ID: %s", "set" if SPOTIFY_CLIENT_ID else "NOT SET")
     logger.info("  FANART_API_KEY: %s", "set" if FANART_API_KEY else "NOT SET (artist images fall back to iTunes)")
+    logger.info("  MUSIC_DIR: %s", MUSIC_DIR or "NOT SET (file-aware features disabled)")
     logger.info("  SCHEDULER_ENABLED: %s", SCHEDULER_ENABLED)
     logger.info("  CATALOG_PRIMARY: %s", CATALOG_PRIMARY)
