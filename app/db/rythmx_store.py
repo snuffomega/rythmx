@@ -857,24 +857,34 @@ def save_releases_to_cache(artist_name: str, releases: list, artist_lib_id: str 
                 dz_id = r.deezer_album_id or None
                 it_id = r.itunes_album_id or None
                 sp_id = r.spotify_album_id or None
-                kind = (r.kind or "album").strip()
-                rel_id = f"{kind}_{dz_id or it_id or sp_id or ''}".rstrip("_")
-                if rel_id and rel_id != kind:  # skip if no ID available
+                kind_val = (r.kind or "album").strip()
+                # PK = {source}_{album_id} — pick the ID matching the source
+                src = (r.source or "").lower()
+                src_id = {"deezer": dz_id, "itunes": it_id, "spotify": sp_id}.get(src) or dz_id or it_id or sp_id
+                if src_id:
+                    rel_id = f"{src}_{src_id}" if src else f"unknown_{src_id}"
+                    # Per-source kind columns
+                    kind_deezer = kind_val if src == "deezer" else None
+                    kind_itunes = kind_val if src == "itunes" else None
+                    catalog_source = src or "unknown"
                     conn.execute(
-                        """INSERT INTO lib_releases
+                        """INSERT OR IGNORE INTO lib_releases
                            (id, artist_id, artist_name, artist_name_lower, title, title_lower,
-                            release_date, kind, deezer_album_id, itunes_album_id,
-                            spotify_album_id, thumb_url, first_seen_at, last_checked_at)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                           ON CONFLICT(artist_name_lower, title_lower, kind) DO UPDATE SET
-                               deezer_album_id  = COALESCE(excluded.deezer_album_id,  lib_releases.deezer_album_id),
-                               itunes_album_id  = COALESCE(excluded.itunes_album_id,  lib_releases.itunes_album_id),
-                               spotify_album_id = COALESCE(excluded.spotify_album_id, lib_releases.spotify_album_id),
-                               thumb_url        = COALESCE(NULLIF(excluded.thumb_url, ''), lib_releases.thumb_url),
-                               last_checked_at  = CURRENT_TIMESTAMP""",
+                            release_date, kind_deezer, kind_itunes, deezer_album_id,
+                            itunes_album_id, spotify_album_id, thumb_url,
+                            catalog_source, first_seen_at, last_checked_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                                   ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
                         (rel_id, artist_lib_id, artist_name, artist_name.lower(),
-                         r.title, r.title.lower(), r.release_date, kind,
-                         dz_id, it_id, sp_id, r.artwork_url or None),
+                         r.title, r.title.lower(), r.release_date,
+                         kind_deezer, kind_itunes,
+                         dz_id, it_id, sp_id, r.artwork_url or None,
+                         catalog_source),
+                    )
+                    # Update last_checked_at for already-existing rows
+                    conn.execute(
+                        "UPDATE lib_releases SET last_checked_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        (rel_id,),
                     )
 
 
