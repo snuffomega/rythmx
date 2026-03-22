@@ -10,7 +10,7 @@ import { useImage } from '../hooks/useImage';
 import { getImageUrl } from '../utils/imageUrl';
 import { usePlayerStore } from '../stores/usePlayerStore';
 import { ApiErrorBanner } from '../components/common';
-import type { LibArtist, LibAlbum, LibTrack, LibArtistDetail as LibArtistDetailType, LibAlbumDetail as LibAlbumDetailType, LibraryStatus, MissingAlbum, MissingReleaseGroup, ReleaseDetail, ReleaseTrack, UserReleasePrefs } from '../types';
+import type { LibArtist, LibAlbum, LibTrack, LibArtistDetail as LibArtistDetailType, LibAlbumDetail as LibAlbumDetailType, LibraryStatus, MissingAlbum, MissingReleaseGroup, ReleaseDetail, ReleaseTrack, ReleaseSibling, UserReleasePrefs } from '../types';
 
 type Tab = 'artists' | 'albums' | 'tracks';
 type ViewMode = 'grid' | 'list';
@@ -311,7 +311,6 @@ function MissingKindGroup({ group, onDismiss }: { group: KindGroup<MissingAlbum 
 // ---------------------------------------------------------------------------
 
 function MissingGroupCard({ group, onDismiss }: { group: MissingReleaseGroup; onDismiss?: (id: string) => void }) {
-  const [expanded, setExpanded] = useState(false);
   const primary = group.primary;
 
   // Single edition — render as regular MissingAlbumCard
@@ -319,67 +318,36 @@ function MissingGroupCard({ group, onDismiss }: { group: MissingReleaseGroup; on
     return <MissingAlbumCard release={primary} onDismiss={onDismiss} />;
   }
 
-  return (
-    <div className="text-left">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full text-left group rounded-sm p-2 opacity-70 hover:opacity-90 transition-opacity"
-      >
-        <div className="relative aspect-square bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center mb-2 border border-dashed border-[#333]">
-          {primary.thumb_url ? (
-            <img src={primary.thumb_url} alt={primary.album_title}
-                 className="w-full h-full object-cover" loading="lazy" />
-          ) : (
-            <Disc size={32} className="text-text-muted" />
-          )}
-          <span className="absolute top-1 right-1 bg-[#333] text-text-muted text-[9px] font-mono px-1.5 py-0.5 rounded-sm">
-            {group.edition_count} editions
-          </span>
-          {group.owned_count > 0 && (
-            <span className="absolute top-1 left-1 bg-green-500/20 text-green-400 text-[9px] font-mono px-1.5 py-0.5 rounded-sm">
-              {group.owned_count} owned
-            </span>
-          )}
-        </div>
-        <p className="text-text-primary text-sm font-medium truncate">{primary.album_title}</p>
-        {primary.release_date && (
-          <p className="text-text-muted text-xs font-mono">{primary.release_date.slice(0, 4)}</p>
+  // Multi-edition — click-through to primary release detail (no inline accordion)
+  const inner = (
+    <div className="text-left group relative rounded-sm p-2 opacity-70 hover:opacity-90 transition-opacity">
+      <div className="relative aspect-square bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center mb-2 border border-dashed border-[#333]">
+        {primary.thumb_url ? (
+          <img src={primary.thumb_url} alt={primary.album_title}
+               className="w-full h-full object-cover" loading="lazy" />
+        ) : (
+          <Disc size={32} className="text-text-muted" />
         )}
-      </button>
-
-      {expanded && (
-        <div className="ml-3 mt-1 space-y-0.5 border-l border-[#222] pl-3 mb-2">
-          {group.editions.map(e => (
-            <div key={e.id} className={`flex items-center gap-2 py-1 px-1 rounded-sm ${e.is_owned ? 'opacity-100' : 'opacity-60'}`}>
-              {e.id && !e.is_owned ? (
-                <Link to="/library/release/$id" params={{ id: e.id }} className="text-xs text-text-primary truncate flex-1 hover:text-accent transition-colors">
-                  {e.album_title}
-                </Link>
-              ) : (
-                <span className="text-xs text-text-primary truncate flex-1">{e.album_title}</span>
-              )}
-              {e.version_type && e.version_type !== 'original' && (
-                <span className="text-[9px] font-mono text-text-muted flex-shrink-0">{e.version_type}</span>
-              )}
-              {e.is_owned ? (
-                <span className="text-[9px] font-mono text-green-400 flex-shrink-0">owned</span>
-              ) : (
-                onDismiss && e.id && (
-                  <button
-                    onClick={() => onDismiss(e.id!)}
-                    className="text-text-muted hover:text-red-400 transition-colors flex-shrink-0"
-                    aria-label="Dismiss"
-                  >
-                    <X size={10} />
-                  </button>
-                )
-              )}
-            </div>
-          ))}
-        </div>
+        <span className="absolute top-1 right-1 bg-[#333] text-text-muted text-[9px] font-mono px-1.5 py-0.5 rounded-sm">
+          {group.edition_count} editions
+        </span>
+        {group.owned_count > 0 && (
+          <span className="absolute top-1 left-1 bg-green-500/20 text-green-400 text-[9px] font-mono px-1.5 py-0.5 rounded-sm">
+            {group.owned_count} owned
+          </span>
+        )}
+      </div>
+      <p className="text-text-primary text-sm font-medium truncate">{primary.album_title}</p>
+      {primary.release_date && (
+        <p className="text-text-muted text-xs font-mono">{primary.release_date.slice(0, 4)}</p>
       )}
     </div>
   );
+
+  if (primary.id) {
+    return <Link to="/library/release/$id" params={{ id: primary.id }}>{inner}</Link>;
+  }
+  return inner;
 }
 
 // ---------------------------------------------------------------------------
@@ -1026,6 +994,7 @@ interface ReleaseDetailViewProps {
 export function ReleaseDetailView({ releaseId }: ReleaseDetailViewProps) {
   const [release, setRelease] = useState<ReleaseDetail | null>(null);
   const [tracks, setTracks] = useState<ReleaseTrack[]>([]);
+  const [siblings, setSiblings] = useState<ReleaseSibling[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [prefs, setPrefs] = useState<UserReleasePrefs | null>(null);
@@ -1039,6 +1008,7 @@ export function ReleaseDetailView({ releaseId }: ReleaseDetailViewProps) {
       .then(res => {
         setRelease(res.release);
         setTracks(res.tracks || []);
+        setSiblings(res.siblings || []);
       })
       .catch(err => setError(err instanceof Error ? err.message : 'Failed to load release'))
       .finally(() => setLoading(false));
@@ -1111,6 +1081,29 @@ export function ReleaseDetailView({ releaseId }: ReleaseDetailViewProps) {
               <span className="text-[9px] font-mono px-1.5 py-0.5 bg-[#333] text-text-muted rounded-sm">E</span>
             )}
           </div>
+          {/* Edition switcher */}
+          {siblings.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mt-3">
+              <span className="text-[10px] font-mono px-2 py-1 bg-accent/20 text-accent rounded-sm border border-accent/30">
+                {release.version_type || 'original'}
+              </span>
+              {siblings.map(sib => (
+                <Link
+                  key={sib.id}
+                  to="/library/release/$id"
+                  params={{ id: sib.id }}
+                  className={`text-[10px] font-mono px-2 py-1 rounded-sm border transition-colors ${
+                    sib.is_owned
+                      ? 'bg-green-500/10 text-green-400 border-green-500/30 hover:bg-green-500/20'
+                      : 'bg-[#1a1a1a] text-text-muted border-[#333] hover:border-[#555] hover:text-text-secondary'
+                  }`}
+                >
+                  {sib.version_type || 'original'}
+                  {sib.is_owned ? ' ✓' : ''}
+                </Link>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 

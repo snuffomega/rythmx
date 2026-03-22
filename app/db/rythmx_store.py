@@ -177,6 +177,9 @@ def init_db():
 
     logger.info("rythmx.db initialized at %s", config.RYTHMX_DB)
 
+    # After schema is ready, clean up secondary catalog rows if single-catalog mode
+    ensure_single_catalog_cleanup()
+
 
 # --- API Key ---
 
@@ -1129,3 +1132,43 @@ def populate_canonical_release_ids(artist_id: str | None = None) -> int:
 
     logger.info("populate_canonical_release_ids: updated %d rows (artist_id=%s)", updated, artist_id or "all")
     return updated
+
+
+def ensure_single_catalog_cleanup():
+    """One-time cleanup: remove secondary-source rows from lib_releases.
+
+    Reads CATALOG_PRIMARY from config, deletes rows from the other source,
+    and resets derived columns so they are recalculated on the next pipeline run.
+    Idempotent: gated by app_settings flag. Re-runs if CATALOG_PRIMARY changes.
+    """
+    primary = config.CATALOG_PRIMARY
+    secondary = "itunes" if primary == "deezer" else "deezer"
+
+    with _connect() as conn:
+        done = conn.execute(
+            "SELECT value FROM app_settings WHERE key = 'single_catalog_done'"
+        ).fetchone()
+        if done and done[0] == primary:
+            return  # already cleaned for this primary source
+
+        deleted = conn.execute(
+            "DELETE FROM lib_releases WHERE catalog_source = ?",
+            (secondary,),
+        ).rowcount
+
+        # Reset derived columns — forces recalculation by next pipeline run
+        conn.execute(
+            "UPDATE lib_releases SET canonical_release_id = NULL, "
+            "is_owned = 0, owned_checked_at = NULL"
+        )
+
+        conn.execute(
+            "INSERT INTO app_settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            ("single_catalog_done", primary),
+        )
+
+    logger.info(
+        "ensure_single_catalog_cleanup: deleted %d %s rows, primary=%s",
+        deleted, secondary, primary,
+    )

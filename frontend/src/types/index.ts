@@ -347,6 +347,17 @@ export interface ReleaseDetail {
   explicit: number;
   label: string | null;
   genre_itunes: string | null;
+  canonical_release_id: string | null;
+}
+
+export interface ReleaseSibling {
+  id: string;
+  title: string;
+  version_type: string | null;
+  release_date: string | null;
+  thumb_url: string | null;
+  is_owned: number;
+  kind: string;
 }
 
 export interface ReleaseTrack {

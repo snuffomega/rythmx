@@ -275,7 +275,8 @@ def library_release_detail(release_id: str):
                        END
                    ) AS kind,
                    version_type, track_count, thumb_url, catalog_source,
-                   deezer_album_id, itunes_album_id, explicit, label, genre_itunes
+                   deezer_album_id, itunes_album_id, explicit, label, genre_itunes,
+                   canonical_release_id
             FROM lib_releases WHERE id = ?
             """,
             (release_id,),
@@ -285,6 +286,32 @@ def library_release_detail(release_id: str):
 
     release = dict(row)
 
+    # Fetch sibling editions (same canonical group)
+    siblings: list[dict] = []
+    if release.get("canonical_release_id"):
+        with rythmx_store._connect() as conn:
+            sib_rows = conn.execute(
+                """
+                SELECT id, title, version_type, release_date, thumb_url, is_owned,
+                       COALESCE(
+                           kind_deezer, kind_itunes,
+                           CASE
+                               WHEN track_count IS NOT NULL AND track_count <= 3 THEN 'single'
+                               WHEN track_count IS NOT NULL AND track_count <= 6 THEN 'ep'
+                               ELSE 'album'
+                           END
+                       ) AS kind
+                FROM lib_releases
+                WHERE canonical_release_id = ? AND id != ?
+                ORDER BY
+                    is_owned DESC,
+                    CASE version_type WHEN 'original' THEN 0 ELSE 1 END,
+                    release_date ASC
+                """,
+                (release["canonical_release_id"], release_id),
+            ).fetchall()
+            siblings = [dict(s) for s in sib_rows]
+
     # Fetch tracks on demand — prefer iTunes (better data), fallback to Deezer
     tracks: list[dict] = []
     if release.get("itunes_album_id"):
@@ -292,7 +319,7 @@ def library_release_detail(release_id: str):
     if not tracks and release.get("deezer_album_id"):
         tracks = get_album_tracks_deezer(release["deezer_album_id"])
 
-    return {"status": "ok", "release": release, "tracks": tracks}
+    return {"status": "ok", "release": release, "tracks": tracks, "siblings": siblings}
 
 
 # ---------------------------------------------------------------------------

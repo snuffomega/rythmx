@@ -12,6 +12,7 @@ A separate UPDATE touches last_checked_at for re-verified rows.
 import logging
 import re
 
+from app import config
 from app.clients.music_client import norm
 from app.services.enrichment._helpers import detect_version_type
 
@@ -126,6 +127,10 @@ def promote_catalog_to_releases(
         ("deezer", deezer_catalog, _DEEZER_INSERT_SQL),
         ("itunes", itunes_catalog, _ITUNES_INSERT_SQL),
     ):
+        # Only the primary catalog source gets promoted to lib_releases.
+        # The secondary source's IDs are still in lib_artist_catalog for enrichment.
+        if source != config.CATALOG_PRIMARY:
+            continue
         # Deduplicate by album_id — API can return same ID with variant titles
         # (e.g., clean + explicit). Keep first occurrence.
         seen_ids: set[str] = set()

@@ -74,6 +74,15 @@ LOOKBACK_DAYS = int(_optional("LOOKBACK_DAYS", "90"))
 IGNORE_KEYWORDS = _optional("IGNORE_KEYWORDS", "remix,remaster,live,karaoke,instrumental")
 RELEASE_KINDS = _optional("RELEASE_KINDS", "album,single,ep")
 
+# --- Catalog primary source ---
+# Which API catalog populates lib_releases for gap analysis (missing shelf).
+# The OTHER source still has its IDs captured in lib_artist_catalog for enrichment.
+# Valid values: "deezer" (recommended — explicit record_type, 500-item cap) | "itunes"
+CATALOG_PRIMARY = _optional("CATALOG_PRIMARY", "deezer").lower()
+if CATALOG_PRIMARY not in ("deezer", "itunes"):
+    logger.warning("CATALOG_PRIMARY=%s is invalid, falling back to 'deezer'", CATALOG_PRIMARY)
+    CATALOG_PRIMARY = "deezer"
+
 # --- Music catalog API ---
 # auto = Spotify if credentials set, otherwise Deezer, MusicBrainz as fallback
 MUSIC_API_PROVIDER = _optional("MUSIC_API_PROVIDER", "auto")  # auto|deezer|spotify|musicbrainz
@@ -221,3 +230,4 @@ def log_config_summary():
     logger.info("  SPOTIFY_CLIENT_ID: %s", "set" if SPOTIFY_CLIENT_ID else "NOT SET")
     logger.info("  FANART_API_KEY: %s", "set" if FANART_API_KEY else "NOT SET (artist images fall back to iTunes)")
     logger.info("  SCHEDULER_ENABLED: %s", SCHEDULER_ENABLED)
+    logger.info("  CATALOG_PRIMARY: %s", CATALOG_PRIMARY)
