@@ -270,11 +270,4 @@ def promote_catalog_to_releases(
         artist_name, promoted, merged, dismissed,
     )
 
-    # Refresh canonical_release_id groupings for this artist
-    try:
-        from app.db.rythmx_store import populate_canonical_release_ids
-        populate_canonical_release_ids(artist_id=artist_id)
-    except Exception as exc:
-        logger.warning("catalog_promotion: canonical refresh failed for %s: %s", artist_name, exc)
-
     return {"promoted": promoted, "merged": merged, "dismissed": dismissed}

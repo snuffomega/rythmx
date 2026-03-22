@@ -363,6 +363,29 @@ class EnrichmentOrchestrator:
                 except Exception as e:
                     logger.warning("EnrichmentOrchestrator: ownership sync failed: %s", e)
 
+            # --- Post-ownership: recompute normalized titles, missing counts, canonical IDs ---
+            if not self._stop_event.is_set():
+                try:
+                    from app.db.rythmx_store import recompute_normalized_titles
+                    recomputed = recompute_normalized_titles()
+                    logger.info("EnrichmentOrchestrator: normalized_title recomputed for %d rows", recomputed)
+                except Exception as e:
+                    logger.warning("EnrichmentOrchestrator: normalized_title recompute failed: %s", e)
+
+                try:
+                    from app.db.rythmx_store import refresh_missing_counts
+                    refresh_missing_counts()
+                    logger.info("EnrichmentOrchestrator: missing_count refresh complete")
+                except Exception as e:
+                    logger.warning("EnrichmentOrchestrator: missing_count refresh failed: %s", e)
+
+                try:
+                    from app.db.rythmx_store import populate_canonical_release_ids
+                    canonical_updated = populate_canonical_release_ids()
+                    logger.info("EnrichmentOrchestrator: canonical refresh — %d rows", canonical_updated)
+                except Exception as e:
+                    logger.warning("EnrichmentOrchestrator: canonical refresh failed: %s", e)
+
             if self._stop_event.is_set():
                 self._started_at = None
                 try:
