@@ -320,6 +320,86 @@ def get_album_tags(artist_name: str, album_title: str, min_count: int = 5) -> li
     return result
 
 
+def search_artist_candidates_lastfm(name: str, limit: int = 5) -> list[dict]:
+    """
+    Return Last.fm artist search candidates as [{name: str, mbid: str, listeners: int}].
+    The mbid is the persistent ID stored in lib_artists.lastfm_mbid.
+    Used by _validate_artist() in library_service for album-overlap scoring.
+    Returns empty list if LASTFM_API_KEY not set.
+    """
+    data = _get("artist.search", {"artist": name, "limit": limit})
+    if not data:
+        return []
+    matches = data.get("results", {}).get("artistmatches", {}).get("artist", [])
+    if isinstance(matches, dict):
+        matches = [matches]
+    results = []
+    for artist in matches:
+        aname = artist.get("name", "")
+        mbid = artist.get("mbid", "")
+        listeners = int(artist.get("listeners", 0))
+        if aname:
+            results.append({"name": aname, "mbid": mbid, "listeners": listeners})
+    logger.debug("Last.fm artist candidates for '%s': %d", name, len(results))
+    return results
+
+
+def get_artist_top_albums_lastfm(mbid_or_name: str, use_mbid: bool = False) -> list[str]:
+    """
+    Return album title strings from an artist's top albums on Last.fm.
+    When use_mbid=True, queries by mbid for precision; otherwise queries by artist name.
+    Used by _validate_artist() as the API 'catalog' for album-overlap scoring.
+    Returns raw (un-normalized) title strings — caller normalizes.
+    Returns empty list on error or missing API key.
+    """
+    params: dict = {"limit": 50, "autocorrect": 1}
+    if use_mbid:
+        params["mbid"] = mbid_or_name
+    else:
+        params["artist"] = mbid_or_name
+
+    data = _get("artist.getTopAlbums", params)
+    if not data:
+        return []
+
+    albums = data.get("topalbums", {}).get("album", [])
+    if isinstance(albums, dict):
+        albums = [albums]
+    titles = [a.get("name", "") for a in albums if a.get("name")]
+    logger.debug("Last.fm top albums for '%s': %d", mbid_or_name, len(titles))
+    return titles
+
+
+def get_artist_info_lastfm(mbid: str = "", name: str = "") -> dict | None:
+    """
+    Fetch artist.getInfo from Last.fm. Returns {listeners: int, playcount: int} or None.
+    Prefers mbid lookup for precision; falls back to name-based lookup.
+    Returns None if API key not set, API returns no data, or stats are unavailable.
+    Used by enrich_stats_lastfm() (Stage 3 S3-5).
+    """
+    if not mbid and not name:
+        return None
+    params: dict = {"autocorrect": 1}
+    if mbid:
+        params["mbid"] = mbid
+    else:
+        params["artist"] = name
+
+    data = _get("artist.getInfo", params)
+    if not data:
+        return None
+    artist = data.get("artist", {})
+    if not artist:
+        return None
+    stats = artist.get("stats", {})
+    try:
+        listeners = int(stats.get("listeners", 0))
+        playcount = int(stats.get("playcount", 0))
+    except (ValueError, TypeError):
+        return None
+    return {"listeners": listeners, "playcount": playcount}
+
+
 def test_connection() -> dict:
     """
     Verify Last.fm credentials work. Returns {status, username} or {status, error}.

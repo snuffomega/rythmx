@@ -1,9 +1,11 @@
-from flask import Blueprint, jsonify
+from fastapi import APIRouter, Depends
 
-personal_discovery_bp = Blueprint("personal_discovery", __name__)
+from app.dependencies import verify_api_key
+
+router = APIRouter(dependencies=[Depends(verify_api_key)])
 
 
-@personal_discovery_bp.route("/personal-discovery/run", methods=["POST"])
+@router.post("/personal-discovery/run")
 def personal_discovery_run():
     """Stub endpoint — Personal Discovery engine not yet implemented."""
-    return jsonify([])
+    return []

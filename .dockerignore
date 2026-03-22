@@ -1,0 +1,54 @@
+# Version control
+.git
+
+# Secrets — never send to build context
+.env
+
+# Data / databases
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Local reference notes
+local-notes/
+
+# Logs
+logs/
+app/logs/
+*.log
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# Frontend build artifacts (rebuilt in Stage 1)
+frontend/node_modules/
+frontend/dist/
+
+# Test / dev only — not needed in prod image
+tests/
+scripts/
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Dev container (not needed in prod build)
+.devcontainer/
+
+# Claude Code — local config
+.claude/
+CLAUDE.md
+.mcp.json

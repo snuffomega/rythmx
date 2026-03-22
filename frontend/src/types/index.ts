@@ -6,7 +6,7 @@ export type ApiErrorResponse = { status: 'error'; error?: string; message?: stri
 export type Period = '7day' | '1month' | '3month' | '6month' | '12month' | 'overall';
 export type AcquisitionStatus = 'pending' | 'submitted' | 'found' | 'failed' | 'skipped';
 export type ReleaseKind = 'album' | 'ep' | 'single' | 'compilation';
-export type LibraryBackend = 'soulsync' | 'plex' | 'jellyfin' | 'navidrome';
+export type LibraryPlatform = 'plex' | 'jellyfin' | 'navidrome';
 
 export interface Artist {
   name: string;
@@ -168,7 +168,7 @@ export interface StatsSummary {
 }
 
 export interface LibraryStatus {
-  backend: LibraryBackend;
+  platform: LibraryPlatform;
   track_count: number;
   last_synced?: string;
   synced?: boolean;
@@ -216,16 +216,226 @@ export interface ConnectionStatus {
 export interface Settings {
   lastfm_username?: string;
   lastfm_api_key?: string;
+  lastfm_configured?: boolean;
   plex_url?: string;
   plex_token?: string;
+  plex_configured?: boolean;
   soulsync_url?: string;
+  soulsync_db_accessible?: boolean;
   spotify_client_id?: string;
   spotify_client_secret?: string;
-  library_backend: LibraryBackend;
+  spotify_configured?: boolean;
+  fanart_configured?: boolean;
+  library_platform: LibraryPlatform;
 }
 
 export interface Toast {
   id: string;
   type: 'success' | 'error' | 'warning' | 'info';
+  message: string;
+}
+
+// ---------------------------------------------------------------------------
+// Library browse — lib_* table shapes
+// ---------------------------------------------------------------------------
+
+export interface LibArtist {
+  id: string;
+  name: string;
+  album_count: number;
+  match_confidence: number;
+  source_platform: string | null;
+  lastfm_tags_json: string | null;
+  genres_json: string | null;
+  popularity: number | null;
+  listener_count: number | null;
+  global_play_count: number | null;
+}
+
+export interface LibAlbum {
+  id: string;
+  artist_id: string;
+  artist_name: string;
+  title: string;
+  year: number | null;
+  record_type: string | null;
+  match_confidence: number;
+  needs_verification: number;
+  source_platform: string | null;
+  release_date: string | null;
+  genre: string | null;
+  thumb_url: string | null;
+  lastfm_tags_json: string | null;
+}
+
+export interface LibTrack {
+  id: string;
+  album_id: string;
+  artist_id: string;
+  title: string;
+  track_number: number | null;
+  disc_number: number | null;
+  duration: number | null;
+  rating: number;
+  play_count: number;
+  tempo: number | null;
+  album_title?: string;
+  artist_name?: string;
+}
+
+export interface MissingAlbum {
+  id?: string;
+  album_title: string;
+  source: string;
+  record_type?: string | null;
+  album_id?: string;
+  kind?: string;
+  version_type?: string;
+  release_date?: string;
+  deezer_album_id?: string;
+  itunes_album_id?: string;
+  thumb_url?: string;
+  track_count?: number;
+}
+
+export interface LibArtistDetail {
+  artist: LibArtist;
+  albums: LibAlbum[];
+  top_tracks: LibTrack[];
+  missing_albums?: MissingAlbum[];
+}
+
+export interface LibAlbumDetail {
+  album: LibAlbum;
+  tracks: LibTrack[];
+}
+
+export interface ReleaseDetail {
+  id: string;
+  artist_id: string;
+  artist_name: string;
+  title: string;
+  release_date: string | null;
+  kind: string;
+  version_type: string | null;
+  track_count: number | null;
+  thumb_url: string | null;
+  catalog_source: string | null;
+  deezer_album_id: string | null;
+  itunes_album_id: string | null;
+  explicit: number;
+  label: string | null;
+  genre_itunes: string | null;
+}
+
+export interface ReleaseTrack {
+  title: string;
+  track_number: number;
+  disc_number: number;
+  duration_ms: number;
+  preview_url: string;
+}
+
+// ---------------------------------------------------------------------------
+// Library Audit
+// ---------------------------------------------------------------------------
+
+export interface AuditEnrichmentMeta {
+  status: 'found' | 'not_found' | 'error' | 'fallback' | 'pending';
+  confidence: number | null;
+}
+
+export interface AuditItem {
+  artist_id: string;
+  artist_name: string;
+  album_id: string;
+  album_title: string;
+  match_confidence: number | null;
+  needs_verification: boolean;
+  itunes_album_id: string | null;
+  deezer_id: string | null;
+  enrichment: Record<string, AuditEnrichmentMeta>;
+}
+
+export interface AuditResponse {
+  status: 'ok';
+  items: AuditItem[];
+  total: number;
+  page: number;
+}
+
+// ---------------------------------------------------------------------------
+// Enrichment pipeline — REST status shapes
+// ---------------------------------------------------------------------------
+
+export interface EnrichmentWorkerStatus {
+  found: number;
+  not_found: number;
+  errors: number;
+  pending: number;
+}
+
+export interface EnrichmentPipelineStatus {
+  running: boolean;
+  // started_at: ISO 8601 UTC string set when run_full() is called; null when not running.
+  // Used by the frontend to compute accurate elapsed time on mid-run page load.
+  started_at?: string | null;
+  // "library" aggregates all enrich_library sub-sources from enrichment_meta:
+  //   itunes_artist + deezer_artist (artist confidence validation)
+  //   itunes + deezer (album-level ID enrichment)
+  // The counts reflect total artist+album identity work — not just iTunes albums.
+  workers: Partial<Record<
+    'library' | 'itunes_rich' | 'deezer_rich' | 'spotify_id' | 'spotify_genres' |
+    'lastfm_id' | 'lastfm_tags' | 'lastfm_stats',
+    EnrichmentWorkerStatus
+  >>;
+}
+
+export interface EnrichmentStopResponse {
+  status: 'ok' | 'error';
+  message: string;
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket — SHRTA-framed event shapes (Section 6 registry)
+// ---------------------------------------------------------------------------
+
+export interface WsEnvelope<T = unknown> {
+  event: string;
+  payload: T;
+  timestamp: number;
+}
+
+// Enrichment pipeline events (EnrichmentOrchestrator)
+export interface WsEnrichmentProgress {
+  worker: string;
+  found: number;
+  not_found: number;
+  errors: number;
+  pending: number;
+  running: boolean;
+}
+
+export interface WsEnrichmentComplete {
+  workers: Record<string, WsEnrichmentProgress>;
+}
+
+export interface WsEnrichmentStopped {
+  message: string;
+}
+
+// CC pipeline events (scheduler)
+export interface WsPipelineProgress {
+  stage: string;
+  processed: number;
+  total: number;
+  message: string;
+}
+
+// Library sync events
+export interface WsLibrarySyncProgress {
+  artists: number;
+  albums: number;
+  tracks: number;
   message: string;
 }

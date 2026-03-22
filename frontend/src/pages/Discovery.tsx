@@ -1,15 +1,12 @@
 import { useRef, useState, useEffect } from 'react';
 import { Music2, Users, ChevronLeft, ChevronRight, Disc3, Sparkles, Radio } from 'lucide-react';
+import { useNavigate } from '@tanstack/react-router';
 import { useApi } from '../hooks/useApi';
 import { useImage } from '../hooks/useImage';
 import { statsApi, cruiseControlApi, acquisitionApi } from '../services/api';
 import { getImageUrl } from '../utils/imageUrl';
 import { ApiErrorBanner } from '../components/common';
 import type { Artist, Track, QueueItem } from '../types';
-
-interface DiscoveryProps {
-  onNavigate: (page: string) => void;
-}
 
 function placeholderGradient(seed: string) {
   const hues = [200, 160, 220, 180, 30, 270, 340];
@@ -255,7 +252,8 @@ function EmptyShelf({ message }: { message: string }) {
   return <p className="text-[#333] text-sm py-6">{message}</p>;
 }
 
-export function Discovery({ onNavigate }: DiscoveryProps) {
+export function Discovery() {
+  const navigate = useNavigate();
   const topArtists = useApi(() => statsApi.getTopArtists('1month', 12));
   const lovedArtists = useApi(() => statsApi.getLovedArtists());
   const topTracks = useApi(() => statsApi.getTopTracks('7day', 20));
@@ -278,7 +276,7 @@ export function Discovery({ onNavigate }: DiscoveryProps) {
           title="New Releases"
           sub="From your last Cruise Control run"
           cta="View all"
-          onCta={() => onNavigate('cruise-control')}
+          onCta={() => navigate({ to: '/cruise-control' })}
         />
         {history.error ? (
           <ApiErrorBanner error={history.error} onRetry={history.refetch} />
@@ -301,7 +299,7 @@ export function Discovery({ onNavigate }: DiscoveryProps) {
           title="Trending for You"
           sub="Your most-played tracks this week"
           cta="See stats"
-          onCta={() => onNavigate('stats')}
+          onCta={() => navigate({ to: '/stats' })}
         />
         {topTracks.error ? (
           <ApiErrorBanner error={topTracks.error} onRetry={topTracks.refetch} />
@@ -324,7 +322,7 @@ export function Discovery({ onNavigate }: DiscoveryProps) {
           title="Discover"
           sub="Artists similar to your taste you haven't heard much"
           cta="Run discovery"
-          onCta={() => onNavigate('cruise-control')}
+          onCta={() => navigate({ to: '/cruise-control' })}
         />
         {lovedArtists.error ? (
           <ApiErrorBanner error={lovedArtists.error} onRetry={lovedArtists.refetch} />
@@ -347,7 +345,7 @@ export function Discovery({ onNavigate }: DiscoveryProps) {
           title="From Your Library"
           sub="Artists you've been spinning lately"
           cta="View all"
-          onCta={() => onNavigate('stats')}
+          onCta={() => navigate({ to: '/stats' })}
         />
         {topArtists.error ? (
           <ApiErrorBanner error={topArtists.error} onRetry={topArtists.refetch} />
@@ -371,7 +369,7 @@ export function Discovery({ onNavigate }: DiscoveryProps) {
             title="Queued for Acquisition"
             sub="Albums being tracked"
             cta="View activity"
-            onCta={() => onNavigate('activity')}
+            onCta={() => navigate({ to: '/activity' })}
           />
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
             {recentQueue.data.slice(0, 8).map((item: QueueItem, i) => (

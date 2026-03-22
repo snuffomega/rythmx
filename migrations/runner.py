@@ -46,8 +46,16 @@ def run_pending_migrations(db_path: str) -> None:
             with open(filepath, "r") as fh:
                 raw = fh.read()
 
-            # Strip comment-only lines, split on semicolons
-            lines = [ln for ln in raw.splitlines() if not ln.strip().startswith("--")]
+            # Strip comment-only lines and inline comments, then split on semicolons
+            lines = []
+            for ln in raw.splitlines():
+                if ln.strip().startswith("--"):
+                    continue
+                # Remove inline comments (-- ...) to avoid splitting on embedded semicolons
+                comment_idx = ln.find("--")
+                if comment_idx >= 0:
+                    ln = ln[:comment_idx]
+                lines.append(ln)
             statements = [s.strip() for s in "\n".join(lines).split(";") if s.strip()]
 
             logger.info("Applying migration: %s (%d statements)", filename, len(statements))

@@ -1,16 +1,22 @@
 import logging
-from flask import Blueprint, jsonify, request
+from typing import Any, Optional
+
+from fastapi import APIRouter, Body, Depends, Query
+from fastapi.responses import JSONResponse
+
 from app.db import rythmx_store
+from app.dependencies import verify_api_key
 
 logger = logging.getLogger(__name__)
 
-acquisition_bp = Blueprint("acquisition", __name__)
+router = APIRouter(dependencies=[Depends(verify_api_key)])
 
 
-@acquisition_bp.route("/acquisition/queue", methods=["GET"])
-def acquisition_queue_get():
-    status = request.args.get("status")
-    playlist = request.args.get("playlist")
+@router.get("/acquisition/queue")
+def acquisition_queue_get(
+    status: Optional[str] = None,
+    playlist: Optional[str] = None,
+):
     rows = rythmx_store.get_queue(status=status, playlist_name=playlist)
     items = [
         {
@@ -25,40 +31,46 @@ def acquisition_queue_get():
         }
         for r in rows
     ]
-    return jsonify({"status": "ok", "items": items})
+    return {"status": "ok", "items": items}
 
 
-@acquisition_bp.route("/acquisition/queue", methods=["POST"])
-def acquisition_queue_add():
-    data = request.get_json() or {}
+@router.post("/acquisition/queue")
+def acquisition_queue_add(data: Optional[dict[str, Any]] = Body(default=None)):
+    data = data or {}
     artist = data.get("artist_name", "").strip()
     album = data.get("album_title", "").strip()
     if not artist or not album:
-        return jsonify({"status": "error", "message": "artist_name and album_title required"}), 400
+        return JSONResponse(
+            {"status": "error", "message": "artist_name and album_title required"},
+            status_code=400,
+        )
     queue_id = rythmx_store.add_to_queue(
-        artist_name=artist, album_title=album,
+        artist_name=artist,
+        album_title=album,
         release_date=data.get("release_date"),
         kind=data.get("kind"),
         source=data.get("source"),
         requested_by="manual",
     )
-    return jsonify({"status": "ok", "queue_id": queue_id})
+    return {"status": "ok", "queue_id": queue_id}
 
 
-@acquisition_bp.route("/acquisition/stats", methods=["GET"])
+@router.get("/acquisition/stats")
 def acquisition_stats():
     stats = rythmx_store.get_queue_stats()
-    return jsonify({"status": "ok", **stats})
+    return {"status": "ok", **stats}
 
 
-@acquisition_bp.route("/acquisition/check-now", methods=["POST"])
+@router.post("/acquisition/check-now")
 def acquisition_check_now():
     """Trigger the acquisition worker immediately (re-check submitted items)."""
     try:
         from app.services import acquisition
         acquisition.check_queue()
         stats = rythmx_store.get_queue_stats()
-        return jsonify({"status": "ok", "message": "Acquisition worker run complete", **stats})
+        return {"status": "ok", "message": "Acquisition worker run complete", **stats}
     except Exception as e:
         logger.warning("acquisition check-now failed: %s", e)
-        return jsonify({"status": "error", "message": "Acquisition check failed"}), 500
+        return JSONResponse(
+            {"status": "error", "message": "Acquisition check failed"}, status_code=500
+        )

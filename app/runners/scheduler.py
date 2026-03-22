@@ -8,7 +8,7 @@ Cruise Control pipeline (7 stages):
   1. Poll Last.fm — top artists filtered by min-listens threshold
   2. Resolve artist identities — Last.fm name → Deezer/Spotify/MB IDs (cached)
   3. Find new releases — within lookback_days, via music_client provider chain
-  4. Owned-check — library backend (Plex/SoulSync), case-insensitive artist + album name
+  4. Owned-check — library platform (Plex/Navidrome/Jellyfin), case-insensitive artist + album name
   5. Build download queue — unowned releases, capped at max_per_cycle
   6. Queue downloads — acquisition worker (stub)
   7. Save history — rythmx.db; playlist from owned candidates
@@ -638,8 +638,8 @@ def _should_library_sync(settings: dict) -> bool:
     Return True if it's time to run the library auto-pipeline.
     Checks: lib_auto_sync enabled, interval elapsed, not already running.
     """
-    from app.services.library_service import _pipeline_running
-    if _pipeline_running:
+    from app.services.enrichment.pipeline import is_pipeline_running
+    if is_pipeline_running():
         return False
     auto_sync = settings.get("lib_auto_sync")
     if auto_sync is not None and str(auto_sync).lower() in ("false", "0", "no"):

@@ -1,13 +1,13 @@
 import { useState, useEffect } from 'react';
-import { CheckCircle, XCircle, Loader2, RefreshCw, Database, Radio, ChevronDown, ChevronUp, Key, Eye, EyeOff, Copy } from 'lucide-react';
+import { CheckCircle, XCircle, Loader2, RefreshCw, Database, Radio, ChevronDown, ChevronUp, Key, Eye, EyeOff, Copy, Play, Square, Clock, Zap } from 'lucide-react';
 import { useApi } from '../hooks/useApi';
-import { settingsApi, libraryApi, imageServiceApi, setApiKey } from '../services/api';
+import { settingsApi, libraryApi, libraryBrowseApi, imageServiceApi, setApiKey, enrichmentApi } from '../services/api';
 import { ConfirmDialog } from '../components/ConfirmDialog';
-import type { LibraryBackend, LibraryEnrichStatus, SpotifyEnrichStatus, LastfmTagsStatus, DeezerBpmStatus } from '../types';
+import { useEnrichmentStore } from '../stores/useEnrichmentStore';
+import type { LibraryPlatform, EnrichmentWorkerStatus, Settings } from '../types';
 
-const BACKEND_LABELS: Record<string, string> = {
-  soulsync: 'SoulSync',
-  plex: 'Plex Library',
+const PLATFORM_LABELS: Record<string, string> = {
+  plex: 'Plex',
   jellyfin: 'Jellyfin',
   navidrome: 'Navidrome',
 };
@@ -16,10 +16,11 @@ interface ServiceRowProps {
   name: string;
   subtitle?: string;
   icon: React.ReactNode;
+  configured?: boolean;
   onTest: () => Promise<{ connected: boolean; message?: string }>;
 }
 
-function ServiceCard({ name, subtitle, icon, onTest }: ServiceRowProps) {
+function ServiceCard({ name, subtitle, icon, configured, onTest }: ServiceRowProps) {
   const [status, setStatus] = useState<'idle' | 'testing' | 'connected' | 'error'>('idle');
   const [message, setMessage] = useState<string | null>(null);
 
@@ -37,7 +38,10 @@ function ServiceCard({ name, subtitle, icon, onTest }: ServiceRowProps) {
   };
 
   return (
-    <div className="bg-[#0e0e0e] border border-[#1a1a1a] p-4 flex flex-col gap-3">
+    <div className="relative bg-[#0e0e0e] border border-[#1a1a1a] p-4 flex flex-col gap-3">
+      {configured && (
+        <span className="absolute top-2.5 right-2.5 w-2 h-2 rounded-full bg-accent" title="Configured" />
+      )}
       <div className="flex items-center gap-2.5">
         <div className="w-7 h-7 bg-[#181818] flex items-center justify-center flex-shrink-0">
           {icon}
@@ -91,30 +95,205 @@ function ServiceCard({ name, subtitle, icon, onTest }: ServiceRowProps) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// PipelineOrchestrator — 4-stage pipeline view
+// ---------------------------------------------------------------------------
+
+// Flat list of enrichment sources — one row per source in the UI.
+// "library" aggregates enrich_library sub-sources (itunes_artist, deezer_artist, itunes, deezer).
+const ENRICHMENT_SOURCES = [
+  { key: 'library',        label: 'Identity Matching',  description: 'iTunes + Deezer artist & album IDs' },
+  { key: 'spotify_id',     label: 'Spotify ID',         description: 'Artist ID from Spotify' },
+  { key: 'lastfm_id',      label: 'Last.fm ID',         description: 'Artist ID from Last.fm' },
+  { key: 'itunes_rich',    label: 'iTunes Metadata',    description: 'Release date, genre, label' },
+  { key: 'deezer_rich',    label: 'Deezer Metadata',    description: 'Release date, explicit flag' },
+  { key: 'spotify_genres', label: 'Spotify Genres',     description: 'Artist genre tags' },
+  { key: 'lastfm_tags',    label: 'Last.fm Tags',       description: 'Community tags' },
+  { key: 'lastfm_stats',   label: 'Last.fm Stats',      description: 'Playcount, listeners' },
+] as const;
+
+function formatElapsed(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  return `${m.toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`;
+}
+
+interface PipelineOrchestratorProps {
+  running: boolean;
+  workers: Record<string, EnrichmentWorkerStatus>;
+  activeWorkers: Set<string>;
+  elapsedMs: number;
+  onRunFull: () => void;
+  onStop: () => void;
+}
+
+function PipelineOrchestrator({ running, workers, activeWorkers, elapsedMs, onRunFull, onStop }: PipelineOrchestratorProps) {
+  const [showSources, setShowSources] = useState(false);
+
+  // Per-source data
+  const sourceData = ENRICHMENT_SOURCES.map(src => {
+    const w = workers[src.key];
+    const found = w?.found ?? 0;
+    const notFound = w?.not_found ?? 0;
+    const errors = w?.errors ?? 0;
+    const pending = w?.pending ?? 0;
+    const total = found + notFound + errors + pending;
+    const isActive = running && activeWorkers.has(src.key);
+    const hasData = total > 0;
+
+    const foundPct = total > 0 ? (found / total) * 100 : 0;
+    const notFoundPct = total > 0 ? (notFound / total) * 100 : 0;
+    const errorPct = total > 0 ? (errors / total) * 100 : 0;
+    const processedPct = foundPct + notFoundPct + errorPct;
+
+    return { ...src, found, notFound, errors, pending, total, isActive, hasData, foundPct, notFoundPct, errorPct, processedPct };
+  });
+
+  // Overall totals cascaded from all sources
+  const totalFound = sourceData.reduce((s, d) => s + d.found, 0);
+  const totalNotFound = sourceData.reduce((s, d) => s + d.notFound, 0);
+  const totalErrors = sourceData.reduce((s, d) => s + d.errors, 0);
+  const totalItems = sourceData.reduce((s, d) => s + d.total, 0);
+  const totalProcessed = totalFound + totalNotFound + totalErrors;
+  const overallPct = totalItems > 0 ? (totalProcessed / totalItems) * 100 : 0;
+  const enrichedPct = totalItems > 0 ? (totalFound / totalItems) * 100 : 0;
+
+  const overallFoundPct = totalItems > 0 ? (totalFound / totalItems) * 100 : 0;
+  const overallNotFoundPct = totalItems > 0 ? (totalNotFound / totalItems) * 100 : 0;
+  const overallErrorPct = totalItems > 0 ? (totalErrors / totalItems) * 100 : 0;
+
+  return (
+    <div data-testid="pipeline-orchestrator" className="max-w-3xl">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h2 className="text-lg font-semibold tracking-tight text-text-primary">Metadata Enrichment Pipeline</h2>
+          <p className="text-xs font-mono text-text-muted mt-1">Enrich your library with metadata from multiple sources</p>
+        </div>
+        {(running || elapsedMs > 0) && (
+          <div className="flex items-center gap-2 text-sm font-mono text-text-muted">
+            <Clock size={14} />
+            <span>{formatElapsed(elapsedMs)}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Overall progress — always visible */}
+      <div className="mb-6 p-4 bg-surface rounded-sm border border-[#1a1a1a]">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-xs font-mono text-text-muted uppercase tracking-wider">Overall Progress</span>
+          <span className="text-xs font-mono text-text-secondary">{overallPct.toFixed(1)}%</span>
+        </div>
+        <div className="relative h-1.5 bg-surface-highlight rounded-full overflow-hidden">
+          <div className="absolute top-0 left-0 h-full bg-accent transition-all duration-500 ease-out" style={{ width: `${overallFoundPct}%` }} />
+          <div className="absolute top-0 h-full bg-red-500/50 transition-all duration-500 ease-out" style={{ left: `${overallFoundPct}%`, width: `${overallNotFoundPct}%` }} />
+          <div className="absolute top-0 h-full bg-red-500/70 transition-all duration-500 ease-out" style={{ left: `${overallFoundPct + overallNotFoundPct}%`, width: `${overallErrorPct}%` }} />
+        </div>
+        <div className="flex items-center gap-4 mt-2 text-[10px] font-mono text-text-muted">
+          <span>{totalProcessed.toLocaleString()} / {totalItems.toLocaleString()} items</span>
+          <span className="text-accent">{totalFound.toLocaleString()} enriched</span>
+          {totalNotFound > 0 && <span className="text-red-400/70">{totalNotFound.toLocaleString()} not found</span>}
+          {totalErrors > 0 && <span className="text-red-400">{totalErrors} errors</span>}
+        </div>
+      </div>
+
+      {/* Controls */}
+      <div className="flex items-center gap-3 mb-6">
+        {!running ? (
+          <button onClick={onRunFull} className="btn-primary flex items-center gap-2 text-sm">
+            <Play size={14} />
+            Start Enrichment
+          </button>
+        ) : (
+          <button onClick={onStop} className="btn-danger flex items-center gap-2 text-sm">
+            <Square size={14} />
+            Stop
+          </button>
+        )}
+        {totalItems > 0 && (
+          <span className="text-xs font-mono text-accent font-medium">
+            {enrichedPct.toFixed(0)}% enriched
+          </span>
+        )}
+      </div>
+
+      {/* Source detail toggle */}
+      <button
+        onClick={() => setShowSources(v => !v)}
+        className="flex items-center gap-1.5 text-xs font-mono text-text-muted hover:text-text-secondary transition-colors mb-3"
+      >
+        {showSources ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+        {showSources ? 'Hide source details' : 'Show source details'}
+      </button>
+
+      {/* Per-source rows */}
+      {showSources && (
+        <div className="space-y-2">
+          {sourceData.map(src => (
+            <div
+              key={src.key}
+              className={`p-3 rounded-sm border transition-all duration-300 ${
+                src.isActive
+                  ? 'bg-surface border-accent/20'
+                  : src.hasData
+                    ? 'bg-surface/50 border-[#1a1a1a]'
+                    : 'bg-surface/30 border-[#141414]'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  {src.isActive && <Zap size={10} className="text-accent animate-pulse flex-shrink-0" />}
+                  <span className={`text-xs font-medium truncate ${
+                    src.isActive ? 'text-text-primary' : src.hasData ? 'text-text-secondary' : 'text-text-muted'
+                  }`}>{src.label}</span>
+                  <span className="text-[10px] font-mono text-text-muted/50 hidden sm:inline">{src.description}</span>
+                </div>
+                <span className="text-[10px] font-mono text-text-muted/60 flex-shrink-0 ml-2">
+                  {src.hasData ? `${(src.found + src.notFound + src.errors).toLocaleString()} / ${src.total.toLocaleString()}` : '—'}
+                </span>
+              </div>
+
+              <div className="relative h-1.5 bg-surface-highlight rounded-full overflow-hidden">
+                <div className="absolute top-0 left-0 h-full bg-accent transition-all duration-500 ease-out" style={{ width: `${src.foundPct}%` }} />
+                <div className="absolute top-0 h-full bg-red-500/50 transition-all duration-500 ease-out" style={{ left: `${src.foundPct}%`, width: `${src.notFoundPct}%` }} />
+                <div className="absolute top-0 h-full bg-red-500/70 transition-all duration-500 ease-out" style={{ left: `${src.foundPct + src.notFoundPct}%`, width: `${src.errorPct}%` }} />
+                {src.isActive && src.processedPct < 100 && (
+                  <div className="absolute top-0 h-full overflow-hidden" style={{ left: `${src.processedPct}%`, width: `${100 - src.processedPct}%` }}>
+                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent animate-shimmer" />
+                  </div>
+                )}
+              </div>
+
+              {src.hasData && (
+                <div className="flex items-center gap-3 mt-1.5 text-[10px] font-mono">
+                  <span className="text-accent">{src.found.toLocaleString()} found</span>
+                  {src.notFound > 0 && <span className="text-red-400/70">{src.notFound.toLocaleString()} not found</span>}
+                  {src.errors > 0 && <span className="text-red-400">{src.errors.toLocaleString()} errors</span>}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface SettingsPageProps {
   toast: { success: (m: string) => void; error: (m: string) => void };
 }
 
 export function SettingsPage({ toast }: SettingsPageProps) {
-  const { data: libraryStatus, loading: libraryLoading, refetch: refetchLibrary } = useApi(() => libraryApi.getStatus());
-  const { data: spotifyStatusData, refetch: refetchSpotifyStatus } = useApi(() => libraryApi.spotifyStatus());
-  const { data: lastfmTagsData, refetch: refetchLastfmTags } = useApi(() => libraryApi.lastfmTagsStatus());
-  const { data: deezerBpmData, refetch: refetchDeezerBpm } = useApi(() => libraryApi.deezerBpmStatus());
-  const [backend, setBackend] = useState<LibraryBackend>('soulsync');
+  const { data: libraryStatus, refetch: refetchLibrary } = useApi(() => libraryApi.getStatus());
+  const [platform, setPlatform] = useState<LibraryPlatform>('plex');
 
   useEffect(() => {
-    if (libraryStatus?.backend) setBackend(libraryStatus.backend as LibraryBackend);
-  }, [libraryStatus?.backend]);
+    if (libraryStatus?.platform) setPlatform(libraryStatus.platform as LibraryPlatform);
+  }, [libraryStatus?.platform]);
+
   const [syncing, setSyncing] = useState(false);
-  const [enriching, setEnriching] = useState(false);
-  const [liveEnrichStatus, setLiveEnrichStatus] = useState<LibraryEnrichStatus | null>(null);
-  const [enrichingSpotify, setEnrichingSpotify] = useState(false);
-  const [liveSpotifyStatus, setLiveSpotifyStatus] = useState<SpotifyEnrichStatus | null>(null);
-  const [enrichingLastfmTags, setEnrichingLastfmTags] = useState(false);
-  const [liveLastfmTagsStatus, setLiveLastfmTagsStatus] = useState<LastfmTagsStatus | null>(null);
-  const [enrichingDeezerBpm, setEnrichingDeezerBpm] = useState(false);
-  const [liveDeezerBpmStatus, setLiveDeezerBpmStatus] = useState<DeezerBpmStatus | null>(null);
   const [switchingBackend, setSwitchingBackend] = useState(false);
+  const [auditTotal, setAuditTotal] = useState(0);
   const [warmingCache, setWarmingCache] = useState(false);
   const [confirmClearHistory, setConfirmClearHistory] = useState(false);
   const [confirmClearImageCache, setConfirmClearImageCache] = useState(false);
@@ -124,20 +303,39 @@ export function SettingsPage({ toast }: SettingsPageProps) {
   const [apiKeyVisible, setApiKeyVisible] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [settingsStatus, setSettingsStatus] = useState<Settings | null>(null);
+
+  // Enrichment state from global store — kept live by wsService
+  const { running, workers, activeWorkers, startedAt, reset } = useEnrichmentStore();
+
+  // Elapsed timer — display concern only; driven by startedAt from store
+  const [elapsedMs, setElapsedMs] = useState(0);
+  useEffect(() => {
+    if (!running || startedAt === null) { setElapsedMs(0); return; }
+    const id = setInterval(() => setElapsedMs(Date.now() - startedAt), 1000);
+    return () => clearInterval(id);
+  }, [running, startedAt]);
 
   useEffect(() => {
     settingsApi.getApiKey().then(setApiKeyState).catch(() => {});
+    settingsApi.get().then(setSettingsStatus).catch(() => {});
   }, []);
 
-  const handleBackendChange = async (b: LibraryBackend) => {
-    setBackend(b);
+  useEffect(() => {
+    libraryBrowseApi.getAudit({ per_page: 1 })
+      .then(r => setAuditTotal(r.total))
+      .catch(() => {});
+  }, []);
+
+  const handlePlatformChange = async (p: LibraryPlatform) => {
+    setPlatform(p);
     setSwitchingBackend(true);
     try {
-      await settingsApi.setLibraryBackend(b);
-      toast.success(`Switched to ${BACKEND_LABELS[b] ?? b}`);
+      await settingsApi.setLibraryPlatform(p);
+      toast.success(`Switched to ${PLATFORM_LABELS[p] ?? p}`);
       refetchLibrary();
     } catch {
-      toast.error('Failed to switch backend');
+      toast.error('Failed to switch platform');
     } finally {
       setSwitchingBackend(false);
     }
@@ -155,122 +353,6 @@ export function SettingsPage({ toast }: SettingsPageProps) {
       setSyncing(false);
     }
   };
-
-  const handleEnrich = async () => {
-    setEnriching(true);
-    try {
-      await libraryApi.enrich();
-    } catch {
-      toast.error('Failed to start enrich');
-      setEnriching(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!enriching) return;
-    const id = setInterval(async () => {
-      try {
-        const s = await libraryApi.enrichStatus();
-        setLiveEnrichStatus(s);
-        if (!s.enrich_running) {
-          setEnriching(false);
-          refetchLibrary();
-          clearInterval(id);
-        }
-      } catch {
-        setEnriching(false);
-        clearInterval(id);
-      }
-    }, 3000);
-    return () => clearInterval(id);
-  }, [enriching]);
-
-  const handleEnrichSpotify = async () => {
-    setEnrichingSpotify(true);
-    try {
-      await libraryApi.enrichSpotify();
-    } catch {
-      toast.error('Failed to start Spotify enrich');
-      setEnrichingSpotify(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!enrichingSpotify) return;
-    const id = setInterval(async () => {
-      try {
-        const s = await libraryApi.spotifyStatus();
-        setLiveSpotifyStatus(s);
-        if (!s.enrich_running) {
-          setEnrichingSpotify(false);
-          refetchSpotifyStatus();
-          clearInterval(id);
-        }
-      } catch {
-        setEnrichingSpotify(false);
-        clearInterval(id);
-      }
-    }, 3000);
-    return () => clearInterval(id);
-  }, [enrichingSpotify]);
-
-  const handleEnrichLastfmTags = async () => {
-    setEnrichingLastfmTags(true);
-    try {
-      await libraryApi.enrichLastfmTags();
-    } catch {
-      toast.error('Failed to start genre enrich');
-      setEnrichingLastfmTags(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!enrichingLastfmTags) return;
-    const id = setInterval(async () => {
-      try {
-        const s = await libraryApi.lastfmTagsStatus();
-        setLiveLastfmTagsStatus(s);
-        if (!s.enrich_running) {
-          setEnrichingLastfmTags(false);
-          refetchLastfmTags();
-          clearInterval(id);
-        }
-      } catch {
-        setEnrichingLastfmTags(false);
-        clearInterval(id);
-      }
-    }, 3000);
-    return () => clearInterval(id);
-  }, [enrichingLastfmTags]);
-
-  const handleEnrichDeezerBpm = async () => {
-    setEnrichingDeezerBpm(true);
-    try {
-      await libraryApi.enrichDeezerBpm();
-    } catch {
-      toast.error('Failed to start BPM enrich');
-      setEnrichingDeezerBpm(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!enrichingDeezerBpm) return;
-    const id = setInterval(async () => {
-      try {
-        const s = await libraryApi.deezerBpmStatus();
-        setLiveDeezerBpmStatus(s);
-        if (!s.enrich_running) {
-          setEnrichingDeezerBpm(false);
-          refetchDeezerBpm();
-          clearInterval(id);
-        }
-      } catch {
-        setEnrichingDeezerBpm(false);
-        clearInterval(id);
-      }
-    }, 3000);
-    return () => clearInterval(id);
-  }, [enrichingDeezerBpm]);
 
   const handleClearHistory = async () => {
     try {
@@ -331,7 +413,7 @@ export function SettingsPage({ toast }: SettingsPageProps) {
     try {
       const newKey = await settingsApi.regenerateApiKey();
       setApiKeyState(newKey);
-      setApiKey(newKey); // update the in-memory + localStorage key for subsequent requests
+      setApiKey(newKey);
       toast.success('API key regenerated');
     } catch {
       toast.error('Failed to regenerate API key');
@@ -346,51 +428,61 @@ export function SettingsPage({ toast }: SettingsPageProps) {
 
       <section>
         <h2 className="text-text-muted text-xs font-semibold uppercase tracking-widest mb-3">Connections</h2>
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-3 gap-2">
           <ServiceCard
             name="Last.fm"
             icon={<Radio size={16} className="text-danger" />}
+            configured={settingsStatus?.lastfm_configured}
             onTest={settingsApi.testLastfm}
           />
           <ServiceCard
             name="Plex"
             icon={<span className="text-accent font-bold text-sm">P</span>}
+            configured={settingsStatus?.plex_configured}
             onTest={settingsApi.testPlex}
           />
           <ServiceCard
-            key={`library-${backend}`}
-            name={BACKEND_LABELS[backend] ?? 'Library DB'}
+            key={`library-${platform}`}
+            name="SoulSync"
             icon={<Database size={16} className="text-accent" />}
+            configured={settingsStatus?.soulsync_db_accessible}
             onTest={settingsApi.testSoulsync}
           />
           <ServiceCard
             name="Spotify"
             icon={<span className="text-success font-bold text-sm">S</span>}
+            configured={settingsStatus?.spotify_configured}
             onTest={settingsApi.testSpotify}
           />
           <ServiceCard
             name="Fanart.tv"
-            subtitle="optional — artist photos"
+            subtitle="optional"
             icon={<span className="text-[#e88c2a] font-bold text-sm">F</span>}
+            configured={settingsStatus?.fanart_configured}
             onTest={settingsApi.testFanart}
           />
         </div>
       </section>
 
       <section className="border-t border-[#1a1a1a] pt-8">
-        <h2 className="text-text-muted text-xs font-semibold uppercase tracking-widest mb-4">Library</h2>
+        <h2 className="text-text-muted text-xs font-semibold uppercase tracking-widest mb-6">Library & Enrichment</h2>
 
-        <div className="space-y-5">
-          <div>
-            <label className="label">Library Backend</label>
+        {/* Step 1 — Sync */}
+        <div className="mb-6 p-4 bg-[#0e0e0e] border border-[#1a1a1a]">
+          <div className="mb-3">
+            <p className="text-xs font-mono text-text-muted uppercase tracking-wider mb-0.5">Step 1 — Sync from Plex</p>
+            <p className="text-[11px] text-[#444]">Reads your Plex library into the local database</p>
+          </div>
+
+          <div className="mb-4">
+            <label className="label">Library Platform</label>
             <div className="relative mt-1">
               <select
                 className="select w-full"
-                value={libraryStatus?.backend ?? backend}
-                onChange={e => handleBackendChange(e.target.value as LibraryBackend)}
+                value={libraryStatus?.platform ?? platform}
+                onChange={e => handlePlatformChange(e.target.value as LibraryPlatform)}
                 disabled={switchingBackend}
               >
-                <option value="soulsync">SoulSync</option>
                 <option value="plex">Plex</option>
                 <option value="jellyfin">Jellyfin</option>
                 <option value="navidrome">Navidrome</option>
@@ -403,172 +495,79 @@ export function SettingsPage({ toast }: SettingsPageProps) {
             </div>
           </div>
 
-          {libraryStatus?.track_count !== undefined && (
-            <p className="text-[#444] text-xs mt-1">{libraryStatus.track_count.toLocaleString()} tracks indexed</p>
-          )}
-
-          {libraryStatus?.last_synced && (
-            <p className="text-[#444] text-xs">Last synced: {libraryStatus.last_synced}</p>
-          )}
-
-          <button
-            onClick={handleSync}
-            disabled={syncing}
-            className="btn-secondary flex items-center gap-2 text-sm"
-          >
-            {syncing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-            Sync Library Now
-          </button>
-
-          {backend === 'plex' && (
-            <div className="space-y-2 pt-1">
-              {(() => {
-                const status = liveEnrichStatus ?? libraryStatus;
-                const total = status?.total_albums ?? 0;
-                const enriched = status?.enriched_albums ?? 0;
-                const pct = status?.enrich_pct ?? 0;
-                return total > 0 ? (
-                  <div className="space-y-1">
-                    <p className="text-[#444] text-xs">
-                      {enriched.toLocaleString()} / {total.toLocaleString()} albums enriched ({pct}%)
-                    </p>
-                    <div className="h-0.5 bg-[#1a1a1a] w-full">
-                      <div
-                        className="h-0.5 bg-accent transition-all duration-500"
-                        style={{ width: `${pct}%` }}
-                      />
-                    </div>
-                  </div>
-                ) : null;
-              })()}
-              <button
-                onClick={handleEnrich}
-                disabled={enriching}
-                className="btn-secondary flex items-center gap-2 text-sm"
-              >
-                {enriching ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-                Enrich Library
-              </button>
+          <div className="flex items-center justify-between">
+            <div className="text-[11px] text-[#444] space-y-0.5">
+              {libraryStatus?.track_count !== undefined && (
+                <p>{libraryStatus.track_count.toLocaleString()} tracks indexed</p>
+              )}
+              {libraryStatus?.last_synced && (
+                <p>Last synced: {libraryStatus.last_synced}</p>
+              )}
             </div>
-          )}
-
-          {spotifyStatusData?.spotify_available && (
-            <div className="space-y-2 pt-1">
-              {(() => {
-                const s = liveSpotifyStatus ?? spotifyStatusData;
-                const enriched = s?.enriched_artists ?? 0;
-                const total = s?.total_artists ?? 0;
-                const pct = total > 0 ? Math.round((enriched / total) * 100) : 0;
-                const lastRun = s?.last_run;
-                return (
-                  <div className="space-y-1">
-                    {total > 0 && (
-                      <>
-                        <p className="text-[#444] text-xs">
-                          {enriched.toLocaleString()} / {total.toLocaleString()} artists Spotify-enriched ({pct}%)
-                          {lastRun && <span className="ml-2">· last run {lastRun}</span>}
-                        </p>
-                        <div className="h-0.5 bg-[#1a1a1a] w-full">
-                          <div
-                            className="h-0.5 bg-success transition-all duration-500"
-                            style={{ width: `${pct}%` }}
-                          />
-                        </div>
-                      </>
-                    )}
-                  </div>
-                );
-              })()}
-              <button
-                onClick={handleEnrichSpotify}
-                disabled={enrichingSpotify}
-                className="btn-secondary flex items-center gap-2 text-sm"
-              >
-                {enrichingSpotify ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-                Enrich Spotify
-              </button>
-            </div>
-          )}
-
-          {lastfmTagsData?.lastfm_available && (
-            <div className="space-y-2 pt-1">
-              {(() => {
-                const s = liveLastfmTagsStatus ?? lastfmTagsData;
-                const ea = s?.enriched_artists ?? 0;
-                const ta = s?.total_artists ?? 0;
-                const eab = s?.enriched_albums ?? 0;
-                const tab = s?.total_albums ?? 0;
-                const pct = ta > 0 ? Math.round((ea / ta) * 100) : 0;
-                const lastRun = s?.last_run;
-                return (
-                  <div className="space-y-1">
-                    {ta > 0 && (
-                      <>
-                        <p className="text-[#444] text-xs">
-                          {ea.toLocaleString()} / {ta.toLocaleString()} artists · {eab.toLocaleString()} / {tab.toLocaleString()} albums tagged ({pct}%)
-                          {lastRun && <span className="ml-2">· last run {lastRun}</span>}
-                        </p>
-                        <div className="h-0.5 bg-[#1a1a1a] w-full">
-                          <div
-                            className="h-0.5 bg-accent transition-all duration-500"
-                            style={{ width: `${pct}%` }}
-                          />
-                        </div>
-                      </>
-                    )}
-                  </div>
-                );
-              })()}
-              <button
-                onClick={handleEnrichLastfmTags}
-                disabled={enrichingLastfmTags}
-                className="btn-secondary flex items-center gap-2 text-sm"
-              >
-                {enrichingLastfmTags ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-                Enrich Genres
-              </button>
-            </div>
-          )}
-
-          {(deezerBpmData?.total_albums ?? 0) > 0 && (
-            <div className="space-y-2 pt-1">
-              {(() => {
-                const s = liveDeezerBpmStatus ?? deezerBpmData;
-                const ea = s?.enriched_albums ?? 0;
-                const ta = s?.total_albums ?? 0;
-                const et = s?.enriched_tracks ?? 0;
-                const pct = ta > 0 ? Math.round((ea / ta) * 100) : 0;
-                const lastRun = s?.last_run;
-                return (
-                  <div className="space-y-1">
-                    {ta > 0 && (
-                      <>
-                        <p className="text-[#444] text-xs">
-                          {ea.toLocaleString()} / {ta.toLocaleString()} albums · {et.toLocaleString()} tracks with BPM ({pct}%)
-                          {lastRun && <span className="ml-2">· last run {lastRun}</span>}
-                        </p>
-                        <div className="h-0.5 bg-[#1a1a1a] w-full">
-                          <div
-                            className="h-0.5 bg-accent transition-all duration-500"
-                            style={{ width: `${pct}%` }}
-                          />
-                        </div>
-                      </>
-                    )}
-                  </div>
-                );
-              })()}
-              <button
-                onClick={handleEnrichDeezerBpm}
-                disabled={enrichingDeezerBpm}
-                className="btn-secondary flex items-center gap-2 text-sm"
-              >
-                {enrichingDeezerBpm ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-                Enrich BPM
-              </button>
-            </div>
-          )}
+            <button
+              onClick={handleSync}
+              disabled={syncing}
+              className="btn-secondary flex items-center gap-2 text-sm flex-shrink-0"
+            >
+              {syncing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+              Sync Now
+            </button>
+          </div>
         </div>
+
+        {/* Step 1 → Step 2 connector */}
+        <div className="flex items-center gap-2 mb-6 pl-2">
+          <div className="w-px h-6 bg-[#2a2a2a] ml-1" />
+          <p className="text-[10px] font-mono text-[#444]">auto-triggers Step 2 after sync completes (30s delay)</p>
+        </div>
+
+        {/* Step 2 — Enrich */}
+        <div className="mb-4">
+          <p className="text-xs font-mono text-text-muted uppercase tracking-wider mb-1">Step 2 — Enrich Metadata</p>
+          <p className="text-[11px] text-[#444] mb-4">Fetches IDs, genres, BPM, and tags from iTunes, Deezer, Last.fm, and Spotify</p>
+          <PipelineOrchestrator
+            running={running}
+            workers={workers}
+            activeWorkers={activeWorkers}
+            elapsedMs={elapsedMs}
+            onRunFull={() => {
+              reset();
+              enrichmentApi.runFull()
+                .then(() => {
+                  // Safety net: if pipeline completes before first WS event, reseed from REST
+                  setTimeout(() => {
+                    enrichmentApi.status()
+                      .then(s => {
+                        if (!s.running && useEnrichmentStore.getState().running) {
+                          useEnrichmentStore.getState().setFromStatus(s);
+                        }
+                      })
+                      .catch(() => {});
+                  }, 3000);
+                })
+                .catch(() => toast.error('Failed to start enrichment'));
+            }}
+            onStop={() => {
+              enrichmentApi.stop()
+                .then(() => enrichmentApi.status())
+                .then(useEnrichmentStore.getState().setFromStatus)
+                .catch(() => {});
+            }}
+          />
+        </div>
+
+        {auditTotal > 0 && (
+          <div className="pt-2">
+            <p className="text-xs text-[#666]">
+              <span className="inline-flex items-center gap-1.5 text-amber-500 font-medium">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block" />
+                {auditTotal} item{auditTotal !== 1 ? 's' : ''} need review
+              </span>
+              {' '}— low-confidence matches flagged for manual confirmation.{' '}
+              <span className="text-[#444]">Audit UI coming in Phase 13c.</span>
+            </p>
+          </div>
+        )}
       </section>
 
       <section className="border-t border-[#1a1a1a] pt-8">

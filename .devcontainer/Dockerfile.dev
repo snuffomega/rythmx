@@ -1,16 +1,23 @@
-FROM python:3.11-slim
+FROM python:3.12.13-slim
 
 # System deps + Node.js 20 + sqlite3 CLI
-RUN apt-get update && apt-get install -y curl gnupg git sqlite3 && \
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get install -y nodejs && \
+# Uses NodeSource APT repo with GPG key verification (no curl-pipe-bash)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl gnupg git sqlite3 ca-certificates && \
+    mkdir -p /etc/apt/keyrings && \
+    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+      | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \
+    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
+      > /etc/apt/sources.list.d/nodesource.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends nodejs && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace
 
-# Pre-cache Python deps (invalidated only when requirements.txt changes)
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Pre-cache Python deps (invalidated only when requirements files change)
+COPY requirements.txt requirements-dev.txt ./
+RUN pip install --no-cache-dir -r requirements-dev.txt
 
 # Pre-cache Node deps (invalidated only when package.json changes)
 COPY frontend/package*.json ./frontend/

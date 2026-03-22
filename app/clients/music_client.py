@@ -220,6 +220,51 @@ def search_artist_candidates_itunes(name: str, limit: int = 5) -> list[dict]:
     return results
 
 
+def _derive_collection_type(item: dict) -> str:
+    """Derive album/single/ep from iTunes collectionType + title suffix."""
+    kind = (item.get("collectionType") or "Album").lower()
+    if kind == "album":
+        title = (item.get("collectionName") or "").lower()
+        if "- single" in title or title.endswith(" single"):
+            return "single"
+        if " - ep" in title or title.endswith(" ep"):
+            return "ep"
+    return kind
+
+
+def get_artist_albums_itunes(itunes_artist_id: str) -> list[dict]:
+    """
+    Return the full album catalog for an iTunes artist ID.
+    Returns up to 200 albums as [{id, title, track_count, record_type}].
+    Used by validate_artist() to score album-catalog overlap and by
+    enrich_library() for album matching with track-count tiebreakers.
+    """
+    data = _itunes_get("/lookup", {
+        "id": itunes_artist_id,
+        "entity": "album",
+        "limit": 200,
+    })
+    if not data or not data.get("results"):
+        return []
+    results = []
+    for item in data["results"]:
+        if item.get("wrapperType") != "collection" or not item.get("collectionName"):
+            continue
+        raw_art = item.get("artworkUrl100", "")
+        results.append({
+            "id": str(item.get("collectionId", "")),
+            "title": item.get("collectionName", ""),
+            "track_count": item.get("trackCount") or 0,
+            "record_type": _derive_collection_type(item),
+            "artwork_url": raw_art.replace("100x100bb", "600x600bb") if raw_art else "",
+            "release_date": item.get("releaseDate", ""),
+            "explicit": item.get("collectionExplicitness", "") == "explicit",
+            "label": item.get("copyright", ""),
+            "genre": item.get("primaryGenreName", ""),
+        })
+    return results
+
+
 def get_artist_top_tracks_itunes(itunes_artist_id: str, limit: int = 10) -> list[str]:
     """
     Return top track title strings for an iTunes artist ID.
@@ -250,6 +295,31 @@ def get_artist_top_tracks_itunes(itunes_artist_id: str, limit: int = 10) -> list
 
 _deezer_session = requests.Session()
 _deezer_session.headers["Accept"] = "application/json"
+
+
+def get_album_itunes_rich(itunes_album_id: str) -> dict | None:
+    """
+    Fetch genre and release_date for an album from iTunes by collectionId.
+    Returns {genre: str, release_date: str} or None if not found / API error.
+    release_date is trimmed to YYYY-MM-DD format.
+    Used by enrich_itunes_rich() (Stage 3 S3-1).
+    """
+    data = _itunes_get("/lookup", {"id": itunes_album_id, "entity": "album"})
+    if not data or not data.get("results"):
+        return None
+    for item in data["results"]:
+        if (item.get("wrapperType") == "collection"
+                and str(item.get("collectionId", "")) == str(itunes_album_id)):
+            return {
+                "genre": item.get("primaryGenreName", "") or "",
+                "release_date": (item.get("releaseDate", "") or "")[:10],
+            }
+    # Fallback: first result if exact match not found
+    item = data["results"][0]
+    return {
+        "genre": item.get("primaryGenreName", "") or "",
+        "release_date": (item.get("releaseDate", "") or "")[:10],
+    }
 
 
 def _deezer_get(path: str, params: dict = None) -> dict | None:
@@ -331,6 +401,111 @@ def _deezer_get_releases(deezer_id: str, cutoff: datetime,
         else:
             break
     return releases
+
+
+def search_artist_candidates_deezer(name: str, limit: int = 5) -> list[dict]:
+    """
+    Return Deezer artist search candidates as [{name: str, id: str}].
+    Tries name variants (& → and, punctuation stripped) if the original returns nothing.
+    Used by _validate_artist() in library_service for album-overlap scoring.
+    """
+    results = []
+    for term in _search_variants(name):
+        data = _deezer_get("/search/artist", {"q": term, "limit": limit})
+        if not data or not data.get("data"):
+            continue
+        for artist in data["data"]:
+            aid = str(artist.get("id", ""))
+            aname = artist.get("name", "")
+            if aid:
+                results.append({"name": aname, "id": aid})
+        if results:
+            break
+    return results
+
+
+def get_artist_albums_deezer(artist_id: str) -> list[dict]:
+    """
+    Return the album catalog for a Deezer artist ID as [{id, title, record_type}].
+    Returns up to 100 albums (covers essentially all discographies).
+    Used by _validate_artist() to score album-catalog overlap.
+    """
+    data = _deezer_get(f"/artist/{artist_id}/albums", {"limit": 100})
+    if not data or not data.get("data"):
+        return []
+    return [
+        {
+            "id": str(album.get("id", "")),
+            "title": album.get("title", ""),
+            "record_type": album.get("record_type", "album"),
+            "track_count": album.get("nb_tracks") or 0,
+            "artwork_url": album.get("cover_xl") or album.get("cover_medium") or "",
+            "release_date": album.get("release_date", ""),
+            "explicit": bool(album.get("explicit_lyrics")),
+        }
+        for album in data["data"]
+        if album.get("title")
+    ]
+
+
+def get_deezer_album_info(deezer_album_id: str) -> dict | None:
+    """
+    Fetch record_type and cover thumbnail URL for a Deezer album by ID.
+    Returns {record_type: str, thumb_url: str} or None on API error.
+    record_type values from Deezer: "album", "single", "compile" (EP/compilation).
+    thumb_url is the medium cover (500x500) CDN URL — persists when Plex is offline.
+    Used by enrich_deezer_release() (Stage 3 S3-2).
+    """
+    data = _deezer_get(f"/album/{deezer_album_id}")
+    if not data:
+        return None
+    return {
+        "record_type": data.get("record_type", "") or "",
+        "thumb_url": data.get("cover_medium", "") or data.get("cover", "") or "",
+    }
+
+
+def get_album_tracks_itunes(itunes_album_id: str) -> list[dict]:
+    """Fetch track listing for an iTunes album by collectionId.
+
+    Returns [{title, track_number, disc_number, duration_ms, preview_url}].
+    Uses /lookup?id={id}&entity=song — first result is the collection wrapper.
+    """
+    data = _itunes_get("/lookup", {"id": itunes_album_id, "entity": "song"})
+    if not data or not data.get("results"):
+        return []
+    tracks = []
+    for item in data["results"]:
+        if item.get("wrapperType") != "track":
+            continue
+        tracks.append({
+            "title": item.get("trackName", ""),
+            "track_number": item.get("trackNumber", 0),
+            "disc_number": item.get("discNumber", 1),
+            "duration_ms": item.get("trackTimeMillis", 0),
+            "preview_url": item.get("previewUrl", ""),
+        })
+    return tracks
+
+
+def get_album_tracks_deezer(deezer_album_id: str) -> list[dict]:
+    """Fetch track listing for a Deezer album by album ID.
+
+    Returns [{title, track_number, disc_number, duration_ms, preview_url}].
+    """
+    data = _deezer_get(f"/album/{deezer_album_id}/tracks", {"limit": 200})
+    if not data or not data.get("data"):
+        return []
+    tracks = []
+    for item in data["data"]:
+        tracks.append({
+            "title": item.get("title", ""),
+            "track_number": item.get("track_position", 0),
+            "disc_number": item.get("disk_number", 1),
+            "duration_ms": (item.get("duration", 0)) * 1000,
+            "preview_url": item.get("preview", ""),
+        })
+    return tracks
 
 
 # ---------------------------------------------------------------------------

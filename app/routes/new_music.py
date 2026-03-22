@@ -1,13 +1,18 @@
 import logging
 import threading
-from flask import Blueprint, jsonify, request
+from typing import Any, Optional
+
+from fastapi import APIRouter, Body, Depends, Query
+from fastapi.responses import JSONResponse
+
 from app.db import rythmx_store
 from app import config
 from app.runners import scheduler
+from app.dependencies import verify_api_key
 
 logger = logging.getLogger(__name__)
 
-new_music_bp = Blueprint("new_music", __name__)
+router = APIRouter(dependencies=[Depends(verify_api_key)])
 
 # Maps backend stage (1-8) to frontend pipeline display step per run mode.
 # Build: 5 visible steps (no Queue/Fetch steps); Fetch: 7 visible steps.
@@ -18,7 +23,7 @@ _STAGE_MAP = {
 }
 
 
-@new_music_bp.route("/cruise-control/status")
+@router.get("/cruise-control/status")
 def get_new_music_status():
     raw = scheduler.get_status()
     is_running = raw.get("is_running", False)
@@ -42,7 +47,7 @@ def get_new_music_status():
     stage_map = _STAGE_MAP.get(cur_mode, _STAGE_MAP["build"])
     display_stage = stage_map.get(cur_stage) if cur_stage else None
     total_stages  = 5 if cur_mode == "build" else (7 if cur_mode == "fetch" else 4)
-    return jsonify({
+    return {
         "status": "ok",
         "state": state,
         "stage": display_stage if is_running else None,
@@ -50,11 +55,10 @@ def get_new_music_status():
         "last_run": raw.get("last_run"),
         "summary": summary,
         "error": last_result.get("error"),
-    })
+    }
 
 
-
-@new_music_bp.route("/cruise-control/config", methods=["GET"])
+@router.get("/cruise-control/config")
 def get_new_music_config():
     raw = rythmx_store.get_all_settings()
     bool_keys = {"enabled", "auto_push_playlist", "dry_run", "include_features"}
@@ -102,13 +106,12 @@ def get_new_music_config():
         "include_features": True,
         "release_kinds": config.RELEASE_KINDS,
     }
-    return jsonify({"status": "ok", "config": {**defaults, **coerced}})
+    return {"status": "ok", "config": {**defaults, **coerced}}
 
 
-
-@new_music_bp.route("/cruise-control/config", methods=["POST"])
-def save_new_music_config():
-    data = request.get_json(silent=True) or {}
+@router.post("/cruise-control/config")
+def save_new_music_config(data: Optional[dict[str, Any]] = Body(default=None)):
+    data = data or {}
     allowed_keys = {
         "enabled", "max_per_cycle", "cycle_hours",
         "min_listens", "period", "lookback_days",
@@ -121,15 +124,16 @@ def save_new_music_config():
     for key, value in data.items():
         if key in allowed_keys:
             rythmx_store.set_setting(key, str(value))
-    return jsonify({"status": "ok"})
+    return {"status": "ok"}
 
 
-
-@new_music_bp.route("/cruise-control/run-now", methods=["POST"])
-def run_cycle_now():
+@router.post("/cruise-control/run-now")
+def run_cycle_now(data: Optional[dict[str, Any]] = Body(default=None)):
     if scheduler.get_status()["is_running"]:
-        return jsonify({"status": "error", "message": "A cycle is already running"}), 409
-    data = request.get_json(silent=True) or {}
+        return JSONResponse(
+            {"status": "error", "message": "A cycle is already running"}, status_code=409
+        )
+    data = data or {}
     run_mode = data.get("run_mode", "fetch")
     if run_mode not in ("preview", "build", "fetch"):
         run_mode = "fetch"
@@ -142,13 +146,11 @@ def run_cycle_now():
         name="cc-manual-run",
     )
     t.start()
-    return jsonify({"status": "ok", "message": "cycle_started", "run_mode": run_mode})
+    return {"status": "ok", "message": "cycle_started", "run_mode": run_mode}
 
 
-
-@new_music_bp.route("/cruise-control/history")
-def get_cycle_history():
-    limit = min(int(request.args.get("limit", 100)), 500)
+@router.get("/cruise-control/history")
+def get_cycle_history(limit: int = Query(default=100, le=500)):
     rows = rythmx_store.get_history(limit=limit)
     history = [
         {
@@ -160,11 +162,10 @@ def get_cycle_history():
         }
         for r in rows
     ]
-    return jsonify({"status": "ok", "history": history})
+    return {"status": "ok", "history": history}
 
 
-
-@new_music_bp.route("/release-cache/clear", methods=["POST"])
+@router.post("/release-cache/clear")
 def release_cache_clear():
     rythmx_store.clear_release_cache()
-    return jsonify({"status": "ok", "message": "release cache cleared"})
+    return {"status": "ok", "message": "release cache cleared"}

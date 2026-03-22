@@ -22,6 +22,16 @@ import type {
   ReleaseKind,
   PersonalDiscoveryConfig,
   PersonalDiscoveryResult,
+  LibArtist,
+  LibAlbum,
+  LibTrack,
+  LibArtistDetail,
+  LibAlbumDetail,
+  AuditResponse,
+  EnrichmentPipelineStatus,
+  EnrichmentStopResponse,
+  ReleaseDetail,
+  ReleaseTrack,
 } from '../types';
 
 const BASE_URL = '/api/v1';
@@ -41,13 +51,14 @@ export function setApiKey(key: string): void {
 }
 
 export async function initApiKey(): Promise<void> {
-  if (_apiKey) return; // already have it (localStorage hit)
+  // Always fetch from bootstrap — ensures stale localStorage keys are replaced
+  // (e.g. after a fresh DB install). Bootstrap is public and fast.
   try {
     const res = await fetch(`${BASE_URL}/auth/bootstrap`);
     if (!res.ok) return;
     const data = await res.json() as { status: string; api_key?: string };
     if (data.status === 'ok' && data.api_key) setApiKey(data.api_key);
-  } catch { /* network down / dev mode — proceed unauthenticated */ }
+  } catch { /* network down — fall back to cached key */ }
 }
 
 // ── Error class ───────────────────────────────────────────────────────────────
@@ -73,6 +84,29 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     },
     ...options,
   });
+  if (res.status === 401) {
+    // Stale key (e.g. fresh DB install). Clear and re-bootstrap, then retry once.
+    setApiKey('');
+    await initApiKey();
+    const retry = await fetch(`${BASE_URL}${path}`, {
+      headers: {
+        'Content-Type': 'application/json',
+        ...(_apiKey ? { 'X-Api-Key': _apiKey } : {}),
+        ...options?.headers,
+      },
+      ...options,
+    });
+    if (!retry.ok) {
+      const err = await retry.text().catch(() => 'Request failed');
+      throw new ApiError(err || `HTTP ${retry.status}`, retry.status);
+    }
+    const retryData: unknown = await retry.json();
+    if (retryData && typeof retryData === 'object' && (retryData as Record<string, unknown>).status === 'error') {
+      const d = retryData as Record<string, unknown>;
+      throw new ApiError(typeof d.error === 'string' ? d.error : typeof d.message === 'string' ? d.message : 'API error');
+    }
+    return retryData as T;
+  }
   if (!res.ok) {
     const err = await res.text().catch(() => 'Request failed');
     throw new ApiError(err || `HTTP ${res.status}`, res.status);
@@ -231,10 +265,10 @@ export const settingsApi = {
     request<ConnectionStatus>('/settings/test-spotify', { method: 'POST' }),
   testFanart: () =>
     request<ConnectionStatus>('/settings/test-fanart', { method: 'POST' }),
-  setLibraryBackend: (backend: 'soulsync' | 'plex' | 'jellyfin' | 'navidrome') =>
-    request<{ status: string }>('/settings/library-backend', {
+  setLibraryPlatform: (platform: 'plex' | 'jellyfin' | 'navidrome') =>
+    request<{ status: string; platform: string }>('/settings/library-platform', {
       method: 'POST',
-      body: JSON.stringify({ backend }),
+      body: JSON.stringify({ platform }),
     }),
   clearHistory: () =>
     request<{ status: string }>('/settings/clear-history', { method: 'POST' }),
@@ -304,4 +338,64 @@ export const imageServiceApi = {
       method: 'POST',
       body: JSON.stringify({ max_items: maxItems }),
     }),
+};
+
+export const libraryBrowseApi = {
+  getArtists: (p: { q?: string; page?: number; per_page?: number; backend?: string } = {}) => {
+    const qs = new URLSearchParams(
+      Object.entries({ per_page: '50', ...p }).filter(([, v]) => v != null) as [string, string][]
+    ).toString();
+    return request<{ status: string; artists: LibArtist[]; total: number; page: number }>(`/library/artists?${qs}`);
+  },
+  getArtist: (id: string) =>
+    request<{ status: string } & LibArtistDetail>(`/library/artists/${encodeURIComponent(id)}`),
+  getAlbums: (p: { q?: string; page?: number; per_page?: number; backend?: string; record_type?: string } = {}) => {
+    const qs = new URLSearchParams(
+      Object.entries({ per_page: '50', ...p }).filter(([, v]) => v != null) as [string, string][]
+    ).toString();
+    return request<{ status: string; albums: LibAlbum[]; total: number; page: number }>(`/library/albums?${qs}`);
+  },
+  getAlbum: (id: string) =>
+    request<{ status: string } & LibAlbumDetail>(`/library/albums/${encodeURIComponent(id)}`),
+  getTracks: (p: { q?: string; page?: number; per_page?: number } = {}) => {
+    const qs = new URLSearchParams(
+      Object.entries({ per_page: '100', ...p }).filter(([, v]) => v != null) as [string, string][]
+    ).toString();
+    return request<{ status: string; tracks: LibTrack[]; total: number; page: number }>(`/library/tracks?${qs}`);
+  },
+  rateTrack: (id: string, rating: number) =>
+    request<{ status: string; track_id: string; rating: number }>(`/library/tracks/${encodeURIComponent(id)}/rating`, {
+      method: 'PATCH',
+      body: JSON.stringify({ rating }),
+    }),
+  getAudit: (p: { page?: number; per_page?: number } = {}) => {
+    const qs = new URLSearchParams(
+      Object.entries({ per_page: '50', ...p }).filter(([, v]) => v != null) as [string, string][]
+    ).toString();
+    return request<AuditResponse>(`/library/audit?${qs}`);
+  },
+  confirmAuditItem: (body: { entity_type: string; entity_id: string; source: string; confirmed_id: string }) =>
+    request<{ status: string }>('/library/audit/confirm', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  rejectAuditItem: (body: { entity_type: string; entity_id: string; source: string }) =>
+    request<{ status: string }>('/library/audit/reject', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  getRelease: (id: string) =>
+    request<{ status: string; release: ReleaseDetail; tracks: ReleaseTrack[] }>(`/library/releases/${encodeURIComponent(id)}`),
+};
+
+export const enrichmentApi = {
+  status: () =>
+    request<EnrichmentPipelineStatus & { status: string }>('/library/enrich/status'),
+  runFull: (batch_size = 50) =>
+    request<{ status: string; message: string }>('/library/enrich/full', {
+      method: 'POST',
+      body: JSON.stringify({ batch_size }),
+    }),
+  stop: () =>
+    request<EnrichmentStopResponse>('/library/enrich/stop', { method: 'POST' }),
 };

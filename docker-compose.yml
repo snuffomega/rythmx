@@ -8,7 +8,31 @@ services:
       # SoulSync DB — READ ONLY. Direct bind mount to SoulSync's data folder on the host.
       - /mnt/user/appdata/soulsync/data:/data/soulsync:ro
       # rythmx's own data (rythmx.db)
-      - ./data:/data/cc
+      - ./data:/data/rythmx
     env_file:
       - .env
+    environment:
+      # PUID/PGID — match your host's file ownership.
+      # Unraid: 99/100 | TrueNAS: 568/568 | Linux: 1000/1000
+      PUID: 99
+      PGID: 100
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8009/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1.0'

@@ -1,17 +1,17 @@
 """
-jellyfin_reader.py — Jellyfin library backend (not yet implemented).
+jellyfin_reader.py — Jellyfin library platform reader (not yet implemented).
 
 Stub implementation. All functions return safe empty values or raise
-NotImplementedError for write operations. Select this backend via
-LIBRARY_BACKEND=jellyfin or the Settings UI.
+NotImplementedError for write operations. Select this platform via
+LIBRARY_PLATFORM=jellyfin or the Settings UI.
 """
 import logging
 
 logger = logging.getLogger(__name__)
 
 _NOT_IMPLEMENTED = (
-    "Jellyfin backend is not yet implemented. "
-    "Set LIBRARY_BACKEND=soulsync or LIBRARY_BACKEND=plex."
+    "Jellyfin platform reader is not yet implemented. "
+    "Set LIBRARY_PLATFORM=plex to use Plex instead."
 )
 
 

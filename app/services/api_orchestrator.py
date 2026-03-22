@@ -15,11 +15,11 @@ Two-layer design:
 
 Domain limits (requests per minute):
   itunes:        20/min  (Apple free tier — enforced; no auth required)
-  deezer:        50/min  (Deezer documented free limit)
+  deezer:       300/min  (Deezer allows 50 req/5s; 300/min is conservative)
   lastfm:       200/min  (generous free tier)
   spotify:      100/min  (varies by endpoint; conservative baseline)
   fanart:       120/min  (2/sec — within limits for personal projects)
-  musicbrainz:    1/min  (strict: 1/sec; resets aggressively in Docker)
+  musicbrainz:   50/min  (MB allows 1/sec = 60/min; 50/min is conservative)
 
 Usage in any client:
     from app.services.api_orchestrator import rate_limiter
@@ -41,6 +41,8 @@ import logging
 import random
 import threading
 import time
+from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -52,11 +54,11 @@ logger = logging.getLogger(__name__)
 
 _DOMAIN_CONFIGS: dict[str, dict] = {
     "itunes":       {"rate": 20 / 60,   "capacity": 3},
-    "deezer":       {"rate": 50 / 60,   "capacity": 5},
+    "deezer":       {"rate": 300 / 60,  "capacity": 10},   # Deezer allows 50 req/5s; 300/min is conservative
     "lastfm":       {"rate": 200 / 60,  "capacity": 10},
     "spotify":      {"rate": 100 / 60,  "capacity": 5},
     "fanart":       {"rate": 120 / 60,  "capacity": 5},
-    "musicbrainz":  {"rate": 1 / 60,    "capacity": 1},
+    "musicbrainz":  {"rate": 50 / 60,   "capacity": 2},    # MB allows 1 req/s (60/min); 50/min is conservative
 }
 
 _CIRCUIT_BREAKER_THRESHOLD = 3    # consecutive 429s before tripping
@@ -194,3 +196,223 @@ class DomainRateLimiter:
 
 # Singleton — import this, not the class directly.
 rate_limiter = DomainRateLimiter()
+
+
+# ---------------------------------------------------------------------------
+# EnrichmentOrchestrator — DAG conductor for library enrichment pipeline
+# ---------------------------------------------------------------------------
+
+class EnrichmentOrchestrator:
+    """
+    Conductor for the 4-stage library enrichment pipeline.
+
+    Does NOT make API calls. Sequences existing library_service.py workers:
+      Stage 2 (sequential): enrich_library → enrich_artist_ids_spotify → enrich_artist_ids_lastfm
+      Stage 3 (parallel):   enrich_itunes_rich, enrich_deezer_release, enrich_genres_spotify,
+                             enrich_tags_lastfm, enrich_stats_lastfm
+      BPM (last):           enrich_deezer_bpm (depends on deezer_id from Stage 2)
+
+    Broadcasts SHRTA enrichment_progress events after each worker via ws.broadcast().
+    Broadcasts enrichment_complete or enrichment_stopped on finish.
+
+    Usage:
+        EnrichmentOrchestrator.get().run_full()   # fire-and-forget
+        EnrichmentOrchestrator.get().stop()        # graceful stop after current batch
+        EnrichmentOrchestrator.get().is_running()  # True while thread alive
+    """
+
+    _instance: "EnrichmentOrchestrator | None" = None
+    _instance_lock = threading.Lock()
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._started_at: str | None = None
+
+    @classmethod
+    def get(cls) -> "EnrichmentOrchestrator":
+        if cls._instance is None:
+            with cls._instance_lock:
+                if cls._instance is None:
+                    cls._instance = cls()
+        return cls._instance
+
+    def run_full(self, batch_size: int = 10_000) -> None:
+        """Start full pipeline in background thread. No-op if already running.
+        batch_size is effectively unlimited — rate limiter + stop_event are the real throttle.
+        Callers like run_auto_pipeline() may pass a lower cap."""
+        with self._lock:
+            if self._thread and self._thread.is_alive():
+                return
+            self._stop_event.clear()
+            self._started_at = datetime.now(timezone.utc).isoformat()
+            self._thread = threading.Thread(
+                target=self._run,
+                args=(batch_size,),
+                daemon=True,
+                name="enrichment-orchestrator",
+            )
+            self._thread.start()
+
+    def stop(self) -> None:
+        """Signal all workers to stop after their current batch."""
+        self._stop_event.set()
+
+    def is_running(self) -> bool:
+        return bool(self._thread and self._thread.is_alive())
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _make_progress_fn(self, worker_key: str) -> "callable":
+        """Return a per-item progress callback that broadcasts enrichment_progress via WS."""
+        def _fn(found: int, not_found: int, errors: int, total: int) -> None:
+            try:
+                from app.routes.ws import broadcast
+                broadcast("enrichment_progress", {
+                    "worker": worker_key,
+                    "found": found,
+                    "not_found": not_found,
+                    "errors": errors,
+                    "pending": max(0, total - found - not_found - errors),
+                    "running": True,
+                })
+            except Exception:
+                pass
+        return _fn
+
+    def _broadcast_complete(self) -> None:
+        try:
+            from app.routes.ws import broadcast
+            from app.db.rythmx_store import _connect
+            with _connect() as conn:
+                rows = conn.execute(
+                    "SELECT source, status, COUNT(*) as cnt FROM enrichment_meta GROUP BY source, status"
+                ).fetchall()
+            workers: dict = {}
+            for r in rows:
+                src = r["source"]
+                if src not in workers:
+                    workers[src] = {"found": 0, "not_found": 0, "errors": 0, "pending": 0, "running": False}
+                field = "errors" if r["status"] == "error" else r["status"]
+                if field in workers[src]:
+                    workers[src][field] = r["cnt"]
+            # Merge enrich_library sub-sources into single "library" key.
+            # enrich_library writes to enrichment_meta under: itunes_artist, deezer_artist,
+            # itunes (album-level iTunes), deezer (album-level Deezer). All four represent
+            # the Identity Matching stage — aggregated here so the UI shows one complete number.
+            _lib_sources = {"itunes_artist", "deezer_artist", "itunes", "deezer"}
+            lib_agg: dict = {"found": 0, "not_found": 0, "errors": 0, "pending": 0, "running": False}
+            for src in _lib_sources:
+                if src in workers:
+                    src_data = workers.pop(src)
+                    for field in ("found", "not_found", "errors", "pending"):
+                        lib_agg[field] += src_data[field]
+            workers["library"] = lib_agg
+            broadcast("enrichment_complete", {"workers": workers})
+        except Exception as e:
+            logger.warning("EnrichmentOrchestrator: broadcast_complete failed: %s", e)
+
+    def _run(self, batch_size: int) -> None:
+        from app.services import library_service as ls
+        logger.info("EnrichmentOrchestrator: pipeline start (batch_size=%d)", batch_size)
+
+        try:
+            # --- Stage 1: Library sync (no API calls, fast) ---
+            try:
+                from app.services.enrichment.sync import sync_library
+                sync_result = sync_library()
+                logger.info(
+                    "EnrichmentOrchestrator: sync — artists=%d albums=%d tracks=%d",
+                    sync_result.get("artist_count", 0),
+                    sync_result.get("album_count", 0),
+                    sync_result.get("track_count", 0),
+                )
+            except Exception as e:
+                logger.warning("EnrichmentOrchestrator: sync_library failed: %s", e)
+
+            if self._stop_event.is_set():
+                self._started_at = None
+                return
+
+            # --- Stage 2: sequential (IDs must be resolved before Stage 3) ---
+            for worker_fn, worker_key in [
+                (lambda k="library": ls.enrich_library(batch_size, self._stop_event, self._make_progress_fn(k)), "library"),
+                (lambda k="spotify_id": ls.enrich_artist_ids_spotify(batch_size, self._stop_event, self._make_progress_fn(k)), "spotify_id"),
+                (lambda k="lastfm_id": ls.enrich_artist_ids_lastfm(batch_size, self._stop_event, self._make_progress_fn(k)), "lastfm_id"),
+            ]:
+                if self._stop_event.is_set():
+                    break
+                try:
+                    worker_fn()
+                except Exception as e:
+                    logger.error("EnrichmentOrchestrator: Stage 2 worker error: %s", e)
+
+            # --- Ownership sync (after Stage 2 IDs are resolved) ---
+            if not self._stop_event.is_set():
+                try:
+                    from app.services.enrichment.ownership_sync import sync_release_ownership
+                    own_result = sync_release_ownership()
+                    logger.info(
+                        "EnrichmentOrchestrator: ownership sync — id=%d title=%d",
+                        own_result.get("owned_by_id", 0),
+                        own_result.get("owned_by_title", 0),
+                    )
+                except Exception as e:
+                    logger.warning("EnrichmentOrchestrator: ownership sync failed: %s", e)
+
+            if self._stop_event.is_set():
+                self._started_at = None
+                try:
+                    from app.routes.ws import broadcast
+                    broadcast("enrichment_stopped", {"message": "Enrichment stopped by user"})
+                except Exception:
+                    pass
+                logger.info("EnrichmentOrchestrator: stopped after Stage 2")
+                return
+
+            # --- Stage 3: parallel (independent rich-data workers) ---
+            stage3_workers = [
+                (ls.enrich_itunes_rich, batch_size, "itunes_rich"),
+                (ls.enrich_deezer_release, batch_size, "deezer_rich"),
+                (ls.enrich_genres_spotify, batch_size, "spotify_genres"),
+                (ls.enrich_tags_lastfm, batch_size, "lastfm_tags"),
+                (ls.enrich_stats_lastfm, batch_size, "lastfm_stats"),
+            ]
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                futures = {
+                    pool.submit(fn, bs, self._stop_event, self._make_progress_fn(key)): key
+                    for fn, bs, key in stage3_workers
+                }
+                for future in futures:
+                    key = futures[future]
+                    try:
+                        future.result()
+                    except Exception as e:
+                        logger.error("EnrichmentOrchestrator: Stage 3 '%s' error: %s", key, e)
+
+            # --- BPM: disabled (Phase 22 — reduces API stress) ---
+            # if not self._stop_event.is_set():
+            #     try:
+            #         ls.enrich_deezer_bpm(30, self._stop_event, self._make_progress_fn("deezer_bpm"))
+            #     except Exception as e:
+            #         logger.error("EnrichmentOrchestrator: BPM worker error: %s", e)
+
+            if self._stop_event.is_set():
+                self._started_at = None
+                try:
+                    from app.routes.ws import broadcast
+                    broadcast("enrichment_stopped", {"message": "Enrichment stopped by user"})
+                except Exception:
+                    pass
+                logger.info("EnrichmentOrchestrator: stopped during Stage 3 / BPM")
+            else:
+                self._started_at = None
+                self._broadcast_complete()
+                logger.info("EnrichmentOrchestrator: pipeline complete")
+
+        except Exception as e:
+            logger.exception("EnrichmentOrchestrator: unhandled error: %s", e)

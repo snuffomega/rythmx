@@ -35,6 +35,8 @@ tags:
     description: Playlist CRUD, build, import, publish, and export
   - name: stats
     description: Last.fm listening statistics
+  - name: library
+    description: Library browse, enrichment pipeline, and audit
   - name: settings
     description: Application settings and library enrichment operations
 
@@ -1025,21 +1027,21 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 
-  /api/v1/settings/library-backend:
+  /api/v1/settings/library-platform:
     post:
       tags: [settings]
-      summary: Set the library platform backend
-      operationId: setLibraryBackend
+      summary: Set the library platform
+      operationId: setLibraryPlatform
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [backend]
+              required: [platform]
               properties:
-                backend:
-                  $ref: '#/components/schemas/LibraryBackend'
+                platform:
+                  $ref: '#/components/schemas/LibraryPlatform'
       responses:
         '200':
           $ref: '#/components/responses/Ok'
@@ -1162,131 +1164,261 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 
-  /api/v1/library/enrich-status:
-    get:
-      tags: [settings]
-      summary: Get library enrichment status
-      operationId: getLibraryEnrichStatus
-      responses:
-        '200':
-          description: Library enrichment status
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/ApiSuccess'
-                  - $ref: '#/components/schemas/LibraryEnrichStatus'
-        '500':
-          $ref: '#/components/responses/ServerError'
+  # ── Library Browse ────────────────────────────────────────────────────────
 
-  /api/v1/library/enrich:
-    post:
-      tags: [settings]
-      summary: Start library metadata enrichment
-      operationId: enrichLibrary
+  /api/v1/library/artists:
+    get:
+      tags: [library]
+      summary: List library artists (paginated)
+      operationId: listArtists
       parameters:
-        - name: batch_size
-          in: query
-          schema:
-            type: integer
-            default: 50
-      responses:
-        '202':
-          $ref: '#/components/responses/Accepted'
-        '409':
-          $ref: '#/components/responses/Conflict'
-        '500':
-          $ref: '#/components/responses/ServerError'
-
-  /api/v1/library/spotify-status:
-    get:
-      tags: [settings]
-      summary: Get Spotify enrichment status
-      operationId: getSpotifyEnrichStatus
+        - { name: q, in: query, schema: { type: string, default: '' } }
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: per_page, in: query, schema: { type: integer, default: 50, maximum: 200 } }
+        - { name: platform, in: query, schema: { type: string, default: 'all' } }
       responses:
         '200':
-          description: Spotify enrichment status
+          description: Paginated artist list
           content:
             application/json:
               schema:
                 allOf:
                   - $ref: '#/components/schemas/ApiSuccess'
-                  - $ref: '#/components/schemas/SpotifyEnrichStatus'
-        '500':
-          $ref: '#/components/responses/ServerError'
+                  - type: object
+                    properties:
+                      artists: { type: array, items: { $ref: '#/components/schemas/LibArtist' } }
+                      total: { type: integer }
+                      page: { type: integer }
 
-  /api/v1/library/enrich-spotify:
-    post:
-      tags: [settings]
-      summary: Start Spotify metadata enrichment
-      operationId: enrichSpotify
-      responses:
-        '202':
-          $ref: '#/components/responses/Accepted'
-        '409':
-          $ref: '#/components/responses/Conflict'
-        '500':
-          $ref: '#/components/responses/ServerError'
-
-  /api/v1/library/lastfm-tags-status:
+  /api/v1/library/artists/{artist_id}:
     get:
-      tags: [settings]
-      summary: Get Last.fm tags enrichment status
-      operationId: getLastfmTagsStatus
+      tags: [library]
+      summary: Artist detail — albums and top tracks
+      operationId: getArtist
+      parameters:
+        - { name: artist_id, in: path, required: true, schema: { type: string } }
       responses:
         '200':
-          description: Last.fm tags enrichment status
+          description: Artist detail
           content:
             application/json:
               schema:
                 allOf:
                   - $ref: '#/components/schemas/ApiSuccess'
-                  - $ref: '#/components/schemas/LastfmTagsStatus'
-        '500':
-          $ref: '#/components/responses/ServerError'
+                  - type: object
+                    properties:
+                      artist: { $ref: '#/components/schemas/LibArtist' }
+                      albums: { type: array, items: { $ref: '#/components/schemas/LibAlbum' } }
+                      top_tracks: { type: array, items: { $ref: '#/components/schemas/LibTrack' } }
+        '404':
+          $ref: '#/components/responses/NotFound'
 
-  /api/v1/library/enrich-lastfm-tags:
-    post:
-      tags: [settings]
-      summary: Start Last.fm tags enrichment
-      operationId: enrichLastfmTags
-      responses:
-        '202':
-          $ref: '#/components/responses/Accepted'
-        '409':
-          $ref: '#/components/responses/Conflict'
-        '500':
-          $ref: '#/components/responses/ServerError'
-
-  /api/v1/library/deezer-bpm-status:
+  /api/v1/library/albums:
     get:
-      tags: [settings]
-      summary: Get Deezer BPM enrichment status
-      operationId: getDeezerBpmStatus
+      tags: [library]
+      summary: List library albums (paginated)
+      operationId: listAlbums
+      parameters:
+        - { name: q, in: query, schema: { type: string, default: '' } }
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: per_page, in: query, schema: { type: integer, default: 50, maximum: 200 } }
+        - { name: platform, in: query, schema: { type: string, default: 'all' } }
+        - { name: record_type, in: query, schema: { type: string, default: 'all' } }
       responses:
         '200':
-          description: Deezer BPM enrichment status
+          description: Paginated album list
           content:
             application/json:
               schema:
                 allOf:
                   - $ref: '#/components/schemas/ApiSuccess'
-                  - $ref: '#/components/schemas/DeezerBpmStatus'
+                  - type: object
+                    properties:
+                      albums: { type: array, items: { $ref: '#/components/schemas/LibAlbum' } }
+                      total: { type: integer }
+                      page: { type: integer }
+
+  /api/v1/library/albums/{album_id}:
+    get:
+      tags: [library]
+      summary: Album detail with tracks
+      operationId: getAlbum
+      parameters:
+        - { name: album_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Album detail
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiSuccess'
+                  - type: object
+                    properties:
+                      album: { $ref: '#/components/schemas/LibAlbum' }
+                      tracks: { type: array, items: { $ref: '#/components/schemas/LibTrack' } }
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/library/tracks:
+    get:
+      tags: [library]
+      summary: List library tracks (paginated)
+      operationId: listTracks
+      parameters:
+        - { name: q, in: query, schema: { type: string, default: '' } }
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: per_page, in: query, schema: { type: integer, default: 100, maximum: 500 } }
+      responses:
+        '200':
+          description: Paginated track list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiSuccess'
+                  - type: object
+                    properties:
+                      tracks: { type: array, items: { $ref: '#/components/schemas/LibTrack' } }
+                      total: { type: integer }
+                      page: { type: integer }
+
+  /api/v1/library/tracks/{track_id}/rating:
+    patch:
+      tags: [library]
+      summary: Set track rating (0–10)
+      operationId: rateTrack
+      parameters:
+        - { name: track_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rating]
+              properties:
+                rating: { type: integer, minimum: 0, maximum: 10 }
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/library/audit:
+    get:
+      tags: [library]
+      summary: Low-confidence and unverified items needing review
+      operationId: listAuditItems
+      parameters:
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: per_page, in: query, schema: { type: integer, default: 50, maximum: 200 } }
+      responses:
+        '200':
+          description: Audit queue
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiSuccess'
+                  - type: object
+                    properties:
+                      items: { type: array, items: { $ref: '#/components/schemas/AuditItem' } }
+                      total: { type: integer }
+                      page: { type: integer }
+
+  /api/v1/library/audit/confirm:
+    post:
+      tags: [library]
+      summary: Confirm an enrichment match manually
+      operationId: confirmAuditItem
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [entity_type, entity_id, source, confirmed_id]
+              properties:
+                entity_type: { type: string, enum: [artist, album] }
+                entity_id: { type: string }
+                source: { type: string, enum: [itunes, deezer, spotify] }
+                confirmed_id: { type: string }
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/library/audit/reject:
+    post:
+      tags: [library]
+      summary: Reject an incorrect enrichment match
+      operationId: rejectAuditItem
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [entity_type, entity_id, source]
+              properties:
+                entity_type: { type: string, enum: [artist, album] }
+                entity_id: { type: string }
+                source: { type: string, enum: [itunes, deezer, spotify] }
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  # ── Library Enrichment Pipeline ───────────────────────────────────────────
+
+  /api/v1/library/enrich/status:
+    get:
+      tags: [library]
+      summary: Unified enrichment pipeline status (all workers)
+      operationId: getEnrichStatus
+      responses:
+        '200':
+          description: Pipeline status grouped by enrichment source
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiSuccess'
+                  - $ref: '#/components/schemas/EnrichmentPipelineStatus'
         '500':
           $ref: '#/components/responses/ServerError'
 
-  /api/v1/library/enrich-deezer-bpm:
+  /api/v1/library/enrich/full:
     post:
-      tags: [settings]
-      summary: Start Deezer BPM enrichment
-      operationId: enrichDeezerBpm
+      tags: [library]
+      summary: Start full enrichment pipeline (Stage 2 → Stage 3)
+      operationId: enrichFull
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                batch_size: { type: integer, minimum: 1, maximum: 200, default: 50 }
       responses:
         '202':
           $ref: '#/components/responses/Accepted'
-        '409':
-          $ref: '#/components/responses/Conflict'
-        '500':
-          $ref: '#/components/responses/ServerError'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/library/enrich/stop:
+    post:
+      tags: [library]
+      summary: Signal enrichment pipeline to stop after current batch
+      operationId: stopEnrich
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
 
   # ── Personal Discovery ────────────────────────────────────────────────────
 
@@ -1428,9 +1560,9 @@ components:
       type: string
       enum: [album, ep, single, compilation]
 
-    LibraryBackend:
+    LibraryPlatform:
       type: string
-      enum: [soulsync, plex, jellyfin, navidrome]
+      enum: [plex, jellyfin, navidrome]
 
     PlaylistSource:
       type: string
@@ -1735,7 +1867,7 @@ components:
 
     Settings:
       type: object
-      required: [library_backend]
+      required: [library_platform]
       properties:
         lastfm_username:
           type: string
@@ -1751,8 +1883,8 @@ components:
           type: string
         spotify_client_secret:
           type: string
-        library_backend:
-          $ref: '#/components/schemas/LibraryBackend'
+        library_platform:
+          $ref: '#/components/schemas/LibraryPlatform'
 
     ConnectionStatus:
       type: object
@@ -1767,10 +1899,10 @@ components:
 
     LibraryStatus:
       type: object
-      required: [backend, track_count]
+      required: [platform, track_count]
       properties:
-        backend:
-          $ref: '#/components/schemas/LibraryBackend'
+        platform:
+          $ref: '#/components/schemas/LibraryPlatform'
         track_count:
           type: integer
         last_synced:
@@ -1795,59 +1927,179 @@ components:
             enrich_running:
               type: boolean
 
-    SpotifyEnrichStatus:
+    EnrichmentWorkerStatus:
       type: object
-      required: [enrich_running, enriched_artists, total_artists, spotify_available]
+      required: [found, not_found, errors, pending]
       properties:
-        enrich_running:
-          type: boolean
-        enriched_artists:
+        found:
           type: integer
-        total_artists:
+        not_found:
           type: integer
-        last_run:
-          type: [string, 'null']
-          format: date-time
-        spotify_available:
-          type: boolean
+        errors:
+          type: integer
+        pending:
+          type: integer
 
-    LastfmTagsStatus:
+    EnrichmentPipelineStatus:
       type: object
-      required: [enrich_running, enriched_artists, total_artists, enriched_albums, total_albums, lastfm_available]
+      required: [running]
       properties:
-        enrich_running:
+        running:
           type: boolean
-        enriched_artists:
-          type: integer
-        total_artists:
-          type: integer
-        enriched_albums:
-          type: integer
-        total_albums:
-          type: integer
-        last_run:
+        started_at:
           type: [string, 'null']
           format: date-time
-        lastfm_available:
-          type: boolean
+          description: ISO 8601 UTC timestamp set when run_full() is called; null when not running
+        workers:
+          type: object
+          description: Per-worker progress keyed by worker name
+          properties:
+            library:        { $ref: '#/components/schemas/EnrichmentWorkerStatus' }
+            itunes_rich:    { $ref: '#/components/schemas/EnrichmentWorkerStatus' }
+            deezer_rich:    { $ref: '#/components/schemas/EnrichmentWorkerStatus' }
+            spotify_id:     { $ref: '#/components/schemas/EnrichmentWorkerStatus' }
+            spotify_genres: { $ref: '#/components/schemas/EnrichmentWorkerStatus' }
+            lastfm_id:      { $ref: '#/components/schemas/EnrichmentWorkerStatus' }
+            lastfm_tags:    { $ref: '#/components/schemas/EnrichmentWorkerStatus' }
+            lastfm_stats:   { $ref: '#/components/schemas/EnrichmentWorkerStatus' }
 
-    DeezerBpmStatus:
+    # ── Library Browse ────────────────────────────────────────────────────────
+
+    LibArtist:
       type: object
-      required: [enrich_running, enriched_albums, total_albums, enriched_tracks, total_tracks]
+      required: [id, name, album_count, match_confidence]
       properties:
-        enrich_running:
-          type: boolean
-        enriched_albums:
+        id:
+          type: string
+        name:
+          type: string
+        album_count:
           type: integer
-        total_albums:
-          type: integer
-        enriched_tracks:
-          type: integer
-        total_tracks:
-          type: integer
-        last_run:
+        match_confidence:
+          type: number
+          format: float
+        source_platform:
           type: [string, 'null']
-          format: date-time
+        lastfm_tags_json:
+          type: [string, 'null']
+          description: JSON-encoded array of Last.fm tag strings
+        genres_json:
+          type: [string, 'null']
+          description: JSON-encoded array of Spotify genre strings
+        popularity:
+          type: [integer, 'null']
+          description: Spotify popularity score (0–100)
+        listener_count:
+          type: [integer, 'null']
+          description: Last.fm listener count
+        global_play_count:
+          type: [integer, 'null']
+          description: Last.fm global play count
+
+    LibAlbum:
+      type: object
+      required: [id, artist_id, artist_name, title, match_confidence, needs_verification]
+      properties:
+        id:
+          type: string
+        artist_id:
+          type: string
+        artist_name:
+          type: string
+        title:
+          type: string
+        year:
+          type: [integer, 'null']
+        record_type:
+          type: [string, 'null']
+        match_confidence:
+          type: number
+          format: float
+        needs_verification:
+          type: integer
+        source_platform:
+          type: [string, 'null']
+        release_date:
+          type: [string, 'null']
+          format: date
+        genre:
+          type: [string, 'null']
+        thumb_url:
+          type: [string, 'null']
+        lastfm_tags_json:
+          type: [string, 'null']
+          description: JSON-encoded array of Last.fm tag strings
+
+    LibTrack:
+      type: object
+      required: [id, album_id, artist_id, title, rating, play_count]
+      properties:
+        id:
+          type: string
+        album_id:
+          type: string
+        artist_id:
+          type: string
+        title:
+          type: string
+        track_number:
+          type: [integer, 'null']
+        disc_number:
+          type: [integer, 'null']
+        duration:
+          type: [integer, 'null']
+          description: Duration in seconds
+        rating:
+          type: integer
+          description: User star rating (0–5)
+        play_count:
+          type: integer
+        tempo:
+          type: [number, 'null']
+          format: float
+          description: BPM from Deezer enrichment
+        album_title:
+          type: string
+        artist_name:
+          type: string
+
+    AuditEnrichmentMeta:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [found, not_found, error, fallback, pending]
+        confidence:
+          type: [number, 'null']
+          format: float
+
+    AuditItem:
+      type: object
+      required: [artist_id, artist_name, album_id, album_title, needs_verification]
+      properties:
+        artist_id:
+          type: string
+        artist_name:
+          type: string
+        album_id:
+          type: string
+        album_title:
+          type: string
+        match_confidence:
+          type: [number, 'null']
+          format: float
+        needs_verification:
+          type: boolean
+        itunes_album_id:
+          type: [string, 'null']
+        deezer_id:
+          type: [string, 'null']
+        enrichment:
+          type: object
+          description: Map of source name to enrichment status
+          additionalProperties:
+            $ref: '#/components/schemas/AuditEnrichmentMeta'
 
     # ── Discovery ────────────────────────────────────────────────────────────
 
