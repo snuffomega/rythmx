@@ -104,7 +104,9 @@ def sync_library() -> dict:
                 album_title = plex_album.title or ""
                 album_year = getattr(plex_album, "year", None)
                 thumb_url = getattr(plex_album, "thumb", None) or ""
-                record_type = getattr(plex_album, "type", None) or ""
+                # Plex album.type is always "album" — not useful for classification.
+                # Leave NULL so query-time track-count heuristic can classify.
+                record_type = None
 
                 conn.execute(
                     "INSERT OR IGNORE INTO lib_albums "
