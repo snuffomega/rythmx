@@ -268,8 +268,7 @@ function MissingAlbumCard({ release }: { release: MissingAlbum }) {
 }
 
 function MissingKindGroup({ group }: { group: KindGroup<MissingAlbum & { record_type?: string | null }> }) {
-  const [open, setOpen] = useState(false);
-  const previewItems = group.items.slice(0, 8);
+  const [open, setOpen] = useState(true);
   return (
     <div className="mb-4 ml-5">
       <button
@@ -279,25 +278,6 @@ function MissingKindGroup({ group }: { group: KindGroup<MissingAlbum & { record_
         <ChevronRight size={12} className={`transition-transform ${open ? 'rotate-90' : ''}`} />
         {group.label} ({group.items.length})
       </button>
-      {!open && (
-        <div className="flex gap-1.5 ml-5 overflow-x-auto pb-1">
-          {previewItems.map(r => (
-            <div key={r.id || r.deezer_album_id || r.itunes_album_id || r.album_title}
-                 className="w-10 h-10 flex-shrink-0 rounded-sm overflow-hidden bg-[#1a1a1a] border border-dashed border-[#333] flex items-center justify-center opacity-60">
-              {r.thumb_url ? (
-                <img src={r.thumb_url} alt={r.album_title} className="w-full h-full object-cover" loading="lazy" />
-              ) : (
-                <Disc size={14} className="text-text-muted" />
-              )}
-            </div>
-          ))}
-          {group.items.length > 8 && (
-            <div className="w-10 h-10 flex-shrink-0 rounded-sm bg-[#1a1a1a] border border-dashed border-[#333] flex items-center justify-center opacity-60">
-              <span className="text-text-muted text-[9px] font-mono">+{group.items.length - 8}</span>
-            </div>
-          )}
-        </div>
-      )}
       {open && (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3">
           {group.items.map(r => (
