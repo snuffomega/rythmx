@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 
 from app.db import rythmx_store
 from app.dependencies import verify_api_key
+from app.services.enrichment._helpers import strip_title_suffixes
 
 logger = logging.getLogger(__name__)
 
@@ -227,6 +228,7 @@ def library_artist_detail(artist_id: str):
                 if cid not in groups:
                     groups[cid] = {"primary": None, "editions": []}
                 edition = dict(row)
+                edition["display_title"] = strip_title_suffixes(edition["album_title"])
                 groups[cid]["editions"].append(edition)
                 if groups[cid]["primary"] is None:
                     groups[cid]["primary"] = edition
@@ -251,7 +253,7 @@ def library_artist_detail(artist_id: str):
         "artist": dict(artist_row),
         "albums": [dict(r) for r in albums],
         "top_tracks": [dict(r) for r in top_tracks],
-        "missing_albums": [dict(r) for r in missing_rows],
+        "missing_albums": [{**dict(r), "display_title": strip_title_suffixes(r["album_title"])} for r in missing_rows],
         "missing_groups": missing_groups,
         "dismissed_count": dismissed_count,
     }

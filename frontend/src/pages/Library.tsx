@@ -272,10 +272,15 @@ function MissingAlbumCard({ release, onDismiss }: { release: MissingAlbum; onDis
           Missing
         </span>
       </div>
-      <p className="text-text-primary text-sm font-medium truncate">{release.album_title}</p>
-      {release.release_date && (
-        <p className="text-text-muted text-xs font-mono">{release.release_date.slice(0, 4)}</p>
-      )}
+      <p className="text-text-primary text-sm font-medium truncate">{release.display_title || release.album_title}</p>
+      <div className="flex items-center gap-1.5">
+        {release.release_date && (
+          <span className="text-text-muted text-xs font-mono">{release.release_date.slice(0, 4)}</span>
+        )}
+        {release.version_type && release.version_type !== 'original' && (
+          <span className="text-[9px] font-mono text-text-muted/70 px-1 py-0.5 bg-[#1a1a1a] rounded-sm">{release.version_type}</span>
+        )}
+      </div>
     </div>
   );
   if (release.id) {
@@ -337,7 +342,7 @@ function MissingGroupCard({ group, onDismiss }: { group: MissingReleaseGroup; on
           </span>
         )}
       </div>
-      <p className="text-text-primary text-sm font-medium truncate">{primary.album_title}</p>
+      <p className="text-text-primary text-sm font-medium truncate">{primary.display_title || primary.album_title}</p>
       {primary.release_date && (
         <p className="text-text-muted text-xs font-mono">{primary.release_date.slice(0, 4)}</p>
       )}

@@ -287,6 +287,7 @@ export interface LibTrack {
 export interface MissingAlbum {
   id?: string;
   album_title: string;
+  display_title?: string;
   source: string;
   record_type?: string | null;
   album_id?: string;
