@@ -197,11 +197,12 @@ def persist_artist_catalog(conn, artist_id: str, source: str, catalog: list[dict
         conn.execute(
             """
             INSERT OR REPLACE INTO lib_artist_catalog
-                (artist_id, source, album_id, album_title, record_type, track_count, fetched_at)
-            VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+                (artist_id, source, album_id, album_title, record_type, track_count, artwork_url, fetched_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
             """,
             (artist_id, source, album_id, title,
-             item.get("record_type"), item.get("track_count")),
+             item.get("record_type"), item.get("track_count"),
+             item.get("artwork_url") or None),
         )
 
 
