@@ -465,6 +465,49 @@ def get_deezer_album_info(deezer_album_id: str) -> dict | None:
     }
 
 
+def get_album_tracks_itunes(itunes_album_id: str) -> list[dict]:
+    """Fetch track listing for an iTunes album by collectionId.
+
+    Returns [{title, track_number, disc_number, duration_ms, preview_url}].
+    Uses /lookup?id={id}&entity=song — first result is the collection wrapper.
+    """
+    data = _itunes_get("/lookup", {"id": itunes_album_id, "entity": "song"})
+    if not data or not data.get("results"):
+        return []
+    tracks = []
+    for item in data["results"]:
+        if item.get("wrapperType") != "track":
+            continue
+        tracks.append({
+            "title": item.get("trackName", ""),
+            "track_number": item.get("trackNumber", 0),
+            "disc_number": item.get("discNumber", 1),
+            "duration_ms": item.get("trackTimeMillis", 0),
+            "preview_url": item.get("previewUrl", ""),
+        })
+    return tracks
+
+
+def get_album_tracks_deezer(deezer_album_id: str) -> list[dict]:
+    """Fetch track listing for a Deezer album by album ID.
+
+    Returns [{title, track_number, disc_number, duration_ms, preview_url}].
+    """
+    data = _deezer_get(f"/album/{deezer_album_id}/tracks", {"limit": 200})
+    if not data or not data.get("data"):
+        return []
+    tracks = []
+    for item in data["data"]:
+        tracks.append({
+            "title": item.get("title", ""),
+            "track_number": item.get("track_position", 0),
+            "disc_number": item.get("disk_number", 1),
+            "duration_ms": (item.get("duration", 0)) * 1000,
+            "preview_url": item.get("preview", ""),
+        })
+    return tracks
+
+
 # ---------------------------------------------------------------------------
 # MusicBrainz (no auth, 1 req/sec rate limit)
 # ---------------------------------------------------------------------------

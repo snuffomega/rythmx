@@ -137,11 +137,49 @@ def library_artist_detail(artist_id: str):
         try:
             missing_rows = conn.execute(
                 """
-                SELECT title AS album_title, kind, kind AS record_type, version_type,
-                       release_date, catalog_source AS source,
-                       deezer_album_id, itunes_album_id, thumb_url, track_count
-                FROM lib_releases
-                WHERE artist_id = ? AND is_owned = 0 AND user_dismissed = 0
+                WITH base AS (
+                    SELECT *,
+                           COALESCE(
+                               kind_deezer, kind_itunes,
+                               CASE
+                                   WHEN track_count IS NOT NULL AND track_count <= 3 THEN 'single'
+                                   WHEN track_count IS NOT NULL AND track_count <= 6 THEN 'ep'
+                                   ELSE 'album'
+                               END
+                           ) AS resolved_kind,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY artist_name_lower, normalized_title,
+                                            COALESCE(
+                                                kind_deezer, kind_itunes,
+                                                CASE
+                                                    WHEN track_count IS NOT NULL AND track_count <= 3 THEN 'single'
+                                                    WHEN track_count IS NOT NULL AND track_count <= 6 THEN 'ep'
+                                                    ELSE 'album'
+                                                END
+                                            )
+                               ORDER BY
+                                   CASE catalog_source WHEN 'deezer' THEN 1 WHEN 'itunes' THEN 2 ELSE 3 END,
+                                   thumb_url IS NOT NULL DESC,
+                                   release_date IS NOT NULL DESC
+                           ) AS rn
+                    FROM lib_releases
+                    WHERE artist_id = ? AND is_owned = 0 AND user_dismissed = 0
+                )
+                SELECT title AS album_title, resolved_kind AS kind, resolved_kind AS record_type,
+                       version_type, release_date, catalog_source AS source,
+                       deezer_album_id, itunes_album_id, thumb_url, track_count, id
+                FROM base
+                WHERE rn = 1
+                  AND NOT (
+                      resolved_kind = 'single'
+                      AND EXISTS (
+                          SELECT 1 FROM lib_releases lr2
+                          WHERE lr2.artist_name_lower = base.artist_name_lower
+                            AND lr2.normalized_title = base.normalized_title
+                            AND COALESCE(lr2.kind_deezer, lr2.kind_itunes, 'album') IN ('album', 'ep')
+                            AND lr2.id != base.id
+                      )
+                  )
                 ORDER BY release_date DESC
                 """,
                 (artist_id,),
@@ -156,6 +194,44 @@ def library_artist_detail(artist_id: str):
         "top_tracks": [dict(r) for r in top_tracks],
         "missing_albums": [dict(r) for r in missing_rows],
     }
+
+
+@router.get("/library/releases/{release_id}")
+def library_release_detail(release_id: str):
+    """Return release metadata + on-demand track listing from iTunes/Deezer."""
+    from app.clients.music_client import get_album_tracks_itunes, get_album_tracks_deezer
+
+    with rythmx_store._connect() as conn:
+        row = conn.execute(
+            """
+            SELECT id, artist_id, artist_name, title, release_date,
+                   COALESCE(
+                       kind_deezer, kind_itunes,
+                       CASE
+                           WHEN track_count IS NOT NULL AND track_count <= 3 THEN 'single'
+                           WHEN track_count IS NOT NULL AND track_count <= 6 THEN 'ep'
+                           ELSE 'album'
+                       END
+                   ) AS kind,
+                   version_type, track_count, thumb_url, catalog_source,
+                   deezer_album_id, itunes_album_id, explicit, label, genre_itunes
+            FROM lib_releases WHERE id = ?
+            """,
+            (release_id,),
+        ).fetchone()
+        if not row:
+            return JSONResponse({"status": "error", "message": "Release not found"}, status_code=404)
+
+    release = dict(row)
+
+    # Fetch tracks on demand — prefer iTunes (better data), fallback to Deezer
+    tracks: list[dict] = []
+    if release.get("itunes_album_id"):
+        tracks = get_album_tracks_itunes(release["itunes_album_id"])
+    if not tracks and release.get("deezer_album_id"):
+        tracks = get_album_tracks_deezer(release["deezer_album_id"])
+
+    return {"status": "ok", "release": release, "tracks": tracks}
 
 
 @router.get("/library/artists/{artist_id}/match-debug")
