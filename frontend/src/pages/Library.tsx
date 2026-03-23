@@ -101,18 +101,20 @@ function StarRating({ value, onChange, size = 14, readonly = false }: StarRating
 // ---------------------------------------------------------------------------
 
 function ArtistImage({ name, size, imageUrl }: { name: string; size: number; imageUrl?: string | null }) {
+  const [errored, setErrored] = useState(false);
   const hasDirectUrl = imageUrl && imageUrl.startsWith('http');
   const resolvedUrl = useImage('artist', name, '', !!hasDirectUrl);
   const src = hasDirectUrl ? imageUrl : resolvedUrl;
-  if (src) return <img src={getImageUrl(src)} alt={name} className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} />;
+  if (src && !errored) return <img src={getImageUrl(src)} alt={name} className="w-full h-full object-cover" onError={() => setErrored(true)} />;
   return <User size={size} className="text-text-muted" />;
 }
 
 function AlbumImage({ title, artist, size, thumbUrl }: { title: string; artist: string; size: number; thumbUrl?: string | null }) {
+  const [errored, setErrored] = useState(false);
   const hasDirectUrl = thumbUrl && thumbUrl.startsWith('http');
   const resolvedUrl = useImage('album', title, artist, !!hasDirectUrl);
   const src = hasDirectUrl ? thumbUrl : resolvedUrl;
-  if (src) return <img src={getImageUrl(src)} alt={title} className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} />;
+  if (src && !errored) return <img src={getImageUrl(src)} alt={title} className="w-full h-full object-cover" onError={() => setErrored(true)} />;
   return <Disc size={size} className="text-text-muted" />;
 }
 
@@ -382,8 +384,8 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
     libraryBrowseApi.getArtist(artistId)
       .then(res => {
         setData({ artist: res.artist, albums: res.albums, top_tracks: res.top_tracks, missing_albums: res.missing_albums || [] });
-        setDismissedCount((res as any).dismissed_count ?? 0);
-        setMissingGroups((res as any).missing_groups ?? []);
+        setDismissedCount(res.dismissed_count ?? 0);
+        setMissingGroups(res.missing_groups ?? []);
       })
       .catch(err => setError(err instanceof Error ? err.message : 'Failed to load artist'))
       .finally(() => setLoading(false));
