@@ -11,7 +11,6 @@ import type {
   Artist,
   Track,
   TopAlbum,
-  StatsSummary,
   LibraryStatus,
   LibraryEnrichStatus,
   SpotifyEnrichStatus,
@@ -248,9 +247,6 @@ export const statsApi = {
     request<{ status: string; albums: TopAlbum[] }>(
       `/stats/top-albums?period=${period}&limit=${limit}`
     ).then(r => r.albums),
-  getSummary: () =>
-    request<{ status: string; summary: StatsSummary }>('/stats/summary')
-      .then(r => r.summary),
   getLovedArtists: () =>
     request<{ status: string; artists: Artist[] }>('/stats/loved-artists')
       .then(r => r.artists),

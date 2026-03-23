@@ -15,14 +15,6 @@ export interface Artist {
   url?: string;
 }
 
-export interface Album {
-  artist: string;
-  title: string;
-  image?: string;
-  release_date?: string;
-  mbid?: string;
-}
-
 export interface TopAlbum {
   artist: string;
   title: string;
@@ -159,12 +151,6 @@ export interface PersonalDiscoveryResult {
   reason?: string;
   similarity?: number;
   tags?: string[];
-}
-
-export interface StatsSummary {
-  top_artist: string;
-  total_artists: number;
-  total_plays?: number;
 }
 
 export interface LibraryStatus {
