@@ -495,10 +495,33 @@ export function SettingsPage({ toast }: SettingsPageProps) {
 
   const handleCopyApiKey = () => {
     if (!apiKey) return;
-    navigator.clipboard.writeText(apiKey).then(() => {
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(apiKey).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }).catch(() => {
+        fallbackCopy(apiKey);
+      });
+    } else {
+      fallbackCopy(apiKey);
+    }
+  };
+
+  const fallbackCopy = (text: string) => {
+    const el = document.createElement('textarea');
+    el.value = text;
+    el.style.position = 'fixed';
+    el.style.opacity = '0';
+    document.body.appendChild(el);
+    el.focus();
+    el.select();
+    try {
+      document.execCommand('copy');
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    });
+    } finally {
+      document.body.removeChild(el);
+    }
   };
 
   const handleRegenerateApiKey = async () => {
