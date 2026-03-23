@@ -85,16 +85,20 @@ def sync_library() -> dict:
             # Insert new artists only — enrichment columns untouched on existing rows
             conn.execute(
                 "INSERT OR IGNORE INTO lib_artists "
-                "(id, name, name_lower, source_platform, updated_at) "
-                "VALUES (?, ?, ?, 'plex', CURRENT_TIMESTAMP)",
-                (artist_id, artist_name, artist_name.lower()),
+                "(id, name, name_lower, source_platform, added_at, updated_at) "
+                "VALUES (?, ?, ?, 'plex', ?, CURRENT_TIMESTAMP)",
+                (artist_id, artist_name, artist_name.lower(),
+                 plex_artist.addedAt.isoformat() if getattr(plex_artist, "addedAt", None) else None),
             )
             # Update ONLY Plex-owned columns; un-tombstone if previously removed
             conn.execute(
                 "UPDATE lib_artists SET name = ?, name_lower = ?, "
+                "added_at = COALESCE(added_at, ?), "
                 "source_platform = 'plex', updated_at = CURRENT_TIMESTAMP, removed_at = NULL "
                 "WHERE id = ?",
-                (artist_name, artist_name.lower(), artist_id),
+                (artist_name, artist_name.lower(),
+                 plex_artist.addedAt.isoformat() if getattr(plex_artist, "addedAt", None) else None,
+                 artist_id),
             )
             conn.execute("INSERT OR IGNORE INTO _seen_artists (id) VALUES (?)", (artist_id,))
             artist_count += 1
@@ -104,24 +108,34 @@ def sync_library() -> dict:
                 album_title = plex_album.title or ""
                 album_year = getattr(plex_album, "year", None)
                 thumb_url = getattr(plex_album, "thumb", None) or None
-                # Plex album.type is always "album" — not useful for classification.
-                # Leave NULL so query-time track-count heuristic can classify.
-                record_type = None
+                studio = getattr(plex_album, "studio", None) or None
+                originally_available = getattr(plex_album, "originallyAvailableAt", None)
+                plex_release_date = originally_available.isoformat() if originally_available else None
+                album_last_viewed = getattr(plex_album, "lastViewedAt", None)
+                album_last_viewed_str = album_last_viewed.isoformat() if album_last_viewed else None
 
                 conn.execute(
                     "INSERT OR IGNORE INTO lib_albums "
                     "(id, artist_id, title, local_title, title_lower, year, thumb_url_plex, "
+                    "label_plex, plex_release_date, last_viewed_at, "
                     "source_platform, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, 'plex', CURRENT_TIMESTAMP)",
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'plex', CURRENT_TIMESTAMP)",
                     (album_id, artist_id, album_title, album_title,
-                     album_title.lower(), album_year, thumb_url),
+                     album_title.lower(), album_year, thumb_url,
+                     studio, plex_release_date, album_last_viewed_str),
                 )
                 conn.execute(
                     "UPDATE lib_albums SET title = ?, local_title = ?, title_lower = ?, "
-                    "year = ?, thumb_url_plex = ?, record_type = ?, source_platform = 'plex', "
+                    "year = ?, thumb_url_plex = ?, "
+                    "label_plex = COALESCE(label_plex, ?), "
+                    "plex_release_date = COALESCE(plex_release_date, ?), "
+                    "last_viewed_at = ?, "
+                    "source_platform = 'plex', "
                     "updated_at = CURRENT_TIMESTAMP, removed_at = NULL WHERE id = ?",
                     (album_title, album_title, album_title.lower(),
-                     album_year, thumb_url, record_type, album_id),
+                     album_year, thumb_url,
+                     studio, plex_release_date, album_last_viewed_str,
+                     album_id),
                 )
                 conn.execute("INSERT OR IGNORE INTO _seen_albums (id) VALUES (?)", (album_id,))
                 album_count += 1
@@ -135,6 +149,11 @@ def sync_library() -> dict:
                     # S1-1: user rating (0.0–10.0 float in Plex; NULL if unrated) and play count
                     user_rating = getattr(plex_track, "userRating", None)
                     play_count = getattr(plex_track, "viewCount", None)
+                    skip_count = getattr(plex_track, "skipCount", None) or 0
+                    track_last_viewed = getattr(plex_track, "lastViewedAt", None)
+                    track_last_viewed_str = track_last_viewed.isoformat() if track_last_viewed else None
+                    track_added = getattr(plex_track, "addedAt", None)
+                    track_added_str = track_added.isoformat() if track_added else None
 
                     file_path = None
                     file_size = None
@@ -148,20 +167,26 @@ def sync_library() -> dict:
                     conn.execute(
                         "INSERT OR IGNORE INTO lib_tracks "
                         "(id, album_id, artist_id, title, title_lower, track_number, disc_number, "
-                        "duration, file_path, file_size, rating, play_count, source_platform, updated_at) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'plex', CURRENT_TIMESTAMP)",
+                        "duration, file_path, file_size, rating, play_count, "
+                        "skip_count, last_viewed_at, added_at, "
+                        "source_platform, updated_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'plex', CURRENT_TIMESTAMP)",
                         (track_id, album_id, artist_id, track_title, track_title.lower(),
                          track_number, disc_number, duration, file_path, file_size,
-                         user_rating, play_count),
+                         user_rating, play_count,
+                         skip_count, track_last_viewed_str, track_added_str),
                     )
                     conn.execute(
                         "UPDATE lib_tracks SET title = ?, title_lower = ?, track_number = ?, "
                         "disc_number = ?, duration = ?, file_path = ?, file_size = ?, "
                         "rating = ?, play_count = ?, "
+                        "skip_count = ?, last_viewed_at = ?, added_at = COALESCE(added_at, ?), "
                         "source_platform = 'plex', updated_at = CURRENT_TIMESTAMP, removed_at = NULL "
                         "WHERE id = ?",
                         (track_title, track_title.lower(), track_number, disc_number,
-                         duration, file_path, file_size, user_rating, play_count, track_id),
+                         duration, file_path, file_size, user_rating, play_count,
+                         skip_count, track_last_viewed_str, track_added_str,
+                         track_id),
                     )
                     conn.execute("INSERT OR IGNORE INTO _seen_tracks (id) VALUES (?)", (track_id,))
                     track_count += 1

@@ -54,8 +54,12 @@ def library_artists(
         rows = conn.execute(
             f"""
             SELECT a.id, a.name, a.match_confidence, a.source_platform,
-                   a.lastfm_tags_json, a.genres_json, a.popularity,
-                   a.listener_count, a.global_play_count, a.missing_count,
+                   a.lastfm_tags_json,
+                   a.genres_json_spotify AS genres_json,
+                   a.popularity_spotify AS popularity,
+                   a.listener_count_lastfm AS listener_count,
+                   a.play_count_lastfm AS global_play_count,
+                   a.missing_count,
                    COALESCE(a.image_url_fanart, a.image_url_deezer) AS image_url,
                    COUNT(al.id) AS album_count
             FROM lib_artists a
@@ -79,8 +83,11 @@ def library_artist_detail(artist_id: str):
         artist_row = conn.execute(
             """
             SELECT a.id, a.name, a.match_confidence, a.source_platform,
-                   a.lastfm_tags_json, a.genres_json, a.popularity,
-                   a.listener_count, a.global_play_count,
+                   a.lastfm_tags_json,
+                   a.genres_json_spotify AS genres_json,
+                   a.popularity_spotify AS popularity,
+                   a.listener_count_lastfm AS listener_count,
+                   a.play_count_lastfm AS global_play_count,
                    COALESCE(a.image_url_fanart, a.image_url_deezer) AS image_url,
                    COUNT(al.id) AS album_count
             FROM lib_artists a
@@ -100,7 +107,7 @@ def library_artist_detail(artist_id: str):
         albums = conn.execute(
             """
             SELECT la.id, la.artist_id, la.title, la.year,
-                   COALESCE(la.record_type,
+                   COALESCE(la.record_type_deezer,
                        CASE
                            WHEN tc.cnt IS NOT NULL AND tc.cnt <= 3 THEN 'single'
                            WHEN tc.cnt IS NOT NULL AND tc.cnt <= 6 THEN 'ep'
@@ -108,7 +115,7 @@ def library_artist_detail(artist_id: str):
                        END
                    ) AS record_type,
                    la.match_confidence, la.needs_verification, la.source_platform,
-                   la.release_date, la.genre,
+                   la.release_date_itunes AS release_date, la.genre_itunes AS genre,
                    COALESCE(la.thumb_url_deezer, la.thumb_url_plex) AS thumb_url,
                    la.lastfm_tags_json
             FROM lib_albums la
@@ -127,7 +134,7 @@ def library_artist_detail(artist_id: str):
             """
             SELECT t.id, t.album_id, t.artist_id, t.title,
                    t.track_number, t.disc_number, t.duration,
-                   t.rating, t.play_count, t.tempo,
+                   t.rating, t.play_count, t.tempo_deezer AS tempo,
                    al.title AS album_title
             FROM lib_tracks t
             JOIN lib_albums al ON al.id = t.album_id
@@ -546,7 +553,7 @@ def library_albums(
         where.append("al.source_platform = ?")
         params.append(platform)
     if record_type != "all":
-        where.append("al.record_type = ?")
+        where.append("al.record_type_deezer = ?")
         params.append(record_type)
 
     where_clause = " AND ".join(where)
@@ -564,9 +571,10 @@ def library_albums(
 
         rows = conn.execute(
             f"""
-            SELECT al.id, al.artist_id, al.title, al.year, al.record_type,
+            SELECT al.id, al.artist_id, al.title, al.year,
+                   al.record_type_deezer AS record_type,
                    al.match_confidence, al.needs_verification, al.source_platform,
-                   al.release_date, al.genre,
+                   al.release_date_itunes AS release_date, al.genre_itunes AS genre,
                    COALESCE(al.thumb_url_deezer, al.thumb_url_plex) AS thumb_url,
                    al.lastfm_tags_json,
                    ar.name AS artist_name
@@ -588,9 +596,10 @@ def library_album_detail(album_id: str):
     with rythmx_store._connect() as conn:
         album_row = conn.execute(
             """
-            SELECT al.id, al.artist_id, al.title, al.year, al.record_type,
+            SELECT al.id, al.artist_id, al.title, al.year,
+                   al.record_type_deezer AS record_type,
                    al.match_confidence, al.needs_verification, al.source_platform,
-                   al.release_date, al.genre,
+                   al.release_date_itunes AS release_date, al.genre_itunes AS genre,
                    COALESCE(al.thumb_url_deezer, al.thumb_url_plex) AS thumb_url,
                    al.lastfm_tags_json,
                    ar.name AS artist_name
@@ -610,7 +619,7 @@ def library_album_detail(album_id: str):
             """
             SELECT id, album_id, artist_id, title,
                    track_number, disc_number, duration,
-                   rating, play_count, tempo
+                   rating, play_count, tempo_deezer AS tempo
             FROM lib_tracks
             WHERE album_id = ? AND removed_at IS NULL
             ORDER BY disc_number, track_number
@@ -692,7 +701,7 @@ def library_tracks(
             f"""
             SELECT t.id, t.album_id, t.artist_id, t.title,
                    t.track_number, t.disc_number, t.duration,
-                   t.rating, t.play_count, t.tempo,
+                   t.rating, t.play_count, t.tempo_deezer AS tempo,
                    al.title AS album_title,
                    ar.name  AS artist_name
             FROM lib_tracks t

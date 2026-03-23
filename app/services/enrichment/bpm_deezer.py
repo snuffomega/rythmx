@@ -1,6 +1,16 @@
 """
 bpm_deezer.py — Deezer BPM enrichment worker + status.
 
+INACTIVE — Manually triggered only via POST /api/v1/library/enrich-deezer-bpm.
+Intentionally excluded from PipelineRunner Stage 3 due to rate-limit profile:
+  2-pass per album (1 GET /album/{id}/tracks + 1 GET /track/{id} per track).
+  A typical 12-track album = 13 Deezer API calls.
+  111 albums × 13 = ~1,400+ calls — dwarfs all other Deezer enrichment combined.
+  All calls share the DomainRateLimiter("deezer") bucket, risking 429s mid-pipeline.
+
+When Forge rebuilds the pipeline, BPM can be reconsidered with a dedicated
+rate-limit bucket or per-request throttle that doesn't block other Deezer workers.
+
 Two-pass per album: GET /album/{id}/tracks for track IDs,
 then GET /track/{id} per track for BPM (not included in album track list).
 """
@@ -75,7 +85,7 @@ def enrich_deezer_bpm(batch_size: int = 30, stop_event=None,
     Deezer BPM enrichment pass.
 
     For each lib_album with a deezer_id, fetch the Deezer track list and write
-    bpm → lib_tracks.tempo using exact title match (title_lower).
+    bpm → lib_tracks.tempo_deezer using exact title match (title_lower).
 
     Only processes albums not already in enrichment_meta(source='deezer_bpm').
     Resumable — interrupted runs pick up where they left off.
@@ -156,7 +166,7 @@ def enrich_deezer_bpm(batch_size: int = 30, stop_event=None,
                 bpm = bpm_map.get(track["title_lower"])
                 if bpm:
                     conn.execute(
-                        "UPDATE lib_tracks SET tempo = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        "UPDATE lib_tracks SET tempo_deezer = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                         (bpm, track["id"]),
                     )
                     updated += 1
@@ -222,7 +232,7 @@ def get_deezer_bpm_status() -> dict:
                 """
             ).fetchone()[0]
             enriched_tracks = conn.execute(
-                "SELECT COUNT(*) FROM lib_tracks WHERE tempo IS NOT NULL AND tempo > 0"
+                "SELECT COUNT(*) FROM lib_tracks WHERE tempo_deezer IS NOT NULL AND tempo_deezer > 0"
             ).fetchone()[0]
             total_tracks = conn.execute("SELECT COUNT(*) FROM lib_tracks").fetchone()[0]
     except Exception:

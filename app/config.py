@@ -83,6 +83,12 @@ if CATALOG_PRIMARY not in ("deezer", "itunes"):
     logger.warning("CATALOG_PRIMARY=%s is invalid, falling back to 'deezer'", CATALOG_PRIMARY)
     CATALOG_PRIMARY = "deezer"
 
+# --- Deezer BPM ---
+# Manual-only enrichment for track BPM via Deezer.
+# Disabled by default due to heavy rate-limit profile (~13 API calls per album).
+# See bpm_deezer.py docstring for full rate-limit math.
+DEEZER_BPM_ENABLED = _optional("DEEZER_BPM_ENABLED", "false").lower() in ("true", "1", "yes")
+
 # --- Music catalog API ---
 # auto = Spotify if credentials set, otherwise Deezer, MusicBrainz as fallback
 MUSIC_API_PROVIDER = _optional("MUSIC_API_PROVIDER", "auto")  # auto|deezer|spotify|musicbrainz

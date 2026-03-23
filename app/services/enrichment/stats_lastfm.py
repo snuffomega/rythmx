@@ -2,7 +2,7 @@
 stats_lastfm.py — Stage 3 Last.fm listener/play count worker.
 
 Requires: lastfm_mbid (from Stage 2 enrich_artist_ids_lastfm).
-Writes: lib_artists.listener_count, lib_artists.global_play_count.
+Writes: lib_artists.listener_count_lastfm, lib_artists.play_count_lastfm.
 """
 import logging
 
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 _CANDIDATE_SQL = """
     SELECT id, name, lastfm_mbid FROM lib_artists
     WHERE lastfm_mbid IS NOT NULL
-      AND (listener_count IS NULL OR global_play_count IS NULL)
+      AND (listener_count_lastfm IS NULL OR play_count_lastfm IS NULL)
       AND id NOT IN (
           SELECT entity_id FROM enrichment_meta
           WHERE entity_type = 'artist' AND source = 'lastfm_stats'
@@ -26,7 +26,7 @@ _CANDIDATE_SQL = """
 _REMAINING_SQL = """
     SELECT COUNT(*) FROM lib_artists
     WHERE lastfm_mbid IS NOT NULL
-      AND (listener_count IS NULL OR global_play_count IS NULL)
+      AND (listener_count_lastfm IS NULL OR play_count_lastfm IS NULL)
       AND id NOT IN (
           SELECT entity_id FROM enrichment_meta
           WHERE entity_type = 'artist' AND source = 'lastfm_stats'
@@ -49,8 +49,8 @@ def _process_item(conn, row):
         conn.execute(
             """
             UPDATE lib_artists
-            SET listener_count = ?,
-                global_play_count = ?,
+            SET listener_count_lastfm = ?,
+                play_count_lastfm = ?,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,

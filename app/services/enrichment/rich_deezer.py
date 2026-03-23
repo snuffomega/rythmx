@@ -1,8 +1,8 @@
 """
-rich_deezer.py — Stage 3 Deezer release data worker: record_type + thumb_url.
+rich_deezer.py — Stage 3 Deezer release data worker: record_type_deezer + thumb_url.
 
 Requires: deezer_id (from Stage 2 enrich_library).
-Writes: lib_albums.record_type (COALESCE), lib_albums.thumb_url_deezer (per-source column).
+Writes: lib_albums.record_type_deezer (COALESCE), lib_albums.thumb_url_deezer (per-source column).
 """
 import logging
 
@@ -47,7 +47,7 @@ def _process_item(conn, row):
         conn.execute(
             """
             UPDATE lib_albums
-            SET record_type = COALESCE(record_type, ?),
+            SET record_type_deezer = COALESCE(record_type_deezer, ?),
                 thumb_url_deezer = COALESCE(thumb_url_deezer, ?),
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
@@ -57,7 +57,7 @@ def _process_item(conn, row):
              album_id),
         )
         write_enrichment_meta(conn, "deezer_rich", "album", album_id, "found")
-        logger.debug("enrich_deezer_release: '%s' -> type=%s thumb=%s",
+        logger.debug("enrich_deezer_release: '%s' -> record_type_deezer=%s thumb=%s",
                      album_title, result.get("record_type"), bool(result.get("thumb_url")))
         return "found"
     else:
@@ -66,7 +66,7 @@ def _process_item(conn, row):
 
 
 def enrich_deezer_release(batch_size=50, stop_event=None, on_progress=None):
-    """Stage 3 — Deezer release data: record_type + thumb_url per album."""
+    """Stage 3 — Deezer release data: record_type_deezer + thumb_url per album."""
     return run_enrichment_loop(
         worker_name="enrich_deezer_release",
         candidate_sql=_CANDIDATE_SQL,

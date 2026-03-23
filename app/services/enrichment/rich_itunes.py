@@ -1,8 +1,8 @@
 """
-rich_itunes.py — Stage 3 iTunes rich data worker: genre + release_date per album.
+rich_itunes.py — Stage 3 iTunes rich data worker: genre_itunes + release_date_itunes per album.
 
 Requires: itunes_album_id (from Stage 2 enrich_library).
-Writes: lib_albums.genre (COALESCE), lib_albums.release_date.
+Writes: lib_albums.genre_itunes (COALESCE), lib_albums.release_date_itunes.
 """
 import logging
 
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 _CANDIDATE_SQL = """
     SELECT id, itunes_album_id, title FROM lib_albums
     WHERE itunes_album_id IS NOT NULL
-      AND (genre IS NULL OR release_date IS NULL)
+      AND (genre_itunes IS NULL OR release_date_itunes IS NULL)
       AND id NOT IN (
           SELECT entity_id FROM enrichment_meta
           WHERE entity_type = 'album' AND source = 'itunes_rich'
@@ -26,7 +26,7 @@ _CANDIDATE_SQL = """
 _REMAINING_SQL = """
     SELECT COUNT(*) FROM lib_albums
     WHERE itunes_album_id IS NOT NULL
-      AND (genre IS NULL OR release_date IS NULL)
+      AND (genre_itunes IS NULL OR release_date_itunes IS NULL)
       AND id NOT IN (
           SELECT entity_id FROM enrichment_meta
           WHERE entity_type = 'album' AND source = 'itunes_rich'
@@ -49,15 +49,15 @@ def _process_item(conn, row):
         conn.execute(
             """
             UPDATE lib_albums
-            SET genre = COALESCE(genre, ?),
-                release_date = COALESCE(release_date, ?),
+            SET genre_itunes = COALESCE(genre_itunes, ?),
+                release_date_itunes = COALESCE(release_date_itunes, ?),
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
             (result.get("genre") or None, result.get("release_date") or None, album_id),
         )
         write_enrichment_meta(conn, "itunes_rich", "album", album_id, "found")
-        logger.debug("enrich_itunes_rich: '%s' -> genre=%s release=%s",
+        logger.debug("enrich_itunes_rich: '%s' -> genre_itunes=%s release=%s",
                      album_title, result.get("genre"), result.get("release_date"))
         return "found"
     else:
@@ -66,7 +66,7 @@ def _process_item(conn, row):
 
 
 def enrich_itunes_rich(batch_size=50, stop_event=None, on_progress=None):
-    """Stage 3 — iTunes rich data: genre + release_date per album."""
+    """Stage 3 — iTunes rich data: genre_itunes + release_date_itunes per album."""
     return run_enrichment_loop(
         worker_name="enrich_itunes_rich",
         candidate_sql=_CANDIDATE_SQL,

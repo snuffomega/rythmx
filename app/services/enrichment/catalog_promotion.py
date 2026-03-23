@@ -96,6 +96,34 @@ _EXISTS_SQL = """
 SELECT 1 FROM lib_releases WHERE id = ? LIMIT 1
 """
 
+# ---------------------------------------------------------------------------
+# Secondary enrichment — UPDATE existing primary rows from non-primary catalog
+# ---------------------------------------------------------------------------
+
+_SECONDARY_MATCH_SQL = """
+SELECT id FROM lib_releases
+WHERE artist_id = ? AND normalized_title = ? AND catalog_source = ?
+LIMIT 1
+"""
+
+_SECONDARY_ITUNES_UPDATE_SQL = """
+UPDATE lib_releases
+SET itunes_album_id = COALESCE(itunes_album_id, ?),
+    label           = COALESCE(label, ?),
+    genre_itunes    = COALESCE(genre_itunes, ?),
+    kind_itunes     = COALESCE(kind_itunes, ?),
+    last_checked_at = CURRENT_TIMESTAMP
+WHERE id = ?
+"""
+
+_SECONDARY_DEEZER_UPDATE_SQL = """
+UPDATE lib_releases
+SET deezer_album_id = COALESCE(deezer_album_id, ?),
+    kind_deezer     = COALESCE(kind_deezer, ?),
+    last_checked_at = CURRENT_TIMESTAMP
+WHERE id = ?
+"""
+
 
 # ---------------------------------------------------------------------------
 # Main entry point
@@ -127,9 +155,56 @@ def promote_catalog_to_releases(
         ("deezer", deezer_catalog, _DEEZER_INSERT_SQL),
         ("itunes", itunes_catalog, _ITUNES_INSERT_SQL),
     ):
-        # Only the primary catalog source gets promoted to lib_releases.
-        # The secondary source's IDs are still in lib_artist_catalog for enrichment.
+        # Non-primary catalog: enrich existing lib_releases rows (UPDATE only).
+        # Primary source inserts rows; secondary fills in missing per-source fields.
         if source != config.CATALOG_PRIMARY:
+            secondary_enriched = 0
+            for item in catalog:
+                album_id = item.get("id")
+                title = item.get("title")
+                if not album_id or not title:
+                    continue
+                album_id_str = str(album_id)
+                cleaned_title, _ = detect_version_type(title)
+                normalized_title = norm(cleaned_title)
+
+                # Find matching primary row by artist + normalized title
+                match = conn.execute(
+                    _SECONDARY_MATCH_SQL,
+                    (artist_id, normalized_title, config.CATALOG_PRIMARY),
+                ).fetchone()
+                if not match:
+                    continue
+
+                release_id = match[0]
+                record_type = item.get("record_type")
+                track_count = item.get("track_count") or None
+                kind_value = _classify_kind(record_type, track_count)
+
+                try:
+                    if source == "itunes":
+                        label = item.get("label") or None
+                        genre = item.get("genre") or None
+                        conn.execute(
+                            _SECONDARY_ITUNES_UPDATE_SQL,
+                            (album_id_str, label, genre, kind_value, release_id),
+                        )
+                    elif source == "deezer":
+                        conn.execute(
+                            _SECONDARY_DEEZER_UPDATE_SQL,
+                            (album_id_str, kind_value, release_id),
+                        )
+                    secondary_enriched += 1
+                except Exception as exc:
+                    logger.debug(
+                        "catalog_promotion: secondary enrich failed for %s id=%s: %s",
+                        source, album_id_str, exc,
+                    )
+            if secondary_enriched:
+                logger.info(
+                    "catalog_promotion: secondary enrichment from %s for '%s': %d rows updated",
+                    source, artist_name, secondary_enriched,
+                )
             continue
         # Deduplicate by album_id — API can return same ID with variant titles
         # (e.g., clean + explicit). Keep first occurrence.

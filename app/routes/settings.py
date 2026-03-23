@@ -274,6 +274,13 @@ def library_deezer_bpm_status():
 
 @router.post("/library/enrich-deezer-bpm")
 def library_enrich_deezer_bpm(data: Optional[dict[str, Any]] = Body(default=None)):
+    if not config.DEEZER_BPM_ENABLED:
+        return JSONResponse(
+            {"status": "error",
+             "message": "Deezer BPM enrichment is disabled (DEEZER_BPM_ENABLED=false). "
+                        "See bpm_deezer.py for rate-limit details."},
+            status_code=403,
+        )
     global _deezer_bpm_thread
     with _deezer_bpm_lock:
         if _deezer_bpm_thread is not None and _deezer_bpm_thread.is_alive():

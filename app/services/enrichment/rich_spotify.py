@@ -2,7 +2,7 @@
 rich_spotify.py — Stage 3 Spotify genres + popularity worker.
 
 Requires: spotify_artist_id stored by enrich_artist_ids_spotify() (Stage 2).
-Fetches: genres_json, popularity, appears_on albums, raw cache.
+Fetches: genres_json_spotify, popularity_spotify, appears_on albums, raw cache.
 """
 import json
 import logging
@@ -48,7 +48,7 @@ def enrich_genres_spotify(batch_size: int = 20, stop_event: threading.Event | No
                 """
                 SELECT id, name, spotify_artist_id FROM lib_artists
                 WHERE spotify_artist_id IS NOT NULL
-                  AND genres_json IS NULL
+                  AND genres_json_spotify IS NULL
                   AND id NOT IN (
                       SELECT entity_id FROM enrichment_meta
                       WHERE entity_type = 'artist' AND source = 'spotify_genres'
@@ -110,8 +110,8 @@ def enrich_genres_spotify(batch_size: int = 20, stop_event: threading.Event | No
             conn.execute(
                 """
                 UPDATE lib_artists
-                SET genres_json = ?,
-                    popularity = ?,
+                SET genres_json_spotify = ?,
+                    popularity_spotify = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
@@ -148,7 +148,7 @@ def enrich_genres_spotify(batch_size: int = 20, stop_event: threading.Event | No
                 """
                 SELECT COUNT(*) FROM lib_artists
                 WHERE spotify_artist_id IS NOT NULL
-                  AND genres_json IS NULL
+                  AND genres_json_spotify IS NULL
                   AND id NOT IN (
                       SELECT entity_id FROM enrichment_meta
                       WHERE entity_type = 'artist' AND source = 'spotify_genres'
