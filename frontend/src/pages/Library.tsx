@@ -5,7 +5,7 @@ import {
   ListPlus, MoreHorizontal, User, Disc, Play, X,
 } from 'lucide-react';
 import { Link, useNavigate, useRouter } from '@tanstack/react-router';
-import { libraryBrowseApi, libraryApi } from '../services/api';
+import { libraryBrowseApi, libraryApi, enrichmentApi } from '../services/api';
 import { useImage } from '../hooks/useImage';
 import { getImageUrl } from '../utils/imageUrl';
 import { usePlayerStore } from '../stores/usePlayerStore';
@@ -765,11 +765,11 @@ export function LibraryRoot() {
     else fetchTracks(debouncedSearch);
   }, [tab, debouncedSearch, backendFilter, recordTypeFilter, fetchArtists, fetchAlbums, fetchTracks]);
 
-  // Sync
+  // Run pipeline (sync + enrich in one pass)
   const handleSync = useCallback(async () => {
     setSyncing(true);
     try {
-      await libraryApi.sync();
+      await enrichmentApi.runFull();
       const s = await libraryApi.getStatus();
       setStatus(s);
     } catch { /* ignore */ }
@@ -815,7 +815,7 @@ export function LibraryRoot() {
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-[#141414] hover:bg-[#1a1a1a] border border-[#222] text-text-muted hover:text-text-primary rounded-sm transition-colors"
           >
             <RefreshCw size={11} className={syncing ? 'animate-spin' : ''} />
-            {syncing ? 'Syncing…' : 'Sync Now'}
+            {syncing ? 'Running…' : 'Run Now'}
           </button>
         </div>
       )}

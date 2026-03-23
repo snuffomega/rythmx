@@ -291,7 +291,6 @@ export function SettingsPage({ toast }: SettingsPageProps) {
     if (libraryStatus?.platform) setPlatform(libraryStatus.platform as LibraryPlatform);
   }, [libraryStatus?.platform]);
 
-  const [syncing, setSyncing] = useState(false);
   const [switchingBackend, setSwitchingBackend] = useState(false);
   const [auditTotal, setAuditTotal] = useState(0);
   const [warmingCache, setWarmingCache] = useState(false);
@@ -338,19 +337,6 @@ export function SettingsPage({ toast }: SettingsPageProps) {
       toast.error('Failed to switch platform');
     } finally {
       setSwitchingBackend(false);
-    }
-  };
-
-  const handleSync = async () => {
-    setSyncing(true);
-    try {
-      await libraryApi.sync();
-      toast.success('Library sync started');
-      setTimeout(refetchLibrary, 2000);
-    } catch {
-      toast.error('Sync failed');
-    } finally {
-      setSyncing(false);
     }
   };
 
@@ -495,36 +481,20 @@ export function SettingsPage({ toast }: SettingsPageProps) {
             </div>
           </div>
 
-          <div className="flex items-center justify-between">
-            <div className="text-[11px] text-[#444] space-y-0.5">
-              {libraryStatus?.track_count !== undefined && (
-                <p>{libraryStatus.track_count.toLocaleString()} tracks indexed</p>
-              )}
-              {libraryStatus?.last_synced && (
-                <p>Last synced: {libraryStatus.last_synced}</p>
-              )}
-            </div>
-            <button
-              onClick={handleSync}
-              disabled={syncing}
-              className="btn-secondary flex items-center gap-2 text-sm flex-shrink-0"
-            >
-              {syncing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-              Sync Now
-            </button>
+          <div className="text-[11px] text-[#444] space-y-0.5">
+            {libraryStatus?.track_count !== undefined && (
+              <p>{libraryStatus.track_count.toLocaleString()} tracks indexed</p>
+            )}
+            {libraryStatus?.last_synced && (
+              <p>Last synced: {libraryStatus.last_synced}</p>
+            )}
           </div>
         </div>
 
-        {/* Step 1 → Step 2 connector */}
-        <div className="flex items-center gap-2 mb-6 pl-2">
-          <div className="w-px h-6 bg-[#2a2a2a] ml-1" />
-          <p className="text-[10px] font-mono text-[#444]">auto-triggers Step 2 after sync completes (30s delay)</p>
-        </div>
-
-        {/* Step 2 — Enrich */}
+        {/* Pipeline (unified — sync + enrich in one run) */}
         <div className="mb-4">
-          <p className="text-xs font-mono text-text-muted uppercase tracking-wider mb-1">Step 2 — Enrich Metadata</p>
-          <p className="text-[11px] text-[#444] mb-4">Fetches IDs, genres, BPM, and tags from iTunes, Deezer, Last.fm, and Spotify</p>
+          <p className="text-xs font-mono text-text-muted uppercase tracking-wider mb-1">Pipeline</p>
+          <p className="text-[11px] text-[#444] mb-4">Syncs library, resolves IDs, enriches metadata from iTunes, Deezer, Last.fm, and Spotify</p>
           <PipelineOrchestrator
             running={running}
             workers={workers}

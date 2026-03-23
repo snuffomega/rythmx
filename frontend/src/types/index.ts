@@ -473,3 +473,26 @@ export interface WsLibrarySyncProgress {
   tracks: number;
   message: string;
 }
+
+// Connection verification
+export interface ConnectionServiceStatus {
+  service: string;
+  display_name: string;
+  required: boolean;
+  status: string;
+  verified_at: string | null;
+  message?: string;
+  server_name?: string;
+  username?: string;
+}
+
+export interface ConnectionVerifyResult {
+  status: 'ok' | 'partial' | 'error';
+  services: Record<string, ConnectionServiceStatus>;
+  pipeline_ready: boolean;
+}
+
+export interface ConnectionStatusResult {
+  services: Record<string, ConnectionServiceStatus>;
+  pipeline_ready: boolean;
+}

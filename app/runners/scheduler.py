@@ -636,10 +636,13 @@ def _should_run_cc(settings: dict) -> bool:
 def _should_library_sync(settings: dict) -> bool:
     """
     Return True if it's time to run the library auto-pipeline.
-    Checks: lib_auto_sync enabled, interval elapsed, not already running.
+    Checks: connections verified, lib_auto_sync enabled, interval elapsed, not already running.
     """
-    from app.services.enrichment.pipeline import is_pipeline_running
-    if is_pipeline_running():
+    from app.services.enrichment.runner import PipelineRunner
+    if PipelineRunner.is_running():
+        return False
+    # Green light: library reader must be verified
+    if not settings.get("plex_verified_at"):
         return False
     auto_sync = settings.get("lib_auto_sync")
     if auto_sync is not None and str(auto_sync).lower() in ("false", "0", "no"):
@@ -676,9 +679,10 @@ def _loop():
             # Library auto-pipeline — runs independently of CC cycle
             if _should_library_sync(settings):
                 try:
-                    from app.services import library_service
+                    from app.services.enrichment.runner import PipelineRunner
                     threading.Thread(
-                        target=library_service.run_auto_pipeline,
+                        target=PipelineRunner().run,
+                        kwargs={"on_progress": None},
                         daemon=True,
                         name="lib-pipeline",
                     ).start()

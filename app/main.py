@@ -140,8 +140,7 @@ async def lifespan(app: FastAPI):
             import threading as _threading
 
             def _startup_pipeline():
-                # Single unified pipeline: Orchestrator handles sync + all enrichment
-                # with WS progress events.  No more dual run_auto_pipeline + run_full.
+                # Orchestrator delegates to PipelineRunner (single control plane).
                 from app.services.api_orchestrator import EnrichmentOrchestrator
                 EnrichmentOrchestrator.get().run_full()
 

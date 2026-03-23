@@ -30,6 +30,9 @@ import type {
   AuditResponse,
   EnrichmentPipelineStatus,
   EnrichmentStopResponse,
+  ConnectionVerifyResult,
+  ConnectionStatusResult,
+  ConnectionServiceStatus,
   ReleaseDetail,
   ReleaseTrack,
   ReleaseSibling,
@@ -286,12 +289,19 @@ export const settingsApi = {
       .then(r => r.api_key),
 };
 
+export const connectionsApi = {
+  verifyAll: () =>
+    request<ConnectionVerifyResult>('/connections/verify', { method: 'POST' }),
+  verifyService: (service: string) =>
+    request<ConnectionServiceStatus>(`/connections/verify/${service}`, { method: 'POST' }),
+  getStatus: () =>
+    request<ConnectionStatusResult>('/connections/status'),
+};
+
 export const libraryApi = {
   getStatus: () =>
     request<{ status: string } & LibraryStatus>('/library/status')
       .then(({ status: _s, ...rest }) => rest as LibraryStatus),
-  sync: () =>
-    request<{ status: string }>('/library/sync', { method: 'POST' }),
   enrichStatus: () =>
     request<{ status: string; enrich_running: boolean } & LibraryStatus>('/library/enrich-status')
       .then(({ status: _s, ...rest }) => rest as LibraryEnrichStatus),
