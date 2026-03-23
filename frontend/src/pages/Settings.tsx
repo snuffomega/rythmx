@@ -42,12 +42,13 @@ function ServiceCard({ name, subtitle, icon, configured, onTest, extra }: Servic
           <div className="w-7 h-7 bg-[#181818] flex items-center justify-center flex-shrink-0">
             {icon}
           </div>
-          <div className="min-w-0">
-            <p className="text-text-primary text-sm font-medium">{name}</p>
-            {subtitle && <p className="text-[#444] text-[10px]">{subtitle}</p>}
-          </div>
+          {extra ?? (
+            <div className="min-w-0">
+              <p className="text-text-primary text-sm font-medium">{name}</p>
+              {subtitle && <p className="text-[#444] text-[10px]">{subtitle}</p>}
+            </div>
+          )}
         </div>
-        {extra}
       </div>
 
       {/* RIGHT: configured dot + test button */}
@@ -557,7 +558,7 @@ export function SettingsPage({ toast }: SettingsPageProps) {
             extra={
               <div className="relative">
                 <select
-                  className="select w-full"
+                  className="select"
                   value={libraryStatus?.platform ?? platform}
                   onChange={e => handlePlatformChange(e.target.value as LibraryPlatform)}
                   disabled={switchingBackend}
