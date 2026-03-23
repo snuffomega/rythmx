@@ -434,7 +434,7 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
       {/* Hero */}
       <div className="px-8 pb-6 flex gap-8">
         <div className="w-48 h-48 flex-shrink-0 bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center border border-[#222]">
-          <ArtistImage name={artist.name} size={56} />
+          <ArtistImage name={artist.name} size={56} imageUrl={artist.image_url} />
         </div>
         <div className="flex flex-col justify-center min-w-0 flex-1">
           <h1 className="text-3xl font-bold tracking-tighter text-text-primary mb-1">{artist.name}</h1>
@@ -602,7 +602,7 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
       {/* Hero */}
       <div className="px-8 pb-6 flex gap-8">
         <div className="w-48 h-48 flex-shrink-0 bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center border border-[#222]">
-          <AlbumImage title={album.title} artist={album.artist_name} size={56} />
+          <AlbumImage title={album.title} artist={album.artist_name} size={56} thumbUrl={album.thumb_url} />
         </div>
         <div className="flex flex-col justify-center min-w-0 flex-1">
           <Link
