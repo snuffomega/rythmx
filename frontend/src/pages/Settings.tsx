@@ -18,9 +18,10 @@ interface ServiceRowProps {
   icon: React.ReactNode;
   configured?: boolean;
   onTest: () => Promise<{ connected: boolean; message?: string }>;
+  extra?: React.ReactNode;
 }
 
-function ServiceCard({ name, subtitle, icon, configured, onTest }: ServiceRowProps) {
+function ServiceCard({ name, subtitle, icon, configured, onTest, extra }: ServiceRowProps) {
   const [status, setStatus] = useState<'idle' | 'testing' | 'connected' | 'error'>('idle');
   const [message, setMessage] = useState<string | null>(null);
 
@@ -91,6 +92,8 @@ function ServiceCard({ name, subtitle, icon, configured, onTest }: ServiceRowPro
           Test
         </button>
       </div>
+
+      {extra}
     </div>
   );
 }
@@ -222,16 +225,12 @@ function PipelineOrchestrator({ running, workers, activeWorkers, elapsedMs, phas
 
   return (
     <div data-testid="pipeline-orchestrator" className="max-w-3xl">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold tracking-tight text-text-primary">Enrichment Pipeline</h2>
-        {(running || elapsedMs > 0) && (
-          <div className="flex items-center gap-2 text-sm font-mono text-text-muted">
-            <Clock size={14} />
-            <span>{formatElapsed(elapsedMs)}</span>
-          </div>
-        )}
-      </div>
+      {(running || elapsedMs > 0) && (
+        <div className="flex items-center gap-2 text-sm font-mono text-text-muted mb-4">
+          <Clock size={14} />
+          <span>{formatElapsed(elapsedMs)}</span>
+        </div>
+      )}
 
       {/* Overall progress — always visible */}
       <div className="mb-4 p-4 bg-surface rounded-sm border border-[#1a1a1a]">
@@ -556,6 +555,36 @@ export function SettingsPage({ toast }: SettingsPageProps) {
             icon={<span className="text-accent font-bold text-sm">P</span>}
             configured={settingsStatus?.plex_configured}
             onTest={settingsApi.testPlex}
+            extra={
+              <div>
+                <label className="label text-[10px]">Library Platform</label>
+                <div className="relative mt-1">
+                  <select
+                    className="select w-full"
+                    value={libraryStatus?.platform ?? platform}
+                    onChange={e => handlePlatformChange(e.target.value as LibraryPlatform)}
+                    disabled={switchingBackend}
+                  >
+                    <option value="plex">Plex</option>
+                    <option value="jellyfin">Jellyfin</option>
+                    <option value="navidrome">Navidrome</option>
+                  </select>
+                  {switchingBackend && (
+                    <div className="absolute right-8 top-1/2 -translate-y-1/2 pointer-events-none">
+                      <Loader2 size={13} className="animate-spin text-text-muted" />
+                    </div>
+                  )}
+                </div>
+                <div className="text-[11px] text-[#444] space-y-0.5 mt-2">
+                  {libraryStatus?.track_count !== undefined && (
+                    <p>{libraryStatus.track_count.toLocaleString()} tracks indexed</p>
+                  )}
+                  {libraryStatus?.last_synced && (
+                    <p>Last synced: {libraryStatus.last_synced}</p>
+                  )}
+                </div>
+              </div>
+            }
           />
           <ServiceCard
             key={`library-${platform}`}
@@ -581,81 +610,39 @@ export function SettingsPage({ toast }: SettingsPageProps) {
       </section>
 
       <section className="border-t border-[#1a1a1a] pt-8">
-        <h2 className="text-text-muted text-xs font-semibold uppercase tracking-widest mb-6">Library & Enrichment</h2>
+        <h2 className="text-text-muted text-xs font-semibold uppercase tracking-widest mb-1">Library Enrichment Pipeline</h2>
+        <p className="text-[11px] text-[#444] mb-6">Syncs library, resolves IDs, enriches metadata from iTunes, Deezer, Last.fm, and Spotify</p>
 
-        {/* Step 1 — Sync */}
-        <div className="mb-6 p-4 bg-[#0e0e0e] border border-[#1a1a1a]">
-          <div className="mb-3">
-            <p className="text-xs font-mono text-text-muted uppercase tracking-wider mb-0.5">Step 1 — Sync from Plex</p>
-            <p className="text-[11px] text-[#444]">Reads your Plex library into the local database</p>
-          </div>
-
-          <div className="mb-4">
-            <label className="label">Library Platform</label>
-            <div className="relative mt-1">
-              <select
-                className="select w-full"
-                value={libraryStatus?.platform ?? platform}
-                onChange={e => handlePlatformChange(e.target.value as LibraryPlatform)}
-                disabled={switchingBackend}
-              >
-                <option value="plex">Plex</option>
-                <option value="jellyfin">Jellyfin</option>
-                <option value="navidrome">Navidrome</option>
-              </select>
-              {switchingBackend && (
-                <div className="absolute right-8 top-1/2 -translate-y-1/2 pointer-events-none">
-                  <Loader2 size={13} className="animate-spin text-text-muted" />
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="text-[11px] text-[#444] space-y-0.5">
-            {libraryStatus?.track_count !== undefined && (
-              <p>{libraryStatus.track_count.toLocaleString()} tracks indexed</p>
-            )}
-            {libraryStatus?.last_synced && (
-              <p>Last synced: {libraryStatus.last_synced}</p>
-            )}
-          </div>
-        </div>
-
-        {/* Pipeline (unified — sync + enrich in one run) */}
-        <div className="mb-4">
-          <p className="text-xs font-mono text-text-muted uppercase tracking-wider mb-1">Pipeline</p>
-          <p className="text-[11px] text-[#444] mb-4">Syncs library, resolves IDs, enriches metadata from iTunes, Deezer, Last.fm, and Spotify</p>
-          <PipelineOrchestrator
-            running={running}
-            workers={workers}
-            activeWorkers={activeWorkers}
-            elapsedMs={elapsedMs}
-            phase={phase}
-            onRunFull={() => {
-              reset();
-              enrichmentApi.runFull()
-                .then(() => {
-                  // Safety net: if pipeline completes before first WS event, reseed from REST
-                  setTimeout(() => {
-                    enrichmentApi.status()
-                      .then(s => {
-                        if (!s.running && useEnrichmentStore.getState().running) {
-                          useEnrichmentStore.getState().setFromStatus(s);
-                        }
-                      })
-                      .catch(() => {});
-                  }, 3000);
-                })
-                .catch(() => toast.error('Failed to start enrichment'));
-            }}
-            onStop={() => {
-              enrichmentApi.stop()
-                .then(() => enrichmentApi.status())
-                .then(useEnrichmentStore.getState().setFromStatus)
-                .catch(() => {});
-            }}
-          />
-        </div>
+        <PipelineOrchestrator
+          running={running}
+          workers={workers}
+          activeWorkers={activeWorkers}
+          elapsedMs={elapsedMs}
+          phase={phase}
+          onRunFull={() => {
+            reset();
+            enrichmentApi.runFull()
+              .then(() => {
+                // Safety net: if pipeline completes before first WS event, reseed from REST
+                setTimeout(() => {
+                  enrichmentApi.status()
+                    .then(s => {
+                      if (!s.running && useEnrichmentStore.getState().running) {
+                        useEnrichmentStore.getState().setFromStatus(s);
+                      }
+                    })
+                    .catch(() => {});
+                }, 3000);
+              })
+              .catch(() => toast.error('Failed to start enrichment'));
+          }}
+          onStop={() => {
+            enrichmentApi.stop()
+              .then(() => enrichmentApi.status())
+              .then(useEnrichmentStore.getState().setFromStatus)
+              .catch(() => {});
+          }}
+        />
 
         {auditTotal > 0 && (
           <div className="pt-2">
