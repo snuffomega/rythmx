@@ -78,6 +78,14 @@ _mem_cache: dict[str, tuple[str, float]] = {}  # key → (url, timestamp)
 _MEM_TTL = 300  # seconds — entries expire after 5 minutes
 _MEM_MAX = 2000  # cap to prevent unbounded growth; LRU-style eviction on overflow
 
+
+def _mem_cache_put(key: str, url: str, ts: float) -> None:
+    """Write to L1 cache with size cap enforcement."""
+    _mem_cache[key] = (url, ts)
+    if len(_mem_cache) > _MEM_MAX:
+        oldest_key = min(_mem_cache, key=lambda k: _mem_cache[k][1])
+        _mem_cache.pop(oldest_key, None)
+
 _session = requests.Session()
 _session.headers["Accept"] = "application/json"
 _session.headers["User-Agent"] = "Rythmx/1.0 (music discovery tool)"
@@ -381,11 +389,7 @@ def _fetch_and_cache(entity_type: str, name: str, artist: str) -> None:
         if url:
             rythmx_store.set_image_cache(entity_type, key, url)
             # Promote to L1 so subsequent requests skip SQLite entirely
-            _mem_cache[key] = (url, time.time())
-            # Cap L1 size — evict oldest entries on overflow
-            if len(_mem_cache) > _MEM_MAX:
-                oldest_key = min(_mem_cache, key=lambda k: _mem_cache[k][1])
-                _mem_cache.pop(oldest_key, None)
+            _mem_cache_put(key, url, time.time())
         logger.debug("Image cached: [%s] %s — %s", entity_type, name, url[:60] if url else "(none)")
     finally:
         with _in_flight_lock:
@@ -442,7 +446,7 @@ def resolve_image(entity_type: str, name: str, artist: str = "") -> tuple[str, b
     # --- L2: SQLite image_cache (~1ms) ---
     cached = rythmx_store.get_image_cache(entity_type, key)
     if cached is not None:
-        _mem_cache[key] = (cached, now)  # promote to L1
+        _mem_cache_put(key, cached, now)  # promote to L1
         return cached, False
 
     # --- L3: API fetch (background thread, ~200-500ms) ---
