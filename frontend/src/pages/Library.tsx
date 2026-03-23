@@ -2,15 +2,15 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Loader2, Search, Grid3X3, List, RefreshCw,
   Library as LibraryIcon, ChevronLeft, ChevronRight, Star,
-  ListPlus, MoreHorizontal, User, Disc, Play,
+  ListPlus, MoreHorizontal, User, Disc, Play, X,
 } from 'lucide-react';
 import { Link, useNavigate, useRouter } from '@tanstack/react-router';
-import { libraryBrowseApi, libraryApi } from '../services/api';
+import { libraryBrowseApi, libraryApi, enrichmentApi } from '../services/api';
 import { useImage } from '../hooks/useImage';
 import { getImageUrl } from '../utils/imageUrl';
 import { usePlayerStore } from '../stores/usePlayerStore';
 import { ApiErrorBanner } from '../components/common';
-import type { LibArtist, LibAlbum, LibTrack, LibArtistDetail as LibArtistDetailType, LibAlbumDetail as LibAlbumDetailType, LibraryStatus, MissingAlbum, ReleaseDetail, ReleaseTrack } from '../types';
+import type { LibArtist, LibAlbum, LibTrack, LibArtistDetail as LibArtistDetailType, LibAlbumDetail as LibAlbumDetailType, LibraryStatus, MissingAlbum, MissingReleaseGroup, ReleaseDetail, ReleaseTrack, ReleaseSibling, UserReleasePrefs } from '../types';
 
 type Tab = 'artists' | 'albums' | 'tracks';
 type ViewMode = 'grid' | 'list';
@@ -100,15 +100,19 @@ function StarRating({ value, onChange, size = 14, readonly = false }: StarRating
 // ArtistImage — thin wrapper so each card gets its own hook instance
 // ---------------------------------------------------------------------------
 
-function ArtistImage({ name, size }: { name: string; size: number }) {
-  const url = useImage('artist', name);
-  if (url) return <img src={getImageUrl(url)} alt={name} className="w-full h-full object-cover" />;
+function ArtistImage({ name, size, imageUrl }: { name: string; size: number; imageUrl?: string | null }) {
+  const hasDirectUrl = imageUrl && imageUrl.startsWith('http');
+  const resolvedUrl = useImage('artist', name, '', !!hasDirectUrl);
+  const src = hasDirectUrl ? imageUrl : resolvedUrl;
+  if (src) return <img src={getImageUrl(src)} alt={name} className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} />;
   return <User size={size} className="text-text-muted" />;
 }
 
-function AlbumImage({ title, artist, size }: { title: string; artist: string; size: number }) {
-  const url = useImage('album', title, artist);
-  if (url) return <img src={getImageUrl(url)} alt={title} className="w-full h-full object-cover" />;
+function AlbumImage({ title, artist, size, thumbUrl }: { title: string; artist: string; size: number; thumbUrl?: string | null }) {
+  const hasDirectUrl = thumbUrl && thumbUrl.startsWith('http');
+  const resolvedUrl = useImage('album', title, artist, !!hasDirectUrl);
+  const src = hasDirectUrl ? thumbUrl : resolvedUrl;
+  if (src) return <img src={getImageUrl(src)} alt={title} className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} />;
   return <Disc size={size} className="text-text-muted" />;
 }
 
@@ -157,13 +161,16 @@ function ArtistCard({ artist, viewMode }: ArtistCardProps) {
         className="text-left group hover:bg-[#111] rounded-sm p-2 transition-colors block"
       >
         <div className="aspect-square bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center mb-2 border border-[#222]">
-          <ArtistImage name={artist.name} size={32} />
+          <ArtistImage name={artist.name} size={32} imageUrl={artist.image_url} />
         </div>
         <p className="text-text-primary text-sm font-medium truncate">{artist.name}</p>
         <p className="text-text-muted text-xs font-mono truncate">
           {artist.album_count} album{artist.album_count !== 1 ? 's' : ''}
           {genre && ` · ${genre}`}
         </p>
+        {artist.missing_count > 0 && (
+          <p className="text-[10px] font-mono text-amber-400 mt-0.5">{artist.missing_count} missing</p>
+        )}
       </Link>
     );
   }
@@ -175,13 +182,18 @@ function ArtistCard({ artist, viewMode }: ArtistCardProps) {
       className="w-full flex items-center gap-3 px-2 py-2 hover:bg-[#111] transition-colors rounded-sm"
     >
       <div className="w-10 h-10 flex-shrink-0 bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center border border-[#222]">
-        <ArtistImage name={artist.name} size={18} />
+        <ArtistImage name={artist.name} size={18} imageUrl={artist.image_url} />
       </div>
       <div className="flex-1 min-w-0 text-left">
         <p className="text-text-primary text-sm font-medium truncate">{artist.name}</p>
         <p className="text-text-muted text-xs font-mono">{artist.album_count} albums{genre && ` · ${genre}`}</p>
       </div>
       <div className="flex items-center gap-2 flex-shrink-0">
+        {artist.missing_count > 0 && (
+          <span className="font-mono text-[10px] text-amber-400 bg-amber-400/10 px-1.5 py-0.5 rounded border border-amber-400/20">
+            {artist.missing_count}
+          </span>
+        )}
         <ConfidenceBadge value={artist.match_confidence} />
         <SourceChip backend={artist.source_platform} />
       </div>
@@ -207,7 +219,7 @@ function AlbumCard({ album, viewMode }: AlbumCardProps) {
         className="text-left group hover:bg-[#111] rounded-sm p-2 transition-colors block"
       >
         <div className="aspect-square bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center mb-2 border border-[#222]">
-          <AlbumImage title={album.title} artist={album.artist_name} size={32} />
+          <AlbumImage title={album.title} artist={album.artist_name} size={32} thumbUrl={album.thumb_url} />
         </div>
         <p className="text-text-primary text-sm font-medium truncate">{album.title}</p>
         {album.year && <p className="text-text-muted text-xs font-mono">{album.year}</p>}
@@ -222,7 +234,7 @@ function AlbumCard({ album, viewMode }: AlbumCardProps) {
       className="w-full flex items-center gap-3 px-2 py-2 hover:bg-[#111] transition-colors rounded-sm"
     >
       <div className="w-10 h-10 flex-shrink-0 bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center border border-[#222]">
-        <AlbumImage title={album.title} artist={album.artist_name} size={18} />
+        <AlbumImage title={album.title} artist={album.artist_name} size={18} thumbUrl={album.thumb_url} />
       </div>
       <div className="flex-1 min-w-0 text-left">
         <p className="text-text-primary text-sm font-medium truncate">{album.title}</p>
@@ -241,13 +253,22 @@ function AlbumCard({ album, viewMode }: AlbumCardProps) {
 // Missing album card
 // ---------------------------------------------------------------------------
 
-function MissingAlbumCard({ release }: { release: MissingAlbum }) {
+function MissingAlbumCard({ release, onDismiss }: { release: MissingAlbum; onDismiss?: (id: string) => void }) {
   const inner = (
-    <div className="text-left group rounded-sm p-2 opacity-70 hover:opacity-90 transition-opacity">
+    <div className="text-left group relative rounded-sm p-2 opacity-70 hover:opacity-90 transition-opacity">
+      {onDismiss && release.id && (
+        <button
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDismiss(release.id!); }}
+          className="absolute top-3 left-3 z-10 opacity-0 group-hover:opacity-100 bg-black/70 hover:bg-red-500/80 text-text-muted hover:text-white rounded-full p-0.5 transition-all"
+          aria-label="Dismiss"
+        >
+          <X size={12} />
+        </button>
+      )}
       <div className="relative aspect-square bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center mb-2 border border-dashed border-[#333]">
         {release.thumb_url ? (
-          <img src={release.thumb_url} alt={release.album_title}
-               className="w-full h-full object-cover" loading="lazy" />
+          <img src={getImageUrl(release.thumb_url)} alt={release.album_title}
+               className="w-full h-full object-cover" loading="lazy" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
         ) : (
           <Disc size={32} className="text-text-muted" />
         )}
@@ -255,10 +276,15 @@ function MissingAlbumCard({ release }: { release: MissingAlbum }) {
           Missing
         </span>
       </div>
-      <p className="text-text-primary text-sm font-medium truncate">{release.album_title}</p>
-      {release.release_date && (
-        <p className="text-text-muted text-xs font-mono">{release.release_date.slice(0, 4)}</p>
-      )}
+      <p className="text-text-primary text-sm font-medium truncate">{release.display_title || release.album_title}</p>
+      <div className="flex items-center gap-1.5">
+        {release.release_date && (
+          <span className="text-text-muted text-xs font-mono">{release.release_date.slice(0, 4)}</span>
+        )}
+        {release.version_type && release.version_type !== 'original' && (
+          <span className="text-[9px] font-mono text-text-muted/70 px-1 py-0.5 bg-[#1a1a1a] rounded-sm">{release.version_type}</span>
+        )}
+      </div>
     </div>
   );
   if (release.id) {
@@ -267,7 +293,7 @@ function MissingAlbumCard({ release }: { release: MissingAlbum }) {
   return inner;
 }
 
-function MissingKindGroup({ group }: { group: KindGroup<MissingAlbum & { record_type?: string | null }> }) {
+function MissingKindGroup({ group, onDismiss }: { group: KindGroup<MissingAlbum & { record_type?: string | null }>; onDismiss?: (id: string) => void }) {
   const [open, setOpen] = useState(true);
   return (
     <div className="mb-4 ml-5">
@@ -281,12 +307,56 @@ function MissingKindGroup({ group }: { group: KindGroup<MissingAlbum & { record_
       {open && (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3">
           {group.items.map(r => (
-            <MissingAlbumCard key={r.id || r.deezer_album_id || r.itunes_album_id || r.album_title} release={r} />
+            <MissingAlbumCard key={r.id || r.deezer_album_id || r.itunes_album_id || r.album_title} release={r} onDismiss={onDismiss} />
           ))}
         </div>
       )}
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Missing release group card (auto-collapse editions)
+// ---------------------------------------------------------------------------
+
+function MissingGroupCard({ group, onDismiss }: { group: MissingReleaseGroup; onDismiss?: (id: string) => void }) {
+  const primary = group.primary;
+
+  // Single edition — render as regular MissingAlbumCard
+  if (group.edition_count === 1) {
+    return <MissingAlbumCard release={primary} onDismiss={onDismiss} />;
+  }
+
+  // Multi-edition — click-through to primary release detail (no inline accordion)
+  const inner = (
+    <div className="text-left group relative rounded-sm p-2 opacity-70 hover:opacity-90 transition-opacity">
+      <div className="relative aspect-square bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center mb-2 border border-dashed border-[#333]">
+        {primary.thumb_url ? (
+          <img src={getImageUrl(primary.thumb_url)} alt={primary.album_title}
+               className="w-full h-full object-cover" loading="lazy" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+        ) : (
+          <Disc size={32} className="text-text-muted" />
+        )}
+        <span className="absolute top-1 right-1 bg-[#333] text-text-muted text-[9px] font-mono px-1.5 py-0.5 rounded-sm">
+          {group.edition_count} editions
+        </span>
+        {group.owned_count > 0 && (
+          <span className="absolute top-1 left-1 bg-green-500/20 text-green-400 text-[9px] font-mono px-1.5 py-0.5 rounded-sm">
+            {group.owned_count} owned
+          </span>
+        )}
+      </div>
+      <p className="text-text-primary text-sm font-medium truncate">{primary.display_title || primary.album_title}</p>
+      {primary.release_date && (
+        <p className="text-text-muted text-xs font-mono">{primary.release_date.slice(0, 4)}</p>
+      )}
+    </div>
+  );
+
+  if (primary.id) {
+    return <Link to="/library/release/$id" params={{ id: primary.id }}>{inner}</Link>;
+  }
+  return inner;
 }
 
 // ---------------------------------------------------------------------------
@@ -302,16 +372,44 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showMissing, setShowMissing] = useState(false);
+  const [dismissedCount, setDismissedCount] = useState(0);
+  const [missingGroups, setMissingGroups] = useState<MissingReleaseGroup[]>([]);
   const showPlayer = usePlayerStore(s => s.show);
 
   useEffect(() => {
     setLoading(true);
     setError(null);
     libraryBrowseApi.getArtist(artistId)
-      .then(res => { setData({ artist: res.artist, albums: res.albums, top_tracks: res.top_tracks, missing_albums: res.missing_albums || [] }); })
+      .then(res => {
+        setData({ artist: res.artist, albums: res.albums, top_tracks: res.top_tracks, missing_albums: res.missing_albums || [] });
+        setDismissedCount((res as any).dismissed_count ?? 0);
+        setMissingGroups((res as any).missing_groups ?? []);
+      })
       .catch(err => setError(err instanceof Error ? err.message : 'Failed to load artist'))
       .finally(() => setLoading(false));
   }, [artistId]);
+
+  const handleDismiss = useCallback((releaseId: string) => {
+    libraryBrowseApi.updateReleasePrefs(releaseId, { dismissed: true }).then(() => {
+      setData(prev => {
+        if (!prev) return prev;
+        return { ...prev, missing_albums: (prev.missing_albums || []).filter(r => r.id !== releaseId) };
+      });
+      // Also filter from groups — remove the edition, remove the group if empty
+      setMissingGroups(prev => prev
+        .map(g => ({
+          ...g,
+          editions: g.editions.filter(e => e.id !== releaseId),
+          edition_count: g.editions.filter(e => e.id !== releaseId).length,
+          primary: g.primary.id === releaseId && g.editions.length > 1
+            ? g.editions.find(e => e.id !== releaseId)!
+            : g.primary,
+        }))
+        .filter(g => g.editions.length > 0 && !g.editions.every(e => e.is_owned))
+      );
+      setDismissedCount(c => c + 1);
+    });
+  }, []);
 
   if (loading) {
     return <div className="flex-1 flex items-center justify-center"><Loader2 size={20} className="animate-spin text-text-muted" /></div>;
@@ -336,7 +434,7 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
       {/* Hero */}
       <div className="px-8 pb-6 flex gap-8">
         <div className="w-48 h-48 flex-shrink-0 bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center border border-[#222]">
-          <ArtistImage name={artist.name} size={56} />
+          <ArtistImage name={artist.name} size={56} imageUrl={artist.image_url} />
         </div>
         <div className="flex flex-col justify-center min-w-0 flex-1">
           <h1 className="text-3xl font-bold tracking-tighter text-text-primary mb-1">{artist.name}</h1>
@@ -398,7 +496,7 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
       </div>
 
       {/* Missing Releases — collapsed by default */}
-      {missing_albums.length > 0 && (
+      {(missing_albums.length > 0 || missingGroups.length > 0) && (
         <>
           <div className="border-t border-[#1a1a1a]" />
           <div className="px-8 py-5">
@@ -407,11 +505,32 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
               className="flex items-center gap-2 text-xs font-mono font-semibold text-text-muted uppercase tracking-widest mb-3 hover:text-text-secondary transition-colors"
             >
               <ChevronRight size={14} className={`transition-transform ${showMissing ? 'rotate-90' : ''}`} />
-              {missing_albums.length} Missing {missing_albums.length === 1 ? 'Release' : 'Releases'}
+              {missingGroups.length > 0
+                ? `${missingGroups.length} Missing ${missingGroups.length === 1 ? 'Release' : 'Releases'}`
+                : `${missing_albums.length} Missing ${missing_albums.length === 1 ? 'Release' : 'Releases'}`
+              }
+              {dismissedCount > 0 && (
+                <span className="text-[9px] font-normal normal-case tracking-normal text-text-muted ml-1">({dismissedCount} dismissed)</span>
+              )}
             </button>
-            {showMissing && groupByKind(missing_albums as (MissingAlbum & { record_type?: string | null })[], 'kind').map(group => (
-              <MissingKindGroup key={group.kind} group={group} />
-            ))}
+            {showMissing && (
+              missingGroups.length > 0
+                ? groupByKind(missingGroups, 'kind').map(kindGroup => (
+                    <div key={kindGroup.kind} className="mb-4 ml-5">
+                      <h3 className="text-[10px] font-mono text-text-muted uppercase tracking-wider mb-2">
+                        {kindGroup.label} ({kindGroup.items.length})
+                      </h3>
+                      <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3">
+                        {kindGroup.items.map(g => (
+                          <MissingGroupCard key={g.canonical_release_id} group={g} onDismiss={handleDismiss} />
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                : groupByKind(missing_albums as (MissingAlbum & { record_type?: string | null })[], 'kind').map(group => (
+                    <MissingKindGroup key={group.kind} group={group} onDismiss={handleDismiss} />
+                  ))
+            )}
           </div>
         </>
       )}
@@ -483,7 +602,7 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
       {/* Hero */}
       <div className="px-8 pb-6 flex gap-8">
         <div className="w-48 h-48 flex-shrink-0 bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center border border-[#222]">
-          <AlbumImage title={album.title} artist={album.artist_name} size={56} />
+          <AlbumImage title={album.title} artist={album.artist_name} size={56} thumbUrl={album.thumb_url} />
         </div>
         <div className="flex flex-col justify-center min-w-0 flex-1">
           <Link
@@ -646,11 +765,11 @@ export function LibraryRoot() {
     else fetchTracks(debouncedSearch);
   }, [tab, debouncedSearch, backendFilter, recordTypeFilter, fetchArtists, fetchAlbums, fetchTracks]);
 
-  // Sync
+  // Run pipeline (sync + enrich in one pass)
   const handleSync = useCallback(async () => {
     setSyncing(true);
     try {
-      await libraryApi.sync();
+      await enrichmentApi.runFull();
       const s = await libraryApi.getStatus();
       setStatus(s);
     } catch { /* ignore */ }
@@ -696,7 +815,7 @@ export function LibraryRoot() {
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-[#141414] hover:bg-[#1a1a1a] border border-[#222] text-text-muted hover:text-text-primary rounded-sm transition-colors"
           >
             <RefreshCw size={11} className={syncing ? 'animate-spin' : ''} />
-            {syncing ? 'Syncing…' : 'Sync Now'}
+            {syncing ? 'Running…' : 'Run Now'}
           </button>
         </div>
       )}
@@ -884,9 +1003,12 @@ interface ReleaseDetailViewProps {
 export function ReleaseDetailView({ releaseId }: ReleaseDetailViewProps) {
   const [release, setRelease] = useState<ReleaseDetail | null>(null);
   const [tracks, setTracks] = useState<ReleaseTrack[]>([]);
+  const [siblings, setSiblings] = useState<ReleaseSibling[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const router = useRouter();
+  const [prefs, setPrefs] = useState<UserReleasePrefs | null>(null);
+  const [prefsLoading, setPrefsLoading] = useState(false);
+  const [notes, setNotes] = useState('');
 
   useEffect(() => {
     setLoading(true);
@@ -895,9 +1017,22 @@ export function ReleaseDetailView({ releaseId }: ReleaseDetailViewProps) {
       .then(res => {
         setRelease(res.release);
         setTracks(res.tracks || []);
+        setSiblings(res.siblings || []);
       })
       .catch(err => setError(err instanceof Error ? err.message : 'Failed to load release'))
       .finally(() => setLoading(false));
+    libraryBrowseApi.getReleasePrefs(releaseId).then(res => {
+      setPrefs(res.prefs);
+      setNotes(res.prefs?.notes || '');
+    });
+  }, [releaseId]);
+
+  const updatePref = useCallback((patch: { dismissed?: boolean; priority?: number; notes?: string }) => {
+    setPrefsLoading(true);
+    libraryBrowseApi.updateReleasePrefs(releaseId, patch)
+      .then(() => libraryBrowseApi.getReleasePrefs(releaseId))
+      .then(res => { setPrefs(res.prefs); if (res.prefs?.notes != null) setNotes(res.prefs.notes); })
+      .finally(() => setPrefsLoading(false));
   }, [releaseId]);
 
   if (loading) {
@@ -909,18 +1044,27 @@ export function ReleaseDetailView({ releaseId }: ReleaseDetailViewProps) {
 
   return (
     <div className="flex-1 overflow-y-auto custom-scrollbar">
-      {/* Back button */}
-      <div className="px-8 pt-4">
-        <button onClick={() => router.history.back()} className="flex items-center gap-1 text-text-muted hover:text-text-secondary text-xs font-mono transition-colors">
-          <ChevronLeft size={14} /> Back
-        </button>
+      {/* Breadcrumb */}
+      <div className="px-8 pt-4 pb-2 flex items-center gap-1.5">
+        <Link to="/library" className="flex items-center gap-1 text-text-muted hover:text-text-primary text-xs font-mono uppercase tracking-wider transition-colors">
+          <LibraryIcon size={13} /> Library
+        </Link>
+        {release && (
+          <>
+            <ChevronRight size={12} className="text-text-muted" />
+            <Link to="/library/artist/$id" params={{ id: release.artist_id }}
+                  className="text-text-muted hover:text-text-primary text-xs font-mono uppercase tracking-wider transition-colors truncate max-w-[200px]">
+              {release.artist_name}
+            </Link>
+          </>
+        )}
       </div>
 
       {/* Release header */}
       <div className="flex gap-6 px-8 py-5">
         <div className="w-48 h-48 flex-shrink-0 rounded-sm overflow-hidden bg-[#1a1a1a] border border-dashed border-[#333] flex items-center justify-center">
           {release.thumb_url ? (
-            <img src={release.thumb_url} alt={release.title} className="w-full h-full object-cover" />
+            <img src={getImageUrl(release.thumb_url)} alt={release.title} className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
           ) : (
             <Disc size={48} className="text-text-muted" />
           )}
@@ -946,6 +1090,69 @@ export function ReleaseDetailView({ releaseId }: ReleaseDetailViewProps) {
               <span className="text-[9px] font-mono px-1.5 py-0.5 bg-[#333] text-text-muted rounded-sm">E</span>
             )}
           </div>
+          {/* Edition switcher */}
+          {siblings.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mt-3">
+              <span className="text-[10px] font-mono px-2 py-1 bg-accent/20 text-accent rounded-sm border border-accent/30">
+                {release.version_type || 'original'}
+              </span>
+              {siblings.map(sib => (
+                <Link
+                  key={sib.id}
+                  to="/library/release/$id"
+                  params={{ id: sib.id }}
+                  className={`text-[10px] font-mono px-2 py-1 rounded-sm border transition-colors ${
+                    sib.is_owned
+                      ? 'bg-green-500/10 text-green-400 border-green-500/30 hover:bg-green-500/20'
+                      : 'bg-[#1a1a1a] text-text-muted border-[#333] hover:border-[#555] hover:text-text-secondary'
+                  }`}
+                >
+                  {sib.version_type || 'original'}
+                  {sib.is_owned ? ' ✓' : ''}
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* User controls */}
+      <div className="px-8 py-4 border-t border-[#1a1a1a] flex flex-wrap items-center gap-4">
+        <button
+          onClick={() => updatePref({ dismissed: !prefs?.dismissed })}
+          disabled={prefsLoading}
+          className={`text-xs font-mono px-3 py-1.5 rounded-sm border transition-colors ${
+            prefs?.dismissed
+              ? 'border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20'
+              : 'border-[#333] bg-[#1a1a1a] text-text-muted hover:text-text-secondary hover:border-[#444]'
+          }`}
+        >
+          {prefs?.dismissed ? 'Dismissed — Undo' : 'Dismiss'}
+        </button>
+        <label className="flex items-center gap-2 text-xs font-mono text-text-muted">
+          Priority
+          <select
+            value={prefs?.priority ?? 0}
+            onChange={e => updatePref({ priority: Number(e.target.value) })}
+            disabled={prefsLoading}
+            className="bg-[#1a1a1a] border border-[#333] text-text-secondary text-xs font-mono px-2 py-1 rounded-sm"
+          >
+            <option value={0}>None</option>
+            <option value={1}>Low</option>
+            <option value={2}>Medium</option>
+            <option value={3}>High</option>
+          </select>
+        </label>
+        <div className="flex-1 min-w-[200px]">
+          <input
+            type="text"
+            placeholder="Add a note..."
+            value={notes}
+            onChange={e => setNotes(e.target.value)}
+            onBlur={() => { if (notes !== (prefs?.notes || '')) updatePref({ notes: notes || '' }); }}
+            disabled={prefsLoading}
+            className="w-full bg-[#1a1a1a] border border-[#333] text-text-secondary text-xs font-mono px-3 py-1.5 rounded-sm placeholder:text-text-muted/50 focus:outline-none focus:border-[#444]"
+          />
         </div>
       </div>
 

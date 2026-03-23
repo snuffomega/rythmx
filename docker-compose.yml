@@ -9,6 +9,10 @@ services:
       - /mnt/user/appdata/soulsync/data:/data/soulsync:ro
       # rythmx's own data (rythmx.db)
       - ./data:/data/rythmx
+      # Music directory — READ ONLY. Same path Plex reads from on the host.
+      # Required for: local artwork fallback (folder.jpg), tag enrichment, codec info.
+      # Uncomment and adjust to your host path:
+      # - /mnt/user/data/media/music:/music:ro
     env_file:
       - .env
     environment:

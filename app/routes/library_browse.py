@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 
 from app.db import rythmx_store
 from app.dependencies import verify_api_key
+from app.services.enrichment._helpers import strip_title_suffixes
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,8 @@ def library_artists(
             f"""
             SELECT a.id, a.name, a.match_confidence, a.source_platform,
                    a.lastfm_tags_json, a.genres_json, a.popularity,
-                   a.listener_count, a.global_play_count,
+                   a.listener_count, a.global_play_count, a.missing_count,
+                   COALESCE(a.image_url_fanart, a.image_url_deezer) AS image_url,
                    COUNT(al.id) AS album_count
             FROM lib_artists a
             LEFT JOIN lib_albums al
@@ -79,6 +81,7 @@ def library_artist_detail(artist_id: str):
             SELECT a.id, a.name, a.match_confidence, a.source_platform,
                    a.lastfm_tags_json, a.genres_json, a.popularity,
                    a.listener_count, a.global_play_count,
+                   COALESCE(a.image_url_fanart, a.image_url_deezer) AS image_url,
                    COUNT(al.id) AS album_count
             FROM lib_artists a
             LEFT JOIN lib_albums al
@@ -105,7 +108,9 @@ def library_artist_detail(artist_id: str):
                        END
                    ) AS record_type,
                    la.match_confidence, la.needs_verification, la.source_platform,
-                   la.release_date, la.genre, la.thumb_url, la.lastfm_tags_json
+                   la.release_date, la.genre,
+                   COALESCE(la.thumb_url_deezer, la.thumb_url_plex) AS thumb_url,
+                   la.lastfm_tags_json
             FROM lib_albums la
             LEFT JOIN (
                 SELECT album_id, COUNT(*) AS cnt
@@ -187,12 +192,74 @@ def library_artist_detail(artist_id: str):
         except Exception:
             missing_rows = []
 
+        dismissed_count = conn.execute(
+            "SELECT COUNT(*) FROM lib_releases WHERE artist_id = ? AND user_dismissed = 1",
+            (artist_id,),
+        ).fetchone()[0]
+
+        # --- Grouped missing releases (canonical edition groups) ---
+        missing_groups = []
+        try:
+            group_rows = conn.execute(
+                """
+                SELECT id, title AS album_title, version_type, release_date,
+                       catalog_source AS source, deezer_album_id, itunes_album_id,
+                       thumb_url, track_count, is_owned, canonical_release_id,
+                       COALESCE(
+                           kind_deezer, kind_itunes,
+                           CASE
+                               WHEN track_count IS NOT NULL AND track_count <= 3 THEN 'single'
+                               WHEN track_count IS NOT NULL AND track_count <= 6 THEN 'ep'
+                               ELSE 'album'
+                           END
+                       ) AS kind
+                FROM lib_releases
+                WHERE artist_id = ?
+                  AND user_dismissed = 0
+                  AND canonical_release_id IS NOT NULL
+                ORDER BY canonical_release_id,
+                         is_owned DESC,
+                         CASE version_type WHEN 'original' THEN 0 ELSE 1 END,
+                         release_date ASC
+                """,
+                (artist_id,),
+            ).fetchall()
+
+            from collections import OrderedDict
+            groups: OrderedDict[str, dict] = OrderedDict()
+            for row in group_rows:
+                cid = row["canonical_release_id"]
+                if cid not in groups:
+                    groups[cid] = {"primary": None, "editions": []}
+                edition = dict(row)
+                edition["display_title"] = strip_title_suffixes(edition["album_title"])
+                groups[cid]["editions"].append(edition)
+                if groups[cid]["primary"] is None:
+                    groups[cid]["primary"] = edition
+
+            for cid, group in groups.items():
+                all_owned = all(e["is_owned"] for e in group["editions"])
+                if all_owned:
+                    continue
+                missing_groups.append({
+                    "canonical_release_id": cid,
+                    "primary": group["primary"],
+                    "edition_count": len(group["editions"]),
+                    "owned_count": sum(1 for e in group["editions"] if e["is_owned"]),
+                    "editions": group["editions"],
+                    "kind": group["primary"]["kind"],
+                })
+        except Exception:
+            missing_groups = []
+
     return {
         "status": "ok",
         "artist": dict(artist_row),
         "albums": [dict(r) for r in albums],
         "top_tracks": [dict(r) for r in top_tracks],
-        "missing_albums": [dict(r) for r in missing_rows],
+        "missing_albums": [{**dict(r), "display_title": strip_title_suffixes(r["album_title"])} for r in missing_rows],
+        "missing_groups": missing_groups,
+        "dismissed_count": dismissed_count,
     }
 
 
@@ -214,7 +281,8 @@ def library_release_detail(release_id: str):
                        END
                    ) AS kind,
                    version_type, track_count, thumb_url, catalog_source,
-                   deezer_album_id, itunes_album_id, explicit, label, genre_itunes
+                   deezer_album_id, itunes_album_id, explicit, label, genre_itunes,
+                   canonical_release_id
             FROM lib_releases WHERE id = ?
             """,
             (release_id,),
@@ -224,6 +292,32 @@ def library_release_detail(release_id: str):
 
     release = dict(row)
 
+    # Fetch sibling editions (same canonical group)
+    siblings: list[dict] = []
+    if release.get("canonical_release_id"):
+        with rythmx_store._connect() as conn:
+            sib_rows = conn.execute(
+                """
+                SELECT id, title, version_type, release_date, thumb_url, is_owned,
+                       COALESCE(
+                           kind_deezer, kind_itunes,
+                           CASE
+                               WHEN track_count IS NOT NULL AND track_count <= 3 THEN 'single'
+                               WHEN track_count IS NOT NULL AND track_count <= 6 THEN 'ep'
+                               ELSE 'album'
+                           END
+                       ) AS kind
+                FROM lib_releases
+                WHERE canonical_release_id = ? AND id != ?
+                ORDER BY
+                    is_owned DESC,
+                    CASE version_type WHEN 'original' THEN 0 ELSE 1 END,
+                    release_date ASC
+                """,
+                (release["canonical_release_id"], release_id),
+            ).fetchall()
+            siblings = [dict(s) for s in sib_rows]
+
     # Fetch tracks on demand — prefer iTunes (better data), fallback to Deezer
     tracks: list[dict] = []
     if release.get("itunes_album_id"):
@@ -231,7 +325,75 @@ def library_release_detail(release_id: str):
     if not tracks and release.get("deezer_album_id"):
         tracks = get_album_tracks_deezer(release["deezer_album_id"])
 
-    return {"status": "ok", "release": release, "tracks": tracks}
+    return {"status": "ok", "release": release, "tracks": tracks, "siblings": siblings}
+
+
+# ---------------------------------------------------------------------------
+# Release user preferences
+# ---------------------------------------------------------------------------
+
+@router.get("/library/releases/{release_id}/prefs")
+def library_release_prefs(release_id: str):
+    """Return user preferences for a release, or null if none set."""
+    with rythmx_store._connect() as conn:
+        row = conn.execute(
+            "SELECT release_id, dismissed, priority, notes, updated_at, source "
+            "FROM user_release_prefs WHERE release_id = ?",
+            (release_id,),
+        ).fetchone()
+    return {"status": "ok", "prefs": dict(row) if row else None}
+
+
+@router.put("/library/releases/{release_id}/prefs")
+def library_update_release_prefs(
+    release_id: str,
+    data: Optional[dict[str, Any]] = Body(default=None),
+):
+    """Upsert user preferences for a release (dismiss, priority, notes)."""
+    data = data or {}
+    dismissed = data.get("dismissed")
+    priority = data.get("priority")
+    notes = data.get("notes")
+
+    with rythmx_store._connect() as conn:
+        # Verify release exists
+        exists = conn.execute(
+            "SELECT 1 FROM lib_releases WHERE id = ?", (release_id,)
+        ).fetchone()
+        if not exists:
+            return JSONResponse(
+                {"status": "error", "message": "Release not found"}, status_code=404
+            )
+
+        conn.execute(
+            """
+            INSERT INTO user_release_prefs (release_id, dismissed, priority, notes, source, updated_at)
+            VALUES (?, COALESCE(?, 0), COALESCE(?, 0), ?, 'manual', CURRENT_TIMESTAMP)
+            ON CONFLICT(release_id) DO UPDATE SET
+                dismissed = COALESCE(?, user_release_prefs.dismissed),
+                priority = COALESCE(?, user_release_prefs.priority),
+                notes = COALESCE(?, user_release_prefs.notes),
+                source = 'manual',
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (release_id, dismissed, priority, notes, dismissed, priority, notes),
+        )
+
+        # Sync dismiss flag to lib_releases
+        if dismissed is not None:
+            conn.execute(
+                "UPDATE lib_releases SET user_dismissed = ? WHERE id = ?",
+                (1 if dismissed else 0, release_id),
+            )
+
+    # Refresh missing counts if dismiss state changed
+    if dismissed is not None:
+        try:
+            rythmx_store.refresh_missing_counts()
+        except Exception as e:
+            logger.warning("refresh_missing_counts after prefs update failed: %s", e)
+
+    return {"status": "ok"}
 
 
 @router.get("/library/artists/{artist_id}/match-debug")
@@ -334,6 +496,34 @@ def library_artist_match_debug(artist_id: str):
     }
 
 
+@router.get("/library/artists/{artist_id}/release-groups")
+def library_release_groups(artist_id: str):
+    """Diagnostic: show canonical release groups for an artist.
+
+    Returns groups where the same normalized_title has multiple editions,
+    along with per-group member details. Useful for validating canonical
+    linking quality before enabling auto-collapse in the UI.
+    """
+    with rythmx_store._connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT canonical_release_id,
+                   GROUP_CONCAT(id, ',') AS member_ids,
+                   GROUP_CONCAT(title, ' | ') AS titles,
+                   GROUP_CONCAT(version_type, ',') AS version_types,
+                   COUNT(*) AS edition_count,
+                   MAX(is_owned) AS any_owned
+            FROM lib_releases
+            WHERE artist_id = ? AND canonical_release_id IS NOT NULL
+            GROUP BY canonical_release_id
+            HAVING COUNT(*) > 1
+            ORDER BY edition_count DESC
+            """,
+            (artist_id,),
+        ).fetchall()
+    return {"status": "ok", "groups": [dict(g) for g in rows]}
+
+
 # ---------------------------------------------------------------------------
 # Albums
 # ---------------------------------------------------------------------------
@@ -376,7 +566,9 @@ def library_albums(
             f"""
             SELECT al.id, al.artist_id, al.title, al.year, al.record_type,
                    al.match_confidence, al.needs_verification, al.source_platform,
-                   al.release_date, al.genre, al.thumb_url, al.lastfm_tags_json,
+                   al.release_date, al.genre,
+                   COALESCE(al.thumb_url_deezer, al.thumb_url_plex) AS thumb_url,
+                   al.lastfm_tags_json,
                    ar.name AS artist_name
             FROM lib_albums al
             JOIN lib_artists ar ON ar.id = al.artist_id
@@ -398,7 +590,9 @@ def library_album_detail(album_id: str):
             """
             SELECT al.id, al.artist_id, al.title, al.year, al.record_type,
                    al.match_confidence, al.needs_verification, al.source_platform,
-                   al.release_date, al.genre, al.thumb_url, al.lastfm_tags_json,
+                   al.release_date, al.genre,
+                   COALESCE(al.thumb_url_deezer, al.thumb_url_plex) AS thumb_url,
+                   al.lastfm_tags_json,
                    ar.name AS artist_name
             FROM lib_albums al
             JOIN lib_artists ar ON ar.id = al.artist_id

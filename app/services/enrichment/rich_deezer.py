@@ -2,7 +2,7 @@
 rich_deezer.py — Stage 3 Deezer release data worker: record_type + thumb_url.
 
 Requires: deezer_id (from Stage 2 enrich_library).
-Writes: lib_albums.record_type, lib_albums.thumb_url (COALESCE).
+Writes: lib_albums.record_type (COALESCE), lib_albums.thumb_url_deezer (per-source column).
 """
 import logging
 
@@ -48,7 +48,7 @@ def _process_item(conn, row):
             """
             UPDATE lib_albums
             SET record_type = COALESCE(record_type, ?),
-                thumb_url = COALESCE(thumb_url, ?),
+                thumb_url_deezer = COALESCE(thumb_url_deezer, ?),
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,

@@ -9,7 +9,7 @@ Three passes:
 import logging
 
 from app.db.rythmx_store import _connect
-from app.services.enrichment._helpers import match_album_title
+from app.services.enrichment._helpers import match_ownership_title
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +70,7 @@ def sync_release_ownership(conn=None) -> dict:
             matched = False
             for la in lib_albums:
                 lib_title = la["local_title"] or la["title"]
-                if match_album_title(release["title"], lib_title) >= 0.82:
+                if match_ownership_title(release["title"], lib_title):
                     matched = True
                     break
 

@@ -12,6 +12,7 @@ A separate UPDATE touches last_checked_at for re-verified rows.
 import logging
 import re
 
+from app import config
 from app.clients.music_client import norm
 from app.services.enrichment._helpers import detect_version_type
 
@@ -126,6 +127,10 @@ def promote_catalog_to_releases(
         ("deezer", deezer_catalog, _DEEZER_INSERT_SQL),
         ("itunes", itunes_catalog, _ITUNES_INSERT_SQL),
     ):
+        # Only the primary catalog source gets promoted to lib_releases.
+        # The secondary source's IDs are still in lib_artist_catalog for enrichment.
+        if source != config.CATALOG_PRIMARY:
+            continue
         # Deduplicate by album_id — API can return same ID with variant titles
         # (e.g., clean + explicit). Keep first occurrence.
         seen_ids: set[str] = set()
@@ -176,10 +181,18 @@ def promote_catalog_to_releases(
             if release_date and "T" in release_date:
                 release_date = release_date.split("T")[0]
 
-            # Auto-dismiss compilations
-            user_dismissed = 1 if _COMPILATION_PATTERNS.search(title) else 0
-            if user_dismissed:
-                dismissed += 1
+            # Auto-dismiss compilations — unless user manually un-dismissed
+            user_dismissed = 0
+            if _COMPILATION_PATTERNS.search(title):
+                # Check if user manually overrode dismiss for this release
+                manual_override = conn.execute(
+                    "SELECT 1 FROM user_release_prefs "
+                    "WHERE release_id = ? AND dismissed = 0 AND source = 'manual'",
+                    (release_id,),
+                ).fetchone()
+                if not manual_override:
+                    user_dismissed = 1
+                    dismissed += 1
 
             # title_lower = raw title.lower() (NOT cleaned title)
             title_lower = title.lower()

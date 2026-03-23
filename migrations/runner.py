@@ -21,7 +21,7 @@ MIGRATIONS_DIR = os.path.dirname(__file__)
 
 def run_pending_migrations(db_path: str) -> None:
     """Apply any unapplied .sql migrations from the migrations/ directory to db_path."""
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=10)
     conn.row_factory = sqlite3.Row
     try:
         conn.execute("""

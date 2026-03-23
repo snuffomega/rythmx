@@ -30,8 +30,13 @@ import type {
   AuditResponse,
   EnrichmentPipelineStatus,
   EnrichmentStopResponse,
+  ConnectionVerifyResult,
+  ConnectionStatusResult,
+  ConnectionServiceStatus,
   ReleaseDetail,
   ReleaseTrack,
+  ReleaseSibling,
+  UserReleasePrefs,
 } from '../types';
 
 const BASE_URL = '/api/v1';
@@ -274,8 +279,6 @@ export const settingsApi = {
     request<{ status: string }>('/settings/clear-history', { method: 'POST' }),
   resetDb: () =>
     request<{ status: string }>('/settings/reset-db', { method: 'POST' }),
-  clearImageCache: () =>
-    request<{ status: string }>('/settings/clear-image-cache', { method: 'POST' }),
   getApiKey: () =>
     request<{ status: string; api_key: string }>('/settings/api-key')
       .then(r => r.api_key),
@@ -284,12 +287,19 @@ export const settingsApi = {
       .then(r => r.api_key),
 };
 
+export const connectionsApi = {
+  verifyAll: () =>
+    request<ConnectionVerifyResult>('/connections/verify', { method: 'POST' }),
+  verifyService: (service: string) =>
+    request<ConnectionServiceStatus>(`/connections/verify/${service}`, { method: 'POST' }),
+  getStatus: () =>
+    request<ConnectionStatusResult>('/connections/status'),
+};
+
 export const libraryApi = {
   getStatus: () =>
     request<{ status: string } & LibraryStatus>('/library/status')
       .then(({ status: _s, ...rest }) => rest as LibraryStatus),
-  sync: () =>
-    request<{ status: string }>('/library/sync', { method: 'POST' }),
   enrichStatus: () =>
     request<{ status: string; enrich_running: boolean } & LibraryStatus>('/library/enrich-status')
       .then(({ status: _s, ...rest }) => rest as LibraryEnrichStatus),
@@ -329,14 +339,6 @@ export const personalDiscoveryApi = {
     request<PersonalDiscoveryResult[]>('/personal-discovery/run', {
       method: 'POST',
       body: JSON.stringify(config),
-    }),
-};
-
-export const imageServiceApi = {
-  warmCache: (maxItems = 40) =>
-    request<{ status: string; submitted: number }>('/images/warm-cache', {
-      method: 'POST',
-      body: JSON.stringify({ max_items: maxItems }),
     }),
 };
 
@@ -385,7 +387,14 @@ export const libraryBrowseApi = {
       body: JSON.stringify(body),
     }),
   getRelease: (id: string) =>
-    request<{ status: string; release: ReleaseDetail; tracks: ReleaseTrack[] }>(`/library/releases/${encodeURIComponent(id)}`),
+    request<{ status: string; release: ReleaseDetail; tracks: ReleaseTrack[]; siblings: ReleaseSibling[] }>(`/library/releases/${encodeURIComponent(id)}`),
+  getReleasePrefs: (id: string) =>
+    request<{ status: string; prefs: UserReleasePrefs | null }>(`/library/releases/${encodeURIComponent(id)}/prefs`),
+  updateReleasePrefs: (id: string, data: { dismissed?: boolean; priority?: number; notes?: string }) =>
+    request<{ status: string }>(`/library/releases/${encodeURIComponent(id)}/prefs`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
 };
 
 export const enrichmentApi = {

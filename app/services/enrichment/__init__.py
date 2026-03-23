@@ -33,12 +33,10 @@ from app.services.enrichment.bpm_deezer import (  # noqa: F401
     enrich_deezer_bpm,
     get_deezer_bpm_status,
 )
+from app.services.enrichment.art_artist import enrich_artist_art  # noqa: F401
 
 # Status
 from app.services.enrichment.status import get_status  # noqa: F401
 
-# Pipeline
-from app.services.enrichment.pipeline import (  # noqa: F401
-    run_auto_pipeline,
-    is_pipeline_running,
-)
+# Pipeline runner (single control plane)
+from app.services.enrichment.runner import PipelineRunner  # noqa: F401

@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 def _connect():
-    conn = sqlite3.connect(config.RYTHMX_DB)
+    conn = sqlite3.connect(config.RYTHMX_DB, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     return conn
@@ -176,6 +176,9 @@ def init_db():
     _migrate_add_column("release_cache", "artwork_url", "TEXT DEFAULT ''")
 
     logger.info("rythmx.db initialized at %s", config.RYTHMX_DB)
+
+    # After schema is ready, clean up secondary catalog rows if single-catalog mode
+    ensure_single_catalog_cleanup()
 
 
 # --- API Key ---
@@ -989,3 +992,183 @@ def backfill_normalized_titles() -> int:
             updated += 1
     logger.info("Backfilled normalized_title for %d lib_releases rows", updated)
     return updated
+
+
+def recompute_normalized_titles() -> int:
+    """Recompute normalized_title and version_type for ALL lib_releases rows.
+
+    Unlike backfill_normalized_titles() which skips rows where normalized_title
+    is already set, this overwrites all rows. Use after updating the title
+    normalization regex so existing rows pick up the new logic.
+
+    Returns count of rows updated.
+    """
+    from app.services.enrichment._helpers import detect_version_type
+    from app.clients.music_client import norm
+
+    updated = 0
+    with _connect() as conn:
+        rows = conn.execute("SELECT id, title FROM lib_releases").fetchall()
+        for row in rows:
+            cleaned_title, version_type = detect_version_type(row["title"])
+            normalized_title = norm(cleaned_title)
+            conn.execute(
+                "UPDATE lib_releases SET normalized_title = ?, version_type = ? WHERE id = ?",
+                (normalized_title, version_type, row["id"]),
+            )
+            updated += 1
+    logger.info("recompute_normalized_titles: reprocessed %d lib_releases rows", updated)
+    return updated
+
+
+def refresh_missing_counts() -> int:
+    """Recompute lib_artists.missing_count from lib_releases with full dedup logic.
+
+    Mirrors the ROW_NUMBER dedup in library_browse.library_artist_detail():
+      - resolved_kind via COALESCE(kind_deezer, kind_itunes, track_count heuristic)
+      - source priority: deezer > itunes
+      - singles suppressed when album/ep exists with same normalized_title
+    Returns number of artists updated.
+    """
+    with _connect() as conn:
+        # Step 1: Compute deduplicated missing count per artist
+        conn.execute("""
+            UPDATE lib_artists SET missing_count = COALESCE((
+                SELECT COUNT(*) FROM (
+                    SELECT id,
+                           artist_id,
+                           artist_name_lower,
+                           normalized_title,
+                           COALESCE(
+                               kind_deezer, kind_itunes,
+                               CASE
+                                   WHEN track_count IS NOT NULL AND track_count <= 3 THEN 'single'
+                                   WHEN track_count IS NOT NULL AND track_count <= 6 THEN 'ep'
+                                   ELSE 'album'
+                               END
+                           ) AS resolved_kind,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY artist_name_lower, normalized_title,
+                                            COALESCE(
+                                                kind_deezer, kind_itunes,
+                                                CASE
+                                                    WHEN track_count IS NOT NULL AND track_count <= 3 THEN 'single'
+                                                    WHEN track_count IS NOT NULL AND track_count <= 6 THEN 'ep'
+                                                    ELSE 'album'
+                                                END
+                                            )
+                               ORDER BY
+                                   CASE catalog_source WHEN 'deezer' THEN 1 WHEN 'itunes' THEN 2 ELSE 3 END,
+                                   thumb_url IS NOT NULL DESC,
+                                   release_date IS NOT NULL DESC
+                           ) AS rn
+                    FROM lib_releases
+                    WHERE artist_id = lib_artists.id
+                      AND is_owned = 0
+                      AND user_dismissed = 0
+                ) deduped
+                WHERE rn = 1
+                  AND NOT (
+                      resolved_kind = 'single'
+                      AND EXISTS (
+                          SELECT 1 FROM lib_releases lr2
+                          WHERE lr2.artist_id = deduped.artist_id
+                            AND lr2.normalized_title = deduped.normalized_title
+                            AND COALESCE(lr2.kind_deezer, lr2.kind_itunes, 'album') IN ('album', 'ep')
+                            AND lr2.id != deduped.id
+                      )
+                  )
+            ), 0)
+        """)
+        updated = conn.execute(
+            "SELECT changes()"
+        ).fetchone()[0]
+
+    logger.info("refresh_missing_counts: updated %d artists", updated)
+    return updated
+
+
+def populate_canonical_release_ids(artist_id: str | None = None) -> int:
+    """Assign canonical_release_id to lib_releases rows.
+
+    Groups by (artist_id, normalized_title). The "primary" release per group is
+    chosen by: is_owned DESC, version_type='original' first, release_date ASC,
+    deezer source preferred. All group members share the primary's id.
+
+    Args:
+        artist_id: If provided, only refresh rows for this artist.
+                   If None, refresh all rows.
+
+    Returns count of rows updated.
+    """
+    where = "WHERE normalized_title IS NOT NULL AND artist_id IS NOT NULL"
+    params: tuple = ()
+    if artist_id:
+        where += " AND artist_id = ?"
+        params = (artist_id,)
+
+    sub_where = where  # same filter for the correlated subquery
+
+    with _connect() as conn:
+        cursor = conn.execute(
+            f"""
+            UPDATE lib_releases SET canonical_release_id = (
+                SELECT sub.id FROM lib_releases sub
+                WHERE sub.artist_id = lib_releases.artist_id
+                  AND sub.normalized_title = lib_releases.normalized_title
+                  AND sub.normalized_title IS NOT NULL
+                ORDER BY
+                    sub.is_owned DESC,
+                    CASE sub.version_type WHEN 'original' THEN 0 ELSE 1 END,
+                    sub.release_date ASC,
+                    CASE sub.catalog_source WHEN 'deezer' THEN 1 ELSE 2 END
+                LIMIT 1
+            )
+            {where}
+            """,
+            params,
+        )
+        updated = cursor.rowcount
+
+    logger.info("populate_canonical_release_ids: updated %d rows (artist_id=%s)", updated, artist_id or "all")
+    return updated
+
+
+def ensure_single_catalog_cleanup():
+    """One-time cleanup: remove secondary-source rows from lib_releases.
+
+    Reads CATALOG_PRIMARY from config, deletes rows from the other source,
+    and resets derived columns so they are recalculated on the next pipeline run.
+    Idempotent: gated by app_settings flag. Re-runs if CATALOG_PRIMARY changes.
+    """
+    primary = config.CATALOG_PRIMARY
+    secondary = "itunes" if primary == "deezer" else "deezer"
+
+    with _connect() as conn:
+        done = conn.execute(
+            "SELECT value FROM app_settings WHERE key = 'single_catalog_done'"
+        ).fetchone()
+        if done and done[0] == primary:
+            return  # already cleaned for this primary source
+
+        deleted = conn.execute(
+            "DELETE FROM lib_releases WHERE catalog_source = ?",
+            (secondary,),
+        ).rowcount
+
+        # Reset derived columns — forces recalculation by next pipeline run
+        conn.execute(
+            "UPDATE lib_releases SET canonical_release_id = NULL, "
+            "is_owned = 0, owned_checked_at = NULL"
+        )
+
+        conn.execute(
+            "INSERT INTO app_settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            ("single_catalog_done", primary),
+        )
+
+    logger.info(
+        "ensure_single_catalog_cleanup: deleted %d %s rows, primary=%s",
+        deleted, secondary, primary,
+    )

@@ -67,6 +67,16 @@ logging.basicConfig(
 )
 logging.getLogger().addFilter(_SecretRedactionFilter())
 logging.getLogger("spotipy").setLevel(logging.WARNING)
+
+
+class _HealthCheckFilter(logging.Filter):
+    """Suppress access-log lines for /health — ~2 880 lines/day of noise."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return '"GET /health' not in record.getMessage()
+
+
+logging.getLogger("uvicorn.access").addFilter(_HealthCheckFilter())
 logging.getLogger("spotipy.client").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
@@ -140,8 +150,7 @@ async def lifespan(app: FastAPI):
             import threading as _threading
 
             def _startup_pipeline():
-                # Single unified pipeline: Orchestrator handles sync + all enrichment
-                # with WS progress events.  No more dual run_auto_pipeline + run_full.
+                # Orchestrator delegates to PipelineRunner (single control plane).
                 from app.services.api_orchestrator import EnrichmentOrchestrator
                 EnrichmentOrchestrator.get().run_full()
 

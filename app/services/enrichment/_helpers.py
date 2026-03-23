@@ -23,14 +23,14 @@ _TITLE_SUFFIX_RE = re.compile(
         |(?:super\s+)?deluxe(?:\s+edition)?
         |collector'?s?\s+edition
         |explicit|clean
-        |remaster(?:ed)?
+        |(?:\d{4}\s+)?(?:\w+\s+)*re-?master(?:ed)?
         |expanded(?:\s+edition)?
         |(?:\d+(?:st|nd|rd|th)\s+)?anniversary\s+edition
         |bonus\s+track[s]?
         |special\s+edition
         |reissue
         |demo(?:\s+edition)?
-        |\d{4}\s+mix                    # (2024 Mix)
+        |\d{4}(?:\s+\w+)*\s+mix        # (2024 Mix), (2020 Giles Martin Mix)
         |live(?:\s+(?:at|in|from)\s+[\w\s,]+)?   # (Live), (Live at Venue)
         |(?:feat(?:uring)?|ft)\.?\s+[\w\s.&,'-]+  # (feat. Artist), (ft. Artist), (featuring Artist)
         |(?:japan|uk|us|eu|international)\s+(?:edition|version)
@@ -39,6 +39,7 @@ _TITLE_SUFFIX_RE = re.compile(
         |instrumental|karaoke|backing\s+track
         |(?:club|extended)\s+mix
         |remix
+        |\d{4}                           # bare year: (2020), [2020]
     )
     [\s\w]*                             # trailing words before close bracket
     [\)\]]                              # closing paren/bracket
@@ -86,7 +87,7 @@ def detect_version_type(title: str) -> tuple[str, str]:
     # by _TITLE_SUFFIX_RE and stripped into `removed`, but they fall through all
     # checks below and return 'original' by design — they are metadata modifiers,
     # not version-type classifiers.
-    if "remaster" in removed_lower:
+    if "remaster" in removed_lower or "re-master" in removed_lower:
         return cleaned, "remaster"
     if "deluxe" in removed_lower or "collector" in removed_lower:
         return cleaned, "deluxe"
@@ -130,6 +131,19 @@ def match_album_title(lib_title: str, api_title: str) -> float:
     if a == b:
         return 1.0
     return difflib.SequenceMatcher(None, a, b).ratio()
+
+
+def match_ownership_title(release_title: str, lib_title: str) -> bool:
+    """Exact normalized match for ownership detection.
+
+    Unlike match_album_title() which strips suffixes (causing remasters to match
+    originals), this compares full normalized titles WITHOUT suffix stripping.
+    norm("Tattoo You") != norm("Tattoo You (2009 Remaster)") -> no match.
+    """
+    from app.clients.music_client import norm
+    a = norm(release_title)
+    b = norm(lib_title)
+    return bool(a and b and a == b)
 
 
 def name_similarity_bonus(norm_target: str, norm_candidate: str) -> int:
@@ -183,11 +197,12 @@ def persist_artist_catalog(conn, artist_id: str, source: str, catalog: list[dict
         conn.execute(
             """
             INSERT OR REPLACE INTO lib_artist_catalog
-                (artist_id, source, album_id, album_title, record_type, track_count, fetched_at)
-            VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+                (artist_id, source, album_id, album_title, record_type, track_count, artwork_url, fetched_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
             """,
             (artist_id, source, album_id, title,
-             item.get("record_type"), item.get("track_count")),
+             item.get("record_type"), item.get("track_count"),
+             item.get("artwork_url") or None),
         )
 
 

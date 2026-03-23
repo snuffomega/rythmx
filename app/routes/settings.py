@@ -49,19 +49,22 @@ def settings_get():
     }
 
 
+def _verify_to_connected(service: str) -> dict:
+    """Delegate to connection_verifier and return legacy {connected, message} shape."""
+    from app.services.connection_verifier import verify_service
+    result = verify_service(service)
+    ok = result.get("status") == "ok"
+    return {"connected": ok, "message": result.get("message") if not ok else None}
+
+
 @router.post("/settings/test-lastfm")
 def settings_test_lastfm():
-    result = last_fm_client.test_connection()
-    ok = result.get("status") == "ok"
-    msg = result.get("username") if ok else result.get("message", "Connection failed")
-    return {"connected": ok, "message": msg}
+    return _verify_to_connected("lastfm")
 
 
 @router.post("/settings/test-plex")
 def settings_test_plex():
-    result = plex_push.test_connection()
-    ok = result.get("status") == "ok"
-    return {"connected": ok, "message": result.get("message") if not ok else None}
+    return _verify_to_connected("plex")
 
 
 @router.post("/settings/test-soulsync")
@@ -77,7 +80,7 @@ def settings_test_soulsync():
         db_path = config.RYTHMX_DB
         if not _os.path.exists(db_path):
             return {"connected": False,
-                    "message": "Library DB not synced yet — click Sync Library"}
+                    "message": "Library DB not synced yet — run pipeline first"}
         try:
             with _sq.connect(db_path) as _c:
                 tbl = _c.execute(
@@ -85,7 +88,7 @@ def settings_test_soulsync():
                 ).fetchone()
                 if not tbl:
                     return {"connected": False,
-                            "message": "Library not synced yet — click Sync Library"}
+                            "message": "Library not synced yet — run pipeline first"}
                 count = _c.execute("SELECT COUNT(*) FROM lib_tracks").fetchone()[0]
             return {"connected": True, "message": f"{count:,} tracks indexed"}
         except Exception as e:
@@ -107,40 +110,37 @@ def settings_test_soulsync():
 
 @router.post("/settings/test-spotify")
 def settings_test_spotify():
-    if not config.SPOTIFY_CLIENT_ID or not config.SPOTIFY_CLIENT_SECRET:
-        return {"connected": False,
-                "message": "SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET not set"}
-    try:
-        import spotipy
-        from spotipy.oauth2 import SpotifyClientCredentials
-        sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
-            client_id=config.SPOTIFY_CLIENT_ID,
-            client_secret=config.SPOTIFY_CLIENT_SECRET,
-        ))
-        sp.search(q="test", type="artist", limit=1)
-        return {"connected": True}
-    except Exception as e:
-        return {"connected": False, "message": str(e)}
+    return _verify_to_connected("spotify")
 
 
 @router.post("/settings/test-fanart")
 def settings_test_fanart():
-    if not config.FANART_API_KEY:
-        return {"connected": False, "message": "FANART_API_KEY not set — add to .env"}
-    try:
-        import requests as _req
-        resp = _req.get(
-            "https://webservice.fanart.tv/v3/music/a74b1b7f-71a5-4011-9441-d0b5e4122711",
-            params={"api_key": config.FANART_API_KEY},
-            timeout=10,
-        )
-        if resp.status_code == 401:
-            return {"connected": False, "message": "Invalid API key"}
-        if resp.status_code == 200:
-            return {"connected": True, "message": "Connected"}
-        return {"connected": False, "message": f"HTTP {resp.status_code}"}
-    except Exception as e:
-        return {"connected": False, "message": str(e)}
+    return _verify_to_connected("fanart")
+
+
+# ------------------------------------------------------------------
+# Connection verification (unified verify-all + per-service + status)
+# ------------------------------------------------------------------
+
+@router.post("/connections/verify")
+def connections_verify_all():
+    """Test all configured services and store verification timestamps."""
+    from app.services.connection_verifier import verify_all
+    return verify_all()
+
+
+@router.post("/connections/verify/{service}")
+def connections_verify_service(service: str):
+    """Test a single service connection and store verification timestamp."""
+    from app.services.connection_verifier import verify_service
+    return verify_service(service)
+
+
+@router.get("/connections/status")
+def connections_status():
+    """Return current verification state from DB (no live testing)."""
+    from app.services.connection_verifier import get_verification_status
+    return get_verification_status()
 
 
 @router.get("/library/status")
@@ -148,32 +148,6 @@ def library_status():
     from app.services import library_service
     status = library_service.get_status()
     return {"status": "ok", **status}
-
-
-@router.post("/library/sync")
-def library_sync():
-    from app.db import get_library_reader
-    try:
-        lr = get_library_reader()
-        result = lr.sync_library()
-        rythmx_store.set_setting(
-            "library_last_synced",
-            datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
-        )
-
-        def _delayed_enrich():
-            import time
-            time.sleep(30)
-            from app.services.api_orchestrator import EnrichmentOrchestrator
-            EnrichmentOrchestrator.get().run_full()
-
-        threading.Thread(target=_delayed_enrich, daemon=True, name="enrich-auto-trigger").start()
-        return {"status": "ok", **result}
-    except NotImplementedError as e:
-        return JSONResponse({"status": "error", "message": str(e)}, status_code=400)
-    except Exception as e:
-        logger.warning("library sync failed: %s", e)
-        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
 
 @router.get("/library/enrich-status")
@@ -350,12 +324,6 @@ def settings_clear_history():
 def settings_reset_db():
     rythmx_store.reset_db()
     return {"status": "ok"}
-
-
-@router.post("/settings/clear-image-cache")
-def settings_clear_image_cache():
-    rythmx_store.clear_image_cache()
-    return {"status": "ok", "message": "Image cache cleared"}
 
 
 @router.get("/settings/api-key")

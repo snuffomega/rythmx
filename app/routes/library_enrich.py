@@ -45,11 +45,13 @@ def enrich_status():
       }
     """
     from app.services.api_orchestrator import EnrichmentOrchestrator
+    from app.db import rythmx_store
     from app.db.rythmx_store import _connect
 
     orch = EnrichmentOrchestrator.get()
     running = orch.is_running()
     started_at = orch._started_at if running else None
+    phase = rythmx_store.get_setting("pipeline_phase") if running else None
 
     try:
         with _connect() as conn:
@@ -75,18 +77,7 @@ def enrich_status():
         if field in workers[src]:
             workers[src][field] = r["cnt"]
 
-    # Aggregate enrich_library sub-sources into single "library" key.
-    _lib_sources = {"itunes_artist", "deezer_artist", "itunes", "deezer"}
-    lib_agg: dict = {"found": 0, "not_found": 0, "errors": 0, "pending": 0}
-    for src in _lib_sources:
-        if src in workers:
-            entry = workers.pop(src)
-            for field in ("found", "not_found", "errors", "pending"):
-                lib_agg[field] += entry[field]
-    if any(lib_agg[f] > 0 for f in ("found", "not_found", "errors", "pending")):
-        workers["library"] = lib_agg
-
-    return {"status": "ok", "running": running, "started_at": started_at, "workers": workers}
+    return {"status": "ok", "running": running, "started_at": started_at, "phase": phase, "workers": workers}
 
 
 @router.post("/library/enrich/full")

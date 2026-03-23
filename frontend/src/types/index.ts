@@ -243,6 +243,7 @@ export interface LibArtist {
   id: string;
   name: string;
   album_count: number;
+  missing_count: number;
   match_confidence: number;
   source_platform: string | null;
   lastfm_tags_json: string | null;
@@ -250,6 +251,7 @@ export interface LibArtist {
   popularity: number | null;
   listener_count: number | null;
   global_play_count: number | null;
+  image_url: string | null;
 }
 
 export interface LibAlbum {
@@ -286,6 +288,7 @@ export interface LibTrack {
 export interface MissingAlbum {
   id?: string;
   album_title: string;
+  display_title?: string;
   source: string;
   record_type?: string | null;
   album_id?: string;
@@ -298,11 +301,31 @@ export interface MissingAlbum {
   track_count?: number;
 }
 
+export interface MissingReleaseGroup {
+  canonical_release_id: string;
+  primary: MissingAlbum & { is_owned?: number };
+  edition_count: number;
+  owned_count: number;
+  editions: (MissingAlbum & { is_owned?: number })[];
+  kind: string;
+}
+
 export interface LibArtistDetail {
   artist: LibArtist;
   albums: LibAlbum[];
   top_tracks: LibTrack[];
   missing_albums?: MissingAlbum[];
+  missing_groups?: MissingReleaseGroup[];
+  dismissed_count?: number;
+}
+
+export interface UserReleasePrefs {
+  release_id: string;
+  dismissed: number;
+  priority: number;
+  notes: string | null;
+  updated_at: string;
+  source: string;
 }
 
 export interface LibAlbumDetail {
@@ -326,6 +349,17 @@ export interface ReleaseDetail {
   explicit: number;
   label: string | null;
   genre_itunes: string | null;
+  canonical_release_id: string | null;
+}
+
+export interface ReleaseSibling {
+  id: string;
+  title: string;
+  version_type: string | null;
+  release_date: string | null;
+  thumb_url: string | null;
+  is_owned: number;
+  kind: string;
 }
 
 export interface ReleaseTrack {
@@ -378,15 +412,16 @@ export interface EnrichmentWorkerStatus {
 export interface EnrichmentPipelineStatus {
   running: boolean;
   // started_at: ISO 8601 UTC string set when run_full() is called; null when not running.
-  // Used by the frontend to compute accurate elapsed time on mid-run page load.
   started_at?: string | null;
-  // "library" aggregates all enrich_library sub-sources from enrichment_meta:
-  //   itunes_artist + deezer_artist (artist confidence validation)
-  //   itunes + deezer (album-level ID enrichment)
-  // The counts reflect total artist+album identity work — not just iTunes albums.
+  // Current pipeline phase (sync, id_itunes_deezer, id_parallel, etc.). Null when idle.
+  phase?: string | null;
+  // Per-source worker stats from enrichment_meta. During live runs the
+  // id_itunes_deezer worker broadcasts combined progress as "library";
+  // REST and completion payloads return individual sub-sources.
   workers: Partial<Record<
-    'library' | 'itunes_rich' | 'deezer_rich' | 'spotify_id' | 'spotify_genres' |
-    'lastfm_id' | 'lastfm_tags' | 'lastfm_stats',
+    'library' | 'itunes_artist' | 'deezer_artist' | 'itunes' | 'deezer' |
+    'itunes_rich' | 'deezer_rich' | 'spotify_id' | 'spotify_genres' |
+    'lastfm_id' | 'lastfm_tags' | 'lastfm_stats' | 'artist_art',
     EnrichmentWorkerStatus
   >>;
 }
@@ -424,6 +459,10 @@ export interface WsEnrichmentStopped {
   message: string;
 }
 
+export interface WsEnrichmentPhase {
+  phase: string;
+}
+
 // CC pipeline events (scheduler)
 export interface WsPipelineProgress {
   stage: string;
@@ -438,4 +477,27 @@ export interface WsLibrarySyncProgress {
   albums: number;
   tracks: number;
   message: string;
+}
+
+// Connection verification
+export interface ConnectionServiceStatus {
+  service: string;
+  display_name: string;
+  required: boolean;
+  status: string;
+  verified_at: string | null;
+  message?: string;
+  server_name?: string;
+  username?: string;
+}
+
+export interface ConnectionVerifyResult {
+  status: 'ok' | 'partial' | 'error';
+  services: Record<string, ConnectionServiceStatus>;
+  pipeline_ready: boolean;
+}
+
+export interface ConnectionStatusResult {
+  services: Record<string, ConnectionServiceStatus>;
+  pipeline_ready: boolean;
 }

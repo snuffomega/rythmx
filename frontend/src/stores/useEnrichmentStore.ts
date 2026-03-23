@@ -5,12 +5,12 @@
  * progress without owning a WebSocket connection.
  *
  * Write path: wsService routes WS events to handleProgress / handleComplete /
- *             handleStopped. App.tsx seeds initial state via setFromStatus on
- *             load. Start button calls reset() before runFull().
+ *             handleStopped / handlePhase. App.tsx seeds initial state via
+ *             setFromStatus on load. Start button calls reset() before runFull().
  *
  * Read path: components subscribe with selectors, e.g.:
  *   const running = useEnrichmentStore(s => s.running);
- *   const { workers, activeWorkers } = useEnrichmentStore();
+ *   const { workers, activeWorkers, phase } = useEnrichmentStore();
  */
 import { create } from 'zustand';
 import type {
@@ -25,6 +25,8 @@ interface EnrichmentStore {
   activeWorkers: Set<string>;
   /** Epoch ms when current run started. Components compute elapsed from this. */
   startedAt: number | null;
+  /** Current pipeline phase (sync, id_itunes_deezer, id_parallel, etc.). */
+  phase: string | null;
 
   /** Called by wsService on enrichment_progress events. */
   handleProgress: (p: unknown) => void;
@@ -32,6 +34,8 @@ interface EnrichmentStore {
   handleComplete: (p: unknown) => void;
   /** Called by wsService on enrichment_stopped events. */
   handleStopped: () => void;
+  /** Called by wsService on enrichment_phase events. */
+  handlePhase: (p: unknown) => void;
   /** Seed state from the REST /enrich/status response on app load. */
   setFromStatus: (s: EnrichmentPipelineStatus) => void;
   /** Optimistic reset before starting a new run. */
@@ -43,6 +47,7 @@ export const useEnrichmentStore = create<EnrichmentStore>((set) => ({
   workers: {},
   activeWorkers: new Set(),
   startedAt: null,
+  phase: null,
 
   handleProgress: (p) => {
     const { worker, found, not_found, errors, pending, running } = p as WsEnrichmentProgress;
@@ -56,11 +61,16 @@ export const useEnrichmentStore = create<EnrichmentStore>((set) => ({
 
   handleComplete: (p) => {
     const { workers } = p as { workers: Record<string, EnrichmentWorkerStatus> };
-    set({ running: false, workers, activeWorkers: new Set(), startedAt: null });
+    set({ running: false, workers, activeWorkers: new Set(), startedAt: null, phase: null });
   },
 
   handleStopped: () => {
-    set({ running: false, activeWorkers: new Set(), startedAt: null });
+    set({ running: false, activeWorkers: new Set(), startedAt: null, phase: null });
+  },
+
+  handlePhase: (p) => {
+    const { phase } = p as { phase: string };
+    set({ phase });
   },
 
   setFromStatus: (s) => {
@@ -68,13 +78,15 @@ export const useEnrichmentStore = create<EnrichmentStore>((set) => ({
       running: s.running ?? false,
       workers: s.workers ?? {},
       startedAt: s.running && s.started_at ? new Date(s.started_at).getTime() : null,
+      phase: s.phase ?? null,
     });
   },
 
-  reset: () => set({
+  reset: () => set((s) => ({
     running: true,
-    workers: {},
+    workers: s.workers,       // preserve previous bars — no flash to zero
     activeWorkers: new Set(),
     startedAt: Date.now(),
-  }),
+    phase: null,
+  })),
 }));
