@@ -326,12 +326,6 @@ def settings_reset_db():
     return {"status": "ok"}
 
 
-@router.post("/settings/clear-image-cache")
-def settings_clear_image_cache():
-    rythmx_store.clear_image_cache()
-    return {"status": "ok", "message": "Image cache cleared"}
-
-
 @router.get("/settings/api-key")
 def settings_get_api_key():
     """Return the current API key (authenticated — requires X-Api-Key header)."""

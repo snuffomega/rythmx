@@ -279,8 +279,6 @@ export const settingsApi = {
     request<{ status: string }>('/settings/clear-history', { method: 'POST' }),
   resetDb: () =>
     request<{ status: string }>('/settings/reset-db', { method: 'POST' }),
-  clearImageCache: () =>
-    request<{ status: string }>('/settings/clear-image-cache', { method: 'POST' }),
   getApiKey: () =>
     request<{ status: string; api_key: string }>('/settings/api-key')
       .then(r => r.api_key),
@@ -341,14 +339,6 @@ export const personalDiscoveryApi = {
     request<PersonalDiscoveryResult[]>('/personal-discovery/run', {
       method: 'POST',
       body: JSON.stringify(config),
-    }),
-};
-
-export const imageServiceApi = {
-  warmCache: (maxItems = 40) =>
-    request<{ status: string; submitted: number }>('/images/warm-cache', {
-      method: 'POST',
-      body: JSON.stringify({ max_items: maxItems }),
     }),
 };
 

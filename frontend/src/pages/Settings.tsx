@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { CheckCircle, XCircle, Loader2, RefreshCw, Database, Radio, ChevronDown, ChevronUp, Key, Eye, EyeOff, Copy, Play, Square, Clock, Zap } from 'lucide-react';
 import { useApi } from '../hooks/useApi';
-import { settingsApi, libraryApi, libraryBrowseApi, imageServiceApi, setApiKey, enrichmentApi } from '../services/api';
+import { settingsApi, libraryApi, libraryBrowseApi, setApiKey, enrichmentApi } from '../services/api';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useEnrichmentStore } from '../stores/useEnrichmentStore';
 import type { LibraryPlatform, EnrichmentWorkerStatus, Settings } from '../types';
@@ -293,9 +293,7 @@ export function SettingsPage({ toast }: SettingsPageProps) {
 
   const [switchingBackend, setSwitchingBackend] = useState(false);
   const [auditTotal, setAuditTotal] = useState(0);
-  const [warmingCache, setWarmingCache] = useState(false);
   const [confirmClearHistory, setConfirmClearHistory] = useState(false);
-  const [confirmClearImageCache, setConfirmClearImageCache] = useState(false);
   const [confirmResetDb, setConfirmResetDb] = useState(false);
   const [dangerOpen, setDangerOpen] = useState(false);
   const [apiKey, setApiKeyState] = useState<string | null>(null);
@@ -348,32 +346,6 @@ export function SettingsPage({ toast }: SettingsPageProps) {
       toast.error('Failed to clear history');
     }
     setConfirmClearHistory(false);
-  };
-
-  const handleWarmCache = async () => {
-    setWarmingCache(true);
-    try {
-      const result = await imageServiceApi.warmCache(40);
-      if (result.submitted > 0) {
-        toast.success(`Submitted ${result.submitted} image${result.submitted === 1 ? '' : 's'} for background fetch`);
-      } else {
-        toast.success('Cache is already warm');
-      }
-    } catch {
-      toast.error('Failed to warm cache');
-    } finally {
-      setWarmingCache(false);
-    }
-  };
-
-  const handleClearImageCache = async () => {
-    try {
-      await settingsApi.clearImageCache();
-      toast.success('Image cache cleared');
-    } catch {
-      toast.error('Failed to clear image cache');
-    }
-    setConfirmClearImageCache(false);
   };
 
   const handleResetDb = async () => {
@@ -541,36 +513,6 @@ export function SettingsPage({ toast }: SettingsPageProps) {
       </section>
 
       <section className="border-t border-[#1a1a1a] pt-8">
-        <h2 className="text-text-muted text-xs font-semibold uppercase tracking-widest mb-4">Images</h2>
-        <div className="flex items-center gap-6 flex-wrap">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={handleWarmCache}
-              disabled={warmingCache}
-              className="btn-secondary flex items-center gap-1.5 text-sm flex-shrink-0"
-            >
-              {warmingCache ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
-              Warm Now
-            </button>
-            <div>
-              <p className="text-text-primary text-sm font-semibold">Warm Image Cache</p>
-              <p className="text-[#444] text-xs mt-0.5">Pre-fetch artwork in the background</p>
-            </div>
-          </div>
-          <div className="w-px h-10 bg-[#1a1a1a] flex-shrink-0 hidden sm:block" />
-          <div className="flex items-center gap-3">
-            <button onClick={() => setConfirmClearImageCache(true)} className="btn-secondary text-sm flex-shrink-0">
-              Clear Cache
-            </button>
-            <div>
-              <p className="text-text-primary text-sm font-semibold">Clear Image Cache</p>
-              <p className="text-[#444] text-xs mt-0.5">Force all artwork to re-fetch</p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section className="border-t border-[#1a1a1a] pt-8">
         <h2 className="text-text-muted text-xs font-semibold uppercase tracking-widest mb-4">Security</h2>
         <div className="bg-[#0e0e0e] border border-[#1a1a1a] p-4 space-y-3">
           <div className="flex items-center gap-2.5">
@@ -660,15 +602,6 @@ export function SettingsPage({ toast }: SettingsPageProps) {
         danger
         onConfirm={handleClearHistory}
         onCancel={() => setConfirmClearHistory(false)}
-      />
-
-      <ConfirmDialog
-        open={confirmClearImageCache}
-        title="Clear Image Cache?"
-        description="All cached artwork URLs will be removed. Images will re-fetch from external sources on next page load."
-        confirmLabel="Clear Cache"
-        onConfirm={handleClearImageCache}
-        onCancel={() => setConfirmClearImageCache(false)}
       />
 
       <ConfirmDialog

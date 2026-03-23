@@ -20,13 +20,4 @@ def images_resolve(body: Optional[dict[str, Any]] = Body(default=None)):
     return {"image_url": url, "pending": pending}
 
 
-@router.post("/images/warm-cache")
-def warm_cache(data: Optional[dict[str, Any]] = Body(default=None)):
-    from app.services import image_service
-    data = data or {}
-    try:
-        max_items = min(int(data.get("max_items", 40)), 100)
-    except (TypeError, ValueError):
-        max_items = 40
-    submitted = image_service.warm_image_cache(max_items=max_items)
-    return {"status": "ok", "submitted": submitted}
+
