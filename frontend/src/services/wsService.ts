@@ -31,6 +31,7 @@ const ROUTES: Record<string, (payload: unknown) => void> = {
   enrichment_progress: (p) => useEnrichmentStore.getState().handleProgress(p),
   enrichment_complete: (p) => useEnrichmentStore.getState().handleComplete(p),
   enrichment_stopped:  ()  => useEnrichmentStore.getState().handleStopped(),
+  enrichment_phase:    (p) => useEnrichmentStore.getState().handlePhase(p),
   // player_state: (p) => usePlayerStore.getState().handleState(p),
 };
 

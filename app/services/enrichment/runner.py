@@ -45,6 +45,7 @@ class PipelineRunner:
         batch_size: int = 500,
         stop_event: threading.Event | None = None,
         on_progress: "callable | None" = None,
+        on_phase: "callable | None" = None,
     ) -> dict:
         """Execute the full enrichment DAG. Returns summary dict."""
         if not self._lock.acquire(blocking=False):
@@ -52,7 +53,7 @@ class PipelineRunner:
             return {"status": "skipped", "reason": "already_running"}
 
         try:
-            return self._execute(batch_size, stop_event, on_progress)
+            return self._execute(batch_size, stop_event, on_progress, on_phase)
         finally:
             self._clear_state()
             self._lock.release()
@@ -91,9 +92,11 @@ class PipelineRunner:
             rythmx_store.set_setting(key, "")
 
     @staticmethod
-    def _set_phase(phase: str):
+    def _set_phase(phase: str, on_phase: "callable | None" = None):
         rythmx_store.set_setting(_KEY_PHASE, phase)
         rythmx_store.set_setting(_KEY_HEARTBEAT, datetime.utcnow().isoformat())
+        if on_phase:
+            on_phase(phase)
 
     def _start_heartbeat(self, stop_event: threading.Event | None) -> threading.Event:
         """Start a background thread that updates the heartbeat timestamp."""
@@ -135,6 +138,7 @@ class PipelineRunner:
         batch_size: int,
         stop_event: threading.Event | None,
         on_progress: "callable | None",
+        on_phase: "callable | None" = None,
     ) -> dict:
         # Prune stale lock from a crashed previous run
         if self._is_stale_lock():
@@ -149,7 +153,7 @@ class PipelineRunner:
 
         try:
             # === Stage 1: Library Sync (DB only, fast) ===
-            self._set_phase("sync")
+            self._set_phase("sync", on_phase)
             try:
                 from app.services.enrichment.sync import sync_library
                 sync_result = sync_library()
@@ -168,7 +172,7 @@ class PipelineRunner:
                 return result
 
             # === Stage 2a: iTunes/Deezer IDs (sequential — feeds catalog promotion) ===
-            self._set_phase("id_itunes_deezer")
+            self._set_phase("id_itunes_deezer", on_phase)
             try:
                 from app.services.enrichment.id_itunes_deezer import enrich_library
                 enrich_library(
@@ -184,7 +188,7 @@ class PipelineRunner:
                 return result
 
             # === Stage 2b: PARALLEL — Spotify IDs + Last.fm IDs + Artist Artwork ===
-            self._set_phase("id_parallel")
+            self._set_phase("id_parallel", on_phase)
             from app.services.enrichment.id_spotify import enrich_artist_ids_spotify
             from app.services.enrichment.id_lastfm import enrich_artist_ids_lastfm
             from app.services.enrichment.art_artist import enrich_artist_art
@@ -233,7 +237,7 @@ class PipelineRunner:
             # === Ownership Chain (sequential — each reads previous output) ===
 
             # Ownership sync
-            self._set_phase("ownership_sync")
+            self._set_phase("ownership_sync", on_phase)
             try:
                 from app.services.enrichment.ownership_sync import sync_release_ownership
                 own_result = sync_release_ownership()
@@ -251,7 +255,7 @@ class PipelineRunner:
                 return result
 
             # Normalize titles
-            self._set_phase("normalize_titles")
+            self._set_phase("normalize_titles", on_phase)
             try:
                 from app.db.rythmx_store import recompute_normalized_titles
                 recomputed = recompute_normalized_titles()
@@ -261,7 +265,7 @@ class PipelineRunner:
                 logger.warning("PipelineRunner: normalized_title recompute failed: %s", e)
 
             # Missing counts
-            self._set_phase("missing_counts")
+            self._set_phase("missing_counts", on_phase)
             try:
                 from app.db.rythmx_store import refresh_missing_counts
                 refresh_missing_counts()
@@ -270,7 +274,7 @@ class PipelineRunner:
                 logger.warning("PipelineRunner: missing_count refresh failed: %s", e)
 
             # Canonical grouping
-            self._set_phase("canonical")
+            self._set_phase("canonical", on_phase)
             try:
                 from app.db.rythmx_store import populate_canonical_release_ids
                 canonical_updated = populate_canonical_release_ids()
@@ -284,7 +288,7 @@ class PipelineRunner:
                 return result
 
             # === Stage 3: Rich Data PARALLEL (5 workers, 3 threads) ===
-            self._set_phase("rich_data")
+            self._set_phase("rich_data", on_phase)
             from app.services.enrichment.rich_itunes import enrich_itunes_rich
             from app.services.enrichment.rich_deezer import enrich_deezer_release
             from app.services.enrichment.rich_spotify import enrich_genres_spotify

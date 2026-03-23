@@ -275,6 +275,17 @@ class EnrichmentOrchestrator:
                 pass
         return _fn
 
+    @staticmethod
+    def _make_phase_fn():
+        """Return a callback that broadcasts pipeline phase transitions via WS."""
+        def _fn(phase: str) -> None:
+            try:
+                from app.routes.ws import broadcast
+                broadcast("enrichment_phase", {"phase": phase})
+            except Exception:
+                pass
+        return _fn
+
     def _broadcast_complete(self) -> None:
         try:
             from app.routes.ws import broadcast
@@ -318,6 +329,7 @@ class EnrichmentOrchestrator:
                 batch_size=batch_size,
                 stop_event=self._stop_event,
                 on_progress=self._make_progress_fn,
+                on_phase=self._make_phase_fn(),
             )
 
             if result.get("status") == "stopped":

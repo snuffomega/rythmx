@@ -12,7 +12,7 @@ All messages use the standard SHRTA envelope:
 
 Approved events (from SHRTA Section 6 registry):
     server → client: pipeline_progress, pipeline_complete, pipeline_error,
-                     enrichment_progress, enrichment_complete, enrichment_stopped,
+                     enrichment_progress, enrichment_complete, enrichment_stopped, enrichment_phase,
                      library_sync_progress, player_state, ping, protocol_error
     client → server: pong
 
@@ -47,7 +47,7 @@ _event_loop: asyncio.AbstractEventLoop | None = None
 # Events the server is allowed to emit (SHRTA Section 6)
 _SERVER_EVENTS = frozenset({
     "pipeline_progress", "pipeline_complete", "pipeline_error",
-    "enrichment_progress", "enrichment_complete", "enrichment_stopped",
+    "enrichment_progress", "enrichment_complete", "enrichment_stopped", "enrichment_phase",
     "library_sync_progress", "player_state",
     "ping", "protocol_error",
 })
