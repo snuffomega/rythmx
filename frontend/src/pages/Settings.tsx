@@ -99,32 +99,43 @@ function ServiceCard({ name, subtitle, icon, configured, onTest }: ServiceRowPro
 // PipelineOrchestrator — hybrid layout (default: results summary, expanded: phase-grouped DAG)
 // ---------------------------------------------------------------------------
 
-// Pipeline phases matching backend DAG — each phase groups related workers.
+// Pipeline phases matching backend DAG — grouped by service, not task.
+// Each worker entry lists one or more backend keys to sum (handles the
+// id_itunes_deezer combined "library" key during live runs vs individual
+// sub-source keys from REST/completion payloads).
 const PIPELINE_PHASES = [
   { id: 'sync', label: 'Library Sync', backendPhases: ['sync'], workers: [] },
   { id: 'identity', label: 'Identity Resolution', backendPhases: ['id_itunes_deezer', 'id_parallel'], workers: [
-    { key: 'library',    label: 'iTunes/Deezer IDs',  desc: 'Artist & album identity matching' },
-    { key: 'spotify_id', label: 'Spotify IDs',         desc: 'Artist ID from Spotify' },
-    { key: 'lastfm_id',  label: 'Last.fm IDs',         desc: 'Artist MBID from Last.fm' },
-    { key: 'artist_art', label: 'Artist Artwork',      desc: 'Fanart.tv + Deezer photos' },
+    { key: 'itunes_ids',   keys: ['itunes_artist', 'itunes'],  label: 'iTunes',   desc: 'Artist & album identity matching' },
+    { key: 'deezer_ids',   keys: ['deezer_artist', 'deezer'],  label: 'Deezer',   desc: 'Artist & album identity matching' },
+    { key: 'library',      keys: ['library'],                   label: 'iTunes / Deezer',  desc: 'Combined live progress' },
+    { key: 'spotify_id',   keys: ['spotify_id'],                label: 'Spotify',  desc: 'Artist ID from Spotify' },
+    { key: 'lastfm_id',    keys: ['lastfm_id'],                 label: 'Last.fm',  desc: 'Artist MBID from Last.fm' },
+    { key: 'artist_art',   keys: ['artist_art'],                label: 'Artist Artwork',  desc: 'Fanart.tv + Deezer photos' },
   ]},
   { id: 'post', label: 'Post-Processing', backendPhases: ['ownership_sync', 'normalize_titles', 'missing_counts', 'canonical'], workers: [] },
   { id: 'rich', label: 'Rich Metadata', backendPhases: ['rich_data'], workers: [
-    { key: 'itunes_rich',    label: 'iTunes Metadata',  desc: 'Release date, genre, label' },
-    { key: 'deezer_rich',    label: 'Deezer Metadata',  desc: 'Record type, album art' },
-    { key: 'spotify_genres', label: 'Spotify Genres',    desc: 'Artist genre tags' },
-    { key: 'lastfm_tags',   label: 'Last.fm Tags',      desc: 'Community tags' },
-    { key: 'lastfm_stats',  label: 'Last.fm Stats',     desc: 'Playcount, listeners' },
+    { key: 'itunes_rich',    keys: ['itunes_rich'],    label: 'iTunes Enrichment',   desc: 'Release date, genre, label' },
+    { key: 'deezer_rich',    keys: ['deezer_rich'],    label: 'Deezer Enrichment',   desc: 'Record type, album art' },
+    { key: 'spotify_genres', keys: ['spotify_genres'], label: 'Spotify Enrichment',  desc: 'Artist genre tags' },
+    { key: 'lastfm_tags',   keys: ['lastfm_tags'],    label: 'Last.fm Enrichment',  desc: 'Community tags' },
+    { key: 'lastfm_stats',  keys: ['lastfm_stats'],   label: 'Last.fm Stats',       desc: 'Playcount, listeners' },
   ]},
 ] as const;
 
-// All worker keys across all phases (for overall totals).
-const ALL_WORKER_KEYS = PIPELINE_PHASES.flatMap(p => p.workers.map(w => w.key));
+// All backend keys across all phases (for overall totals — deduped).
+const ALL_BACKEND_KEYS = [...new Set(
+  PIPELINE_PHASES.flatMap(p => p.workers.flatMap(w => w.keys))
+)];
 
-// Human-readable label for the currently active worker.
-const WORKER_LABELS: Record<string, string> = Object.fromEntries(
-  PIPELINE_PHASES.flatMap(p => p.workers.map(w => [w.key, w.label]))
-);
+// Human-readable label for the currently active worker (keyed by backend worker name).
+const WORKER_LABELS: Record<string, string> = {
+  library: 'iTunes/Deezer IDs',
+  itunes_artist: 'iTunes', itunes: 'iTunes', deezer_artist: 'Deezer', deezer: 'Deezer',
+  spotify_id: 'Spotify', lastfm_id: 'Last.fm', artist_art: 'Artist Artwork',
+  itunes_rich: 'iTunes Enrichment', deezer_rich: 'Deezer Enrichment',
+  spotify_genres: 'Spotify Enrichment', lastfm_tags: 'Last.fm Enrichment', lastfm_stats: 'Last.fm Stats',
+};
 
 function formatElapsed(ms: number): string {
   const s = Math.floor(ms / 1000);
@@ -132,12 +143,14 @@ function formatElapsed(ms: number): string {
   return `${m.toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`;
 }
 
-function workerStats(workers: Record<string, EnrichmentWorkerStatus>, key: string) {
-  const w = workers[key];
-  const found = w?.found ?? 0;
-  const notFound = w?.not_found ?? 0;
-  const errors = w?.errors ?? 0;
-  const pending = w?.pending ?? 0;
+/** Sum stats across one or more backend worker keys. */
+function workerStats(workers: Record<string, EnrichmentWorkerStatus>, keys: readonly string[]) {
+  let found = 0, notFound = 0, errors = 0, pending = 0;
+  for (const k of keys) {
+    const w = workers[k];
+    if (!w) continue;
+    found += w.found; notFound += w.not_found; errors += w.errors; pending += w.pending;
+  }
   const total = found + notFound + errors + pending;
   const foundPct = total > 0 ? (found / total) * 100 : 0;
   const notFoundPct = total > 0 ? (notFound / total) * 100 : 0;
@@ -177,10 +190,10 @@ interface PipelineOrchestratorProps {
 function PipelineOrchestrator({ running, workers, activeWorkers, elapsedMs, phase, onRunFull, onStop }: PipelineOrchestratorProps) {
   const [showStages, setShowStages] = useState(false);
 
-  // Overall totals across all workers
-  const totals = ALL_WORKER_KEYS.reduce(
+  // Overall totals across all backend worker keys
+  const totals = ALL_BACKEND_KEYS.reduce(
     (acc, key) => {
-      const s = workerStats(workers, key);
+      const s = workerStats(workers, [key]);
       acc.found += s.found; acc.notFound += s.notFound; acc.errors += s.errors; acc.total += s.total;
       return acc;
     },
@@ -202,7 +215,7 @@ function PipelineOrchestrator({ running, workers, activeWorkers, elapsedMs, phas
   })();
 
   // Sources with data (for "across N sources" summary)
-  const sourcesWithData = ALL_WORKER_KEYS.filter(k => workerStats(workers, k).hasData).length;
+  const sourcesWithData = ALL_BACKEND_KEYS.filter(k => workerStats(workers, [k]).hasData).length;
 
   // Determine phase state for each pipeline phase
   const phaseIndex = phase ? PIPELINE_PHASES.findIndex(p => (p.backendPhases as readonly string[]).includes(phase)) : -1;
@@ -292,14 +305,21 @@ function PipelineOrchestrator({ running, workers, activeWorkers, elapsedMs, phas
         <div className="space-y-2 border-l border-[#1a1a1a] ml-1 pl-4">
           {PIPELINE_PHASES.map((phaseDef, idx) => {
             const isPhaseActive = running && phaseIndex === idx;
-            const isPhaseDone = running ? phaseIndex > idx : (phaseDef.workers.length > 0 && phaseDef.workers.some(w => workerStats(workers, w.key).hasData));
+            // No-worker phases (sync, post) are done if pipeline has moved past them,
+            // or at rest if any worker across the pipeline has data (meaning a run completed).
+            const anyDataExists = totals.total > 0;
+            const isPhaseDone = running
+              ? phaseIndex > idx
+              : phaseDef.workers.length > 0
+                ? phaseDef.workers.some(w => workerStats(workers, w.keys).hasData)
+                : anyDataExists;
             const isPhaseWaiting = running && phaseIndex < idx;
             const hasWorkers = phaseDef.workers.length > 0;
 
             // Phase-level aggregate stats
             const phaseStats = hasWorkers ? phaseDef.workers.reduce(
               (acc, w) => {
-                const s = workerStats(workers, w.key);
+                const s = workerStats(workers, w.keys);
                 acc.found += s.found; acc.notFound += s.notFound; acc.errors += s.errors;
                 acc.total += s.total;
                 return acc;
@@ -369,8 +389,8 @@ function PipelineOrchestrator({ running, workers, activeWorkers, elapsedMs, phas
                 {hasWorkers && phaseStats && phaseStats.total > 0 && (
                   <div className="mt-2 space-y-1 pl-3 border-l border-[#1a1a1a]">
                     {phaseDef.workers.map(w => {
-                      const s = workerStats(workers, w.key);
-                      const isWorkerActive = running && activeWorkers.has(w.key);
+                      const s = workerStats(workers, w.keys);
+                      const isWorkerActive = running && (w.keys).some(k => activeWorkers.has(k));
                       if (!s.hasData) return null;
                       return (
                         <div key={w.key} className="flex items-center gap-2 text-[10px] font-mono">

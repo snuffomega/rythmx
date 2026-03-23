@@ -302,18 +302,6 @@ class EnrichmentOrchestrator:
                 field = "errors" if r["status"] == "error" else r["status"]
                 if field in workers[src]:
                     workers[src][field] = r["cnt"]
-            # Merge enrich_library sub-sources into single "library" key.
-            # enrich_library writes to enrichment_meta under: itunes_artist, deezer_artist,
-            # itunes (album-level iTunes), deezer (album-level Deezer). All four represent
-            # the Identity Matching stage — aggregated here so the UI shows one complete number.
-            _lib_sources = {"itunes_artist", "deezer_artist", "itunes", "deezer"}
-            lib_agg: dict = {"found": 0, "not_found": 0, "errors": 0, "pending": 0, "running": False}
-            for src in _lib_sources:
-                if src in workers:
-                    src_data = workers.pop(src)
-                    for field in ("found", "not_found", "errors", "pending"):
-                        lib_agg[field] += src_data[field]
-            workers["library"] = lib_agg
             broadcast("enrichment_complete", {"workers": workers})
         except Exception as e:
             logger.warning("EnrichmentOrchestrator: broadcast_complete failed: %s", e)

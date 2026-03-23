@@ -415,11 +415,12 @@ export interface EnrichmentPipelineStatus {
   started_at?: string | null;
   // Current pipeline phase (sync, id_itunes_deezer, id_parallel, etc.). Null when idle.
   phase?: string | null;
-  // "library" aggregates all enrich_library sub-sources from enrichment_meta:
-  //   itunes_artist + deezer_artist (artist confidence validation)
-  //   itunes + deezer (album-level ID enrichment)
+  // Per-source worker stats from enrichment_meta. During live runs the
+  // id_itunes_deezer worker broadcasts combined progress as "library";
+  // REST and completion payloads return individual sub-sources.
   workers: Partial<Record<
-    'library' | 'itunes_rich' | 'deezer_rich' | 'spotify_id' | 'spotify_genres' |
+    'library' | 'itunes_artist' | 'deezer_artist' | 'itunes' | 'deezer' |
+    'itunes_rich' | 'deezer_rich' | 'spotify_id' | 'spotify_genres' |
     'lastfm_id' | 'lastfm_tags' | 'lastfm_stats' | 'artist_art',
     EnrichmentWorkerStatus
   >>;
