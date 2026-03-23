@@ -38,47 +38,38 @@ function ServiceCard({ name, subtitle, icon, configured, onTest, extra }: Servic
     }
   };
 
+  const statusColor =
+    status === 'connected' ? 'bg-success'
+    : status === 'error' ? 'bg-danger'
+    : status === 'testing' ? 'bg-accent/60 animate-pulse'
+    : 'bg-[#1e1e1e]';
+
   return (
-    <div className="relative bg-[#0e0e0e] border border-[#1a1a1a] p-4 flex flex-col gap-3">
-      {configured && (
-        <span className="absolute top-2.5 right-2.5 w-2 h-2 rounded-full bg-accent" title="Configured" />
-      )}
-      <div className="flex items-center gap-2.5">
-        <div className="w-7 h-7 bg-[#181818] flex items-center justify-center flex-shrink-0">
-          {icon}
+    <div className="bg-[#0e0e0e] border border-[#1a1a1a] p-4 flex items-stretch gap-3 min-h-[68px]">
+      {/* LEFT: icon + name + optional dropdown */}
+      <div className="flex-1 flex flex-col gap-2.5 min-w-0">
+        <div className="flex items-center gap-2.5">
+          <div className="w-7 h-7 bg-[#181818] flex items-center justify-center flex-shrink-0">
+            {icon}
+          </div>
+          <div className="min-w-0">
+            <p className="text-text-primary text-sm font-medium">{name}</p>
+            {subtitle && <p className="text-[#444] text-[10px]">{subtitle}</p>}
+          </div>
         </div>
-        <div>
-          <p className="text-text-primary text-sm font-medium">{name}</p>
-          {subtitle && <p className="text-[#444] text-[10px]">{subtitle}</p>}
-        </div>
+        {extra}
       </div>
 
-      <div className="flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          {status === 'connected' && (
-            <div className="flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 bg-success flex-shrink-0" />
-              <span className="text-success text-xs truncate">{message ?? 'Connected'}</span>
-            </div>
-          )}
-          {status === 'error' && (
-            <div className="flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 bg-danger flex-shrink-0" />
-              <span className="text-danger text-xs truncate">{message ?? 'Failed'}</span>
-            </div>
-          )}
-          {status === 'idle' && (
-            <span className="text-[#444] text-xs">Not tested</span>
-          )}
-          {status === 'testing' && (
-            <span className="text-text-muted text-xs">Testing…</span>
-          )}
-        </div>
-
+      {/* RIGHT: configured dot + test button + status square */}
+      <div className="flex flex-col items-end justify-between shrink-0">
+        <span
+          className={`w-2 h-2 rounded-full ${configured ? 'bg-accent' : 'bg-[#1e1e1e]'}`}
+          title={configured ? 'Configured' : 'Not configured'}
+        />
         <button
           onClick={handleTest}
           disabled={status === 'testing'}
-          className="btn-ghost flex items-center gap-1.5 text-xs flex-shrink-0"
+          className="btn-ghost flex items-center gap-1.5 text-xs"
         >
           {status === 'testing' ? (
             <Loader2 size={12} className="animate-spin" />
@@ -91,9 +82,11 @@ function ServiceCard({ name, subtitle, icon, configured, onTest, extra }: Servic
           )}
           Test
         </button>
+        <span
+          className={`w-2.5 h-2.5 rounded-sm transition-colors ${statusColor}`}
+          title={message ?? (status === 'idle' ? 'Not tested' : status)}
+        />
       </div>
-
-      {extra}
     </div>
   );
 }
@@ -186,11 +179,13 @@ interface PipelineOrchestratorProps {
   activeWorkers: Set<string>;
   elapsedMs: number;
   phase: string | null;
+  libraryTrackCount?: number;
+  libraryLastSynced?: string;
   onRunFull: () => void;
   onStop: () => void;
 }
 
-function PipelineOrchestrator({ running, workers, activeWorkers, elapsedMs, phase, onRunFull, onStop }: PipelineOrchestratorProps) {
+function PipelineOrchestrator({ running, workers, activeWorkers, elapsedMs, phase, libraryTrackCount, libraryLastSynced, onRunFull, onStop }: PipelineOrchestratorProps) {
   const [showStages, setShowStages] = useState(false);
 
   // Overall totals across all backend worker keys
@@ -379,9 +374,27 @@ function PipelineOrchestrator({ running, workers, activeWorkers, elapsedMs, phas
 
                 {/* No-bar phases: just show status text */}
                 {!hasWorkers && (
-                  <p className="text-[10px] font-mono text-text-muted/50 mt-0.5">
-                    {phaseDef.id === 'sync' ? 'Plex library sync' : 'Ownership, title normalization, canonical grouping'}
-                  </p>
+                  <div className="mt-0.5">
+                    {phaseDef.id === 'sync' ? (
+                      <div className="space-y-0.5">
+                        <p className="text-[10px] font-mono text-text-muted/50">Plex library sync</p>
+                        {libraryTrackCount !== undefined && (
+                          <p className="text-[10px] font-mono text-text-muted/40">
+                            Tracks indexed: {libraryTrackCount.toLocaleString()}
+                          </p>
+                        )}
+                        {libraryLastSynced && (
+                          <p className="text-[10px] font-mono text-text-muted/40">
+                            Last synced: {libraryLastSynced}
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-[10px] font-mono text-text-muted/50">
+                        Ownership, title normalization, canonical grouping
+                      </p>
+                    )}
+                  </div>
                 )}
 
                 {/* Worker rows within phase */}
@@ -556,33 +569,22 @@ export function SettingsPage({ toast }: SettingsPageProps) {
             configured={settingsStatus?.plex_configured}
             onTest={settingsApi.testPlex}
             extra={
-              <div>
-                <label className="label text-[10px]">Library Platform</label>
-                <div className="relative mt-1">
-                  <select
-                    className="select w-full"
-                    value={libraryStatus?.platform ?? platform}
-                    onChange={e => handlePlatformChange(e.target.value as LibraryPlatform)}
-                    disabled={switchingBackend}
-                  >
-                    <option value="plex">Plex</option>
-                    <option value="jellyfin">Jellyfin</option>
-                    <option value="navidrome">Navidrome</option>
-                  </select>
-                  {switchingBackend && (
-                    <div className="absolute right-8 top-1/2 -translate-y-1/2 pointer-events-none">
-                      <Loader2 size={13} className="animate-spin text-text-muted" />
-                    </div>
-                  )}
-                </div>
-                <div className="text-[11px] text-[#444] space-y-0.5 mt-2">
-                  {libraryStatus?.track_count !== undefined && (
-                    <p>{libraryStatus.track_count.toLocaleString()} tracks indexed</p>
-                  )}
-                  {libraryStatus?.last_synced && (
-                    <p>Last synced: {libraryStatus.last_synced}</p>
-                  )}
-                </div>
+              <div className="relative">
+                <select
+                  className="select w-full"
+                  value={libraryStatus?.platform ?? platform}
+                  onChange={e => handlePlatformChange(e.target.value as LibraryPlatform)}
+                  disabled={switchingBackend}
+                >
+                  <option value="plex">Plex</option>
+                  <option value="jellyfin">Jellyfin</option>
+                  <option value="navidrome">Navidrome</option>
+                </select>
+                {switchingBackend && (
+                  <div className="absolute right-8 top-1/2 -translate-y-1/2 pointer-events-none">
+                    <Loader2 size={13} className="animate-spin text-text-muted" />
+                  </div>
+                )}
               </div>
             }
           />
@@ -619,6 +621,8 @@ export function SettingsPage({ toast }: SettingsPageProps) {
           activeWorkers={activeWorkers}
           elapsedMs={elapsedMs}
           phase={phase}
+          libraryTrackCount={libraryStatus?.track_count}
+          libraryLastSynced={libraryStatus?.last_synced}
           onRunFull={() => {
             reset();
             enrichmentApi.runFull()
