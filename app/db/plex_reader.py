@@ -44,7 +44,7 @@ def sync_library() -> dict:
 
     Uses additive merge (INSERT OR IGNORE + targeted UPDATE) to preserve all
     enrichment data (itunes_album_id, deezer_id, lastfm_tags_json, BPM, etc.)
-    across re-syncs. Only Plex-owned columns (title, year, thumb_url, file_path)
+    across re-syncs. Only Plex-owned columns (title, year, thumb_url_plex, file_path)
     are updated on existing rows.
 
     Items removed from Plex are soft-deleted (removed_at timestamp) rather than
@@ -103,14 +103,14 @@ def sync_library() -> dict:
                 album_id = str(plex_album.ratingKey)
                 album_title = plex_album.title or ""
                 album_year = getattr(plex_album, "year", None)
-                thumb_url = getattr(plex_album, "thumb", None) or ""
+                thumb_url = getattr(plex_album, "thumb", None) or None
                 # Plex album.type is always "album" — not useful for classification.
                 # Leave NULL so query-time track-count heuristic can classify.
                 record_type = None
 
                 conn.execute(
                     "INSERT OR IGNORE INTO lib_albums "
-                    "(id, artist_id, title, local_title, title_lower, year, thumb_url, "
+                    "(id, artist_id, title, local_title, title_lower, year, thumb_url_plex, "
                     "source_platform, updated_at) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, 'plex', CURRENT_TIMESTAMP)",
                     (album_id, artist_id, album_title, album_title,
@@ -118,7 +118,7 @@ def sync_library() -> dict:
                 )
                 conn.execute(
                     "UPDATE lib_albums SET title = ?, local_title = ?, title_lower = ?, "
-                    "year = ?, thumb_url = ?, record_type = ?, source_platform = 'plex', "
+                    "year = ?, thumb_url_plex = ?, record_type = ?, source_platform = 'plex', "
                     "updated_at = CURRENT_TIMESTAMP, removed_at = NULL WHERE id = ?",
                     (album_title, album_title, album_title.lower(),
                      album_year, thumb_url, record_type, album_id),
@@ -475,7 +475,7 @@ def get_all_tracks_for_artist(artist_id: str) -> list[dict]:
                     t.spotify_track_id,
                     al.title       AS album_title,
                     al.year        AS album_year,
-                    al.thumb_url   AS album_thumb_url
+                    COALESCE(al.thumb_url_deezer, al.thumb_url_plex) AS album_thumb_url
                 FROM lib_tracks t
                 JOIN lib_albums al ON t.album_id = al.id
                 WHERE al.artist_id = ?
@@ -502,7 +502,7 @@ def get_tracks_for_album(artist_id: str, album_title: str) -> list[dict]:
                     t.spotify_track_id,
                     al.title       AS album_title,
                     al.year        AS album_year,
-                    al.thumb_url   AS album_thumb_url
+                    COALESCE(al.thumb_url_deezer, al.thumb_url_plex) AS album_thumb_url
                 FROM lib_tracks t
                 JOIN lib_albums al ON t.album_id = al.id
                 WHERE al.artist_id = ?

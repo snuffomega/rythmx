@@ -56,7 +56,7 @@ def library_artists(
             SELECT a.id, a.name, a.match_confidence, a.source_platform,
                    a.lastfm_tags_json, a.genres_json, a.popularity,
                    a.listener_count, a.global_play_count, a.missing_count,
-                   a.image_url,
+                   COALESCE(a.image_url_fanart, a.image_url_deezer) AS image_url,
                    COUNT(al.id) AS album_count
             FROM lib_artists a
             LEFT JOIN lib_albums al
@@ -81,7 +81,7 @@ def library_artist_detail(artist_id: str):
             SELECT a.id, a.name, a.match_confidence, a.source_platform,
                    a.lastfm_tags_json, a.genres_json, a.popularity,
                    a.listener_count, a.global_play_count,
-                   a.image_url,
+                   COALESCE(a.image_url_fanart, a.image_url_deezer) AS image_url,
                    COUNT(al.id) AS album_count
             FROM lib_artists a
             LEFT JOIN lib_albums al
@@ -108,7 +108,9 @@ def library_artist_detail(artist_id: str):
                        END
                    ) AS record_type,
                    la.match_confidence, la.needs_verification, la.source_platform,
-                   la.release_date, la.genre, la.thumb_url, la.lastfm_tags_json
+                   la.release_date, la.genre,
+                   COALESCE(la.thumb_url_deezer, la.thumb_url_plex) AS thumb_url,
+                   la.lastfm_tags_json
             FROM lib_albums la
             LEFT JOIN (
                 SELECT album_id, COUNT(*) AS cnt
@@ -564,7 +566,9 @@ def library_albums(
             f"""
             SELECT al.id, al.artist_id, al.title, al.year, al.record_type,
                    al.match_confidence, al.needs_verification, al.source_platform,
-                   al.release_date, al.genre, al.thumb_url, al.lastfm_tags_json,
+                   al.release_date, al.genre,
+                   COALESCE(al.thumb_url_deezer, al.thumb_url_plex) AS thumb_url,
+                   al.lastfm_tags_json,
                    ar.name AS artist_name
             FROM lib_albums al
             JOIN lib_artists ar ON ar.id = al.artist_id
@@ -586,7 +590,9 @@ def library_album_detail(album_id: str):
             """
             SELECT al.id, al.artist_id, al.title, al.year, al.record_type,
                    al.match_confidence, al.needs_verification, al.source_platform,
-                   al.release_date, al.genre, al.thumb_url, al.lastfm_tags_json,
+                   al.release_date, al.genre,
+                   COALESCE(al.thumb_url_deezer, al.thumb_url_plex) AS thumb_url,
+                   al.lastfm_tags_json,
                    ar.name AS artist_name
             FROM lib_albums al
             JOIN lib_artists ar ON ar.id = al.artist_id
