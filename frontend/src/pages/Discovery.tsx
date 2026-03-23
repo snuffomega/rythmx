@@ -43,8 +43,9 @@ function AlbumTile({
   wide?: boolean;
 }) {
   const { ref, inView } = useInView();
-  const resolvedImg = useImage('album', title, artist, !inView);
-  const src = image || resolvedImg;
+  const hasDirectUrl = image && image.startsWith('http');
+  const resolvedImg = useImage('album', title, artist, !inView || !!hasDirectUrl);
+  const src = hasDirectUrl ? image : (image || resolvedImg);
   const w = wide ? 'w-48' : 'w-40';
   const h = wide ? 'h-48' : 'h-40';
   return (
@@ -76,8 +77,9 @@ function AlbumTile({
 
 function ArtistTile({ artist }: { artist: Artist }) {
   const { ref, inView } = useInView();
-  const resolvedImg = useImage('artist', artist.name, '', !inView);
-  const src = artist.image || resolvedImg;
+  const hasDirectUrl = artist.image && artist.image.startsWith('http');
+  const resolvedImg = useImage('artist', artist.name, '', !inView || !!hasDirectUrl);
+  const src = hasDirectUrl ? artist.image : (artist.image || resolvedImg);
   return (
     <div ref={ref} className="flex-shrink-0 w-36 snap-start text-center group cursor-pointer">
       <div

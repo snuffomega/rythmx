@@ -7,10 +7,14 @@ Artist images:  Fanart.tv (real band photos, requires FANART_API_KEY) →
 Album images:   iTunes search (artworkUrl100, upscaled to 600px)
 Track images:   iTunes search (song → album art)
 
-Flow:
-  - Cache hit  → return (url, False) immediately (~5ms DB lookup)
-  - Cache miss → submit background fetch to thread pool, return ("", True)
-                 Flask request thread is NEVER blocked by external calls.
+Three-tier cache (L1 → L2 → L3):
+  L1  In-memory dict   — ~0ms, 5-min TTL, capped at 2 000 entries
+  L2  SQLite image_cache — ~1ms, 30-day eviction (pruned at startup)
+  L3  API fetch          — ~200-500ms, runs in background thread pool
+
+  - Cache hit  → return (url, False) immediately (L1 or L2)
+  - Cache miss → submit background fetch to L3 thread pool, return ("", True)
+                 Request thread is NEVER blocked by external calls.
 
 The caller (frontend useImage hook) retries after a short delay when it
 gets pending=True, picking up the cached result once the background fetch
@@ -20,6 +24,7 @@ Two worker threads run concurrently (max), each rate-limiting their own
 external service calls independently.
 """
 import re
+import time
 import threading
 import logging
 import requests
@@ -64,6 +69,14 @@ _executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="img-worker")
 # Tracks keys currently queued/running in the executor — prevents duplicate submissions
 _in_flight: set[str] = set()
 _in_flight_lock = threading.Lock()
+
+# ---------------------------------------------------------------------------
+# L1: In-memory cache — avoids SQLite round-trip for hot entities (~0ms)
+# ---------------------------------------------------------------------------
+
+_mem_cache: dict[str, tuple[str, float]] = {}  # key → (url, timestamp)
+_MEM_TTL = 300  # seconds — entries expire after 5 minutes
+_MEM_MAX = 2000  # cap to prevent unbounded growth; LRU-style eviction on overflow
 
 _session = requests.Session()
 _session.headers["Accept"] = "application/json"
@@ -367,6 +380,12 @@ def _fetch_and_cache(entity_type: str, name: str, artist: str) -> None:
 
         if url:
             rythmx_store.set_image_cache(entity_type, key, url)
+            # Promote to L1 so subsequent requests skip SQLite entirely
+            _mem_cache[key] = (url, time.time())
+            # Cap L1 size — evict oldest entries on overflow
+            if len(_mem_cache) > _MEM_MAX:
+                oldest_key = min(_mem_cache, key=lambda k: _mem_cache[k][1])
+                _mem_cache.pop(oldest_key, None)
         logger.debug("Image cached: [%s] %s — %s", entity_type, name, url[:60] if url else "(none)")
     finally:
         with _in_flight_lock:
@@ -403,6 +422,8 @@ def resolve_image(entity_type: str, name: str, artist: str = "") -> tuple[str, b
     """
     Return (image_url, pending) for an artist / album / track.
 
+    Tiered cache: L1 memory (~0ms) → L2 SQLite (~1ms) → L3 API fetch (async, ~200-500ms).
+
     Cache hit  → (url, False)  — instant
     Cache miss → ("", True)    — background fetch submitted; caller retries after delay
 
@@ -411,11 +432,20 @@ def resolve_image(entity_type: str, name: str, artist: str = "") -> tuple[str, b
     artist:      artist name (required for album and track lookups)
     """
     key = _entity_key(entity_type, name, artist)
+    now = time.time()
 
+    # --- L1: in-memory dict (instant, ~0ms) ---
+    entry = _mem_cache.get(key)
+    if entry and (now - entry[1]) < _MEM_TTL:
+        return entry[0], False
+
+    # --- L2: SQLite image_cache (~1ms) ---
     cached = rythmx_store.get_image_cache(entity_type, key)
     if cached is not None:
+        _mem_cache[key] = (cached, now)  # promote to L1
         return cached, False
 
+    # --- L3: API fetch (background thread, ~200-500ms) ---
     with _in_flight_lock:
         if key in _in_flight:
             return "", True  # Already queued — caller retries
