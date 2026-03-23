@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 _CANDIDATE_SQL = """
     SELECT id, name, lastfm_mbid, deezer_artist_id FROM lib_artists
-    WHERE image_url_fanart IS NULL AND image_url_deezer IS NULL
+    WHERE (image_url_fanart IS NULL OR image_url_deezer IS NULL)
       AND removed_at IS NULL
       AND (deezer_artist_id IS NOT NULL OR lastfm_mbid IS NOT NULL)
       AND id NOT IN (
@@ -31,7 +31,7 @@ _CANDIDATE_SQL = """
 
 _REMAINING_SQL = """
     SELECT COUNT(*) FROM lib_artists
-    WHERE image_url_fanart IS NULL AND image_url_deezer IS NULL
+    WHERE (image_url_fanart IS NULL OR image_url_deezer IS NULL)
       AND removed_at IS NULL
       AND (deezer_artist_id IS NOT NULL OR lastfm_mbid IS NOT NULL)
       AND id NOT IN (
