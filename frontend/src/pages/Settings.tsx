@@ -23,26 +23,16 @@ interface ServiceRowProps {
 
 function ServiceCard({ name, subtitle, icon, configured, onTest, extra }: ServiceRowProps) {
   const [status, setStatus] = useState<'idle' | 'testing' | 'connected' | 'error'>('idle');
-  const [message, setMessage] = useState<string | null>(null);
 
   const handleTest = async () => {
     setStatus('testing');
-    setMessage(null);
     try {
       const result = await onTest();
       setStatus(result.connected ? 'connected' : 'error');
-      setMessage(result.message ?? null);
-    } catch (e) {
+    } catch {
       setStatus('error');
-      setMessage(e instanceof Error ? e.message : 'Connection failed');
     }
   };
-
-  const statusColor =
-    status === 'connected' ? 'bg-success'
-    : status === 'error' ? 'bg-danger'
-    : status === 'testing' ? 'bg-accent/60 animate-pulse'
-    : 'bg-[#1e1e1e]';
 
   return (
     <div className="bg-[#0e0e0e] border border-[#1a1a1a] p-4 flex items-stretch gap-3 min-h-[68px]">
@@ -60,7 +50,7 @@ function ServiceCard({ name, subtitle, icon, configured, onTest, extra }: Servic
         {extra}
       </div>
 
-      {/* RIGHT: configured dot + test button + status square */}
+      {/* RIGHT: configured dot + test button */}
       <div className="flex flex-col items-end justify-between shrink-0">
         <span
           className={`w-2 h-2 rounded-full ${configured ? 'bg-accent' : 'bg-[#1e1e1e]'}`}
@@ -82,10 +72,6 @@ function ServiceCard({ name, subtitle, icon, configured, onTest, extra }: Servic
           )}
           Test
         </button>
-        <span
-          className={`w-2.5 h-2.5 rounded-sm transition-colors ${statusColor}`}
-          title={message ?? (status === 'idle' ? 'Not tested' : status)}
-        />
       </div>
     </div>
   );
