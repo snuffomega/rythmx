@@ -67,6 +67,16 @@ logging.basicConfig(
 )
 logging.getLogger().addFilter(_SecretRedactionFilter())
 logging.getLogger("spotipy").setLevel(logging.WARNING)
+
+
+class _HealthCheckFilter(logging.Filter):
+    """Suppress access-log lines for /health — ~2 880 lines/day of noise."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return '"GET /health' not in record.getMessage()
+
+
+logging.getLogger("uvicorn.access").addFilter(_HealthCheckFilter())
 logging.getLogger("spotipy.client").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
