@@ -1021,18 +1021,25 @@ def recompute_normalized_titles() -> int:
     return updated
 
 
-def refresh_missing_counts() -> int:
+def refresh_missing_counts(artist_id: str | None = None) -> int:
     """Recompute lib_artists.missing_count from lib_releases with full dedup logic.
 
     Mirrors the ROW_NUMBER dedup in library_browse.library_artist_detail():
       - resolved_kind via COALESCE(kind_deezer, kind_itunes, track_count heuristic)
       - source priority: deezer > itunes
       - singles suppressed when album/ep exists with same normalized_title
+
+    Args:
+        artist_id: If provided, refresh only this artist. Otherwise refresh all.
+
     Returns number of artists updated.
     """
+    scope_clause = "WHERE lib_artists.id = ?" if artist_id else ""
+    params: tuple = (artist_id,) if artist_id else ()
+
     with _connect() as conn:
         # Step 1: Compute deduplicated missing count per artist
-        conn.execute("""
+        conn.execute(f"""
             UPDATE lib_artists SET missing_count = COALESCE((
                 SELECT COUNT(*) FROM (
                     SELECT id,
@@ -1079,12 +1086,14 @@ def refresh_missing_counts() -> int:
                       )
                   )
             ), 0)
-        """)
+            {scope_clause}
+        """, params)
         updated = conn.execute(
             "SELECT changes()"
         ).fetchone()[0]
 
-    logger.info("refresh_missing_counts: updated %d artists", updated)
+    logger.info("refresh_missing_counts: updated %d artists%s", updated,
+                f" (artist_id={artist_id})" if artist_id else "")
     return updated
 
 
