@@ -392,11 +392,15 @@ def library_update_release_prefs(
                 "UPDATE lib_releases SET user_dismissed = ? WHERE id = ?",
                 (1 if dismissed else 0, release_id),
             )
+            artist_id = conn.execute(
+                "SELECT artist_id FROM lib_releases WHERE id = ?", (release_id,)
+            ).fetchone()
+            artist_id = artist_id[0] if artist_id else None
 
-    # Refresh missing counts if dismiss state changed
+    # Refresh missing counts for the affected artist only
     if dismissed is not None:
         try:
-            rythmx_store.refresh_missing_counts()
+            rythmx_store.refresh_missing_counts(artist_id=artist_id)
         except Exception as e:
             logger.warning("refresh_missing_counts after prefs update failed: %s", e)
 
