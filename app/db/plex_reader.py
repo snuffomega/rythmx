@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 def _connect():
     """Return a WAL-mode connection to rythmx.db (read/write, rythmx-owned)."""
-    conn = sqlite3.connect(config.RYTHMX_DB)
+    conn = sqlite3.connect(config.RYTHMX_DB, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     return conn
