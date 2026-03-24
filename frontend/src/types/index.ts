@@ -487,3 +487,21 @@ export interface ConnectionStatusResult {
   services: Record<string, ConnectionServiceStatus>;
   pipeline_ready: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// The Forge — Pipeline history
+// ---------------------------------------------------------------------------
+
+export interface PipelineRun {
+  id: number;
+  pipeline_type: 'new_music' | 'custom_discovery';
+  run_mode: 'preview' | 'build' | 'fetch';
+  status: 'running' | 'completed' | 'error';
+  config_json: string;
+  started_at: string;
+  finished_at: string | null;
+  run_duration: number | null;
+  summary_json: string | null;
+  error_message: string | null;
+  triggered_by: 'manual' | 'schedule';
+}

@@ -1,15 +1,8 @@
-import { createFileRoute } from '@tanstack/react-router';
-import { PersonalDiscovery } from '../pages/PersonalDiscovery';
-import { useToastStore } from '../stores/useToastStore';
+import { createFileRoute, redirect } from '@tanstack/react-router';
 
 export const Route = createFileRoute('/cruise-control/personal-discovery')({
-  component: PersonalDiscoveryRoute,
+  beforeLoad: () => {
+    throw redirect({ to: '/forge/custom-discovery' });
+  },
+  component: () => null,
 });
-
-function PersonalDiscoveryRoute() {
-  const toast = {
-    success: useToastStore(s => s.success),
-    error: useToastStore(s => s.error),
-  };
-  return <PersonalDiscovery toast={toast} />;
-}

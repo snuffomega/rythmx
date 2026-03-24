@@ -404,3 +404,14 @@ export const enrichmentApi = {
   stop: () =>
     request<EnrichmentStopResponse>('/library/enrich/stop', { method: 'POST' }),
 };
+
+export const forgeApi = {
+  getPipelineHistory: (pipelineType?: string, limit = 50) => {
+    const params = new URLSearchParams();
+    if (pipelineType) params.set('pipeline_type', pipelineType);
+    params.set('limit', String(limit));
+    return request<{ status: string; runs: import('../types').PipelineRun[] }>(
+      `/forge/pipeline-history?${params}`
+    ).then(r => r.runs);
+  },
+};

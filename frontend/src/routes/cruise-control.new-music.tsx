@@ -1,6 +1,8 @@
-import { createFileRoute } from '@tanstack/react-router';
-import { CruiseControlNewMusic } from '../pages/CruiseControl';
+import { createFileRoute, redirect } from '@tanstack/react-router';
 
 export const Route = createFileRoute('/cruise-control/new-music')({
-  component: CruiseControlNewMusic,
+  beforeLoad: () => {
+    throw redirect({ to: '/forge/new-music' });
+  },
+  component: () => null,
 });

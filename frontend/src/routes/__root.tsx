@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { createRootRoute, Outlet, Link, useRouter } from '@tanstack/react-router';
-import { Compass, Zap, ListMusic, Activity, BarChart2, Settings, ChevronRight, Menu, Library, Play } from 'lucide-react';
+import { Compass, Zap, Activity, BarChart2, Settings, ChevronRight, Menu, Library, Play } from 'lucide-react';
 import { ToastContainer } from '../components/ToastContainer';
 import { PlayerBar } from '../components/PlayerBar';
 import { FullPagePlayer } from '../components/FullPagePlayer';
@@ -15,8 +15,7 @@ import type { LibraryStatus } from '../types';
 const NAV_ITEMS = [
   { to: '/discovery', label: 'Discovery', icon: Compass },
   { to: '/library', label: 'Library', icon: Library },
-  { to: '/cruise-control', label: 'Cruise Control', icon: Zap },
-  { to: '/playlists', label: 'Playlists', icon: ListMusic },
+  { to: '/forge', label: 'The Forge', icon: Zap },
   { to: '/activity', label: 'Activity', icon: Activity },
   { to: '/stats', label: 'Stats', icon: BarChart2 },
   { to: '/settings', label: 'Settings', icon: Settings },
