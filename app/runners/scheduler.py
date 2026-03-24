@@ -44,7 +44,11 @@ def get_status() -> dict:
     }
 
 
-def run_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict:
+def run_cycle(
+    run_mode: str = "fetch",
+    force_refresh: bool = False,
+    triggered_by: str = "manual",
+) -> dict:
     """
     Execute one cruise control cycle.
     run_mode: "preview" | "build" | "fetch"
@@ -52,6 +56,7 @@ def run_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict:
       build   — scan + build named playlist from owned new releases
       fetch   — build + queue downloads for unowned releases
     force_refresh — bypass 7-day release cache, re-fetch from provider
+    triggered_by  — "manual" | "schedule"
     Returns a result summary dict.
     """
     global _is_running, _last_run, _last_result, _current_stage, _current_run_mode
@@ -64,18 +69,34 @@ def run_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict:
     _current_run_mode = run_mode
     _last_run = datetime.utcnow()
 
+    config_snapshot = rythmx_store.get_all_settings()
+    run_id: int | None = None
+    try:
+        run_id = rythmx_store.insert_pipeline_run(
+            "new_music", run_mode, config_snapshot, triggered_by
+        )
+    except Exception as _hist_err:
+        logger.warning("pipeline_history insert failed (non-fatal): %s", _hist_err)
+
+    error_msg: str | None = None
     try:
         result = _execute_cycle(run_mode=run_mode, force_refresh=force_refresh)
         _last_result = result
         return result
     except Exception as e:
         logger.exception("Cruise control cycle failed: %s", e)
-        _last_result = {"status": "error", "message": str(e)}
+        error_msg = str(e)
+        _last_result = {"status": "error", "message": error_msg}
         return _last_result
     finally:
         _is_running = False
         _current_stage = None
         _current_run_mode = None
+        if run_id is not None:
+            try:
+                rythmx_store.complete_pipeline_run(run_id, _last_result, error_msg)
+            except Exception as _hist_err:
+                logger.warning("pipeline_history complete failed (non-fatal): %s", _hist_err)
 
 
 def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict:
@@ -673,7 +694,7 @@ def _loop():
                     logger.info("Weekly release cache refresh triggered (weekday=%s, hour=%s)",
                                 settings.get("release_cache_refresh_weekday", "3"),
                                 settings.get("release_cache_refresh_hour", "5"))
-                run_cycle(run_mode=mode, force_refresh=force)
+                run_cycle(run_mode=mode, force_refresh=force, triggered_by="schedule")
                 rythmx_store.set_setting("last_run", datetime.now().isoformat())
                 ran_cc = True
             # Library auto-pipeline — runs independently of CC cycle

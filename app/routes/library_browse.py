@@ -270,6 +270,80 @@ def library_artist_detail(artist_id: str):
     }
 
 
+@router.get("/library/releases")
+def library_releases_global(
+    is_owned: int = Query(default=None),
+    kind: str = Query(default=None),
+    q: str = Query(default=None),
+    sort: str = Query(default="date"),   # "date" | "artist"
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=50, le=200),
+):
+    """Global releases feed — queryable across all artists.
+
+    Used by the Forge New Music tab to display a cross-artist missing releases
+    feed. All data is already collected in lib_releases; no external API calls.
+    """
+    offset = (page - 1) * per_page
+
+    conditions = []
+    params: list = []
+
+    if is_owned is not None:
+        conditions.append("lr.is_owned = ?")
+        params.append(is_owned)
+
+    if kind:
+        kinds = [k.strip() for k in kind.split(",") if k.strip()]
+        placeholders = ",".join("?" * len(kinds))
+        conditions.append(
+            f"COALESCE(lr.kind_deezer, lr.kind_itunes) IN ({placeholders})"
+        )
+        params.extend(kinds)
+
+    if q:
+        conditions.append("(lr.title LIKE ? OR lr.artist_name LIKE ?)")
+        like = f"%{q}%"
+        params.extend([like, like])
+
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+    order_col = "lr.release_date DESC" if sort == "date" else "lr.artist_name ASC, lr.release_date DESC"
+
+    sql = f"""
+        SELECT lr.id, lr.artist_id, lr.artist_name, lr.title,
+               lr.release_date, lr.is_owned, lr.user_dismissed,
+               COALESCE(lr.kind_deezer, lr.kind_itunes,
+                   CASE
+                       WHEN lr.track_count IS NOT NULL AND lr.track_count <= 3 THEN 'single'
+                       WHEN lr.track_count IS NOT NULL AND lr.track_count <= 6 THEN 'ep'
+                       ELSE 'album'
+                   END) AS kind,
+               lr.version_type, lr.track_count, lr.thumb_url,
+               lr.catalog_source, lr.deezer_album_id, lr.itunes_album_id,
+               lr.explicit, lr.label, lr.genre_itunes, lr.canonical_release_id
+        FROM lib_releases lr
+        {where}
+        ORDER BY {order_col}
+        LIMIT ? OFFSET ?
+    """
+    count_sql = f"""
+        SELECT COUNT(*) FROM lib_releases lr {where}
+    """
+
+    with rythmx_store._connect() as conn:
+        total = conn.execute(count_sql, params).fetchone()[0]
+        rows = conn.execute(sql, params + [per_page, offset]).fetchall()
+
+    return {
+        "status": "ok",
+        "releases": [dict(r) for r in rows],
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+    }
+
+
 @router.get("/library/releases/{release_id}")
 def library_release_detail(release_id: str):
     """Return release metadata + on-demand track listing from iTunes/Deezer."""
