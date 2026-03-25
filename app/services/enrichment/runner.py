@@ -189,14 +189,15 @@ class PipelineRunner:
                 result["status"] = "stopped"
                 return result
 
-            # === Stage 2b: PARALLEL — Spotify IDs + Last.fm IDs + Artist Artwork ===
+            # === Stage 2b: PARALLEL — Spotify IDs + Last.fm IDs + MusicBrainz IDs + Artist Artwork ===
             self._set_phase("id_parallel", on_phase)
             from app.services.enrichment.id_spotify import enrich_artist_ids_spotify
             from app.services.enrichment.id_lastfm import enrich_artist_ids_lastfm
+            from app.services.enrichment.id_musicbrainz import enrich_artist_ids_musicbrainz
             from app.services.enrichment.art_artist import enrich_artist_art
 
             with concurrent.futures.ThreadPoolExecutor(
-                max_workers=3, thread_name_prefix="stage2b"
+                max_workers=4, thread_name_prefix="stage2b"
             ) as pool:
                 fut_spotify = pool.submit(
                     enrich_artist_ids_spotify,
@@ -211,22 +212,29 @@ class PipelineRunner:
                     on_progress=self._progress_fn(on_progress, "lastfm_id"),
                 )
 
-                # Wait for Last.fm only — artwork needs MBID from Last.fm
+                # Wait for Last.fm only — artwork + MusicBrainz need MBID from Last.fm
                 try:
                     fut_lastfm.result()
                 except Exception as e:
                     logger.error("PipelineRunner: Last.fm IDs failed: %s", e)
 
-                # Now submit artwork (has MBID available)
+                # Now submit artwork + MusicBrainz ID (both have MBID available)
                 fut_art = pool.submit(
                     enrich_artist_art,
                     batch_size=batch_size,
                     stop_event=stop_event,
                     on_progress=self._progress_fn(on_progress, "artist_art"),
                 )
+                fut_musicbrainz = pool.submit(
+                    enrich_artist_ids_musicbrainz,
+                    batch_size=batch_size,
+                    stop_event=stop_event,
+                    on_progress=self._progress_fn(on_progress, "musicbrainz_id"),
+                )
 
                 # Wait for remaining parallel tasks
-                for name, fut in [("Spotify IDs", fut_spotify), ("Artist Art", fut_art)]:
+                for name, fut in [("Spotify IDs", fut_spotify), ("Artist Art", fut_art),
+                                  ("MusicBrainz IDs", fut_musicbrainz)]:
                     try:
                         fut.result()
                     except Exception as e:
@@ -290,13 +298,16 @@ class PipelineRunner:
                 result["status"] = "stopped"
                 return result
 
-            # === Stage 3: Rich Data PARALLEL (5 workers, 3 threads) ===
+            # === Stage 3: Rich Data PARALLEL (8 workers, 4 threads) ===
             self._set_phase("rich_data", on_phase)
             from app.services.enrichment.rich_itunes import enrich_itunes_rich
             from app.services.enrichment.rich_deezer import enrich_deezer_release
             from app.services.enrichment.rich_spotify import enrich_genres_spotify
             from app.services.enrichment.tags_lastfm import enrich_tags_lastfm
             from app.services.enrichment.stats_lastfm import enrich_stats_lastfm
+            from app.services.enrichment.rich_deezer_artist import enrich_deezer_artist
+            from app.services.enrichment.rich_similar import enrich_similar_artists
+            from app.services.enrichment.rich_musicbrainz import enrich_musicbrainz_rich
 
             stage3_workers = [
                 (enrich_itunes_rich, "itunes_rich"),
@@ -304,10 +315,13 @@ class PipelineRunner:
                 (enrich_genres_spotify, "spotify_genres"),
                 (enrich_tags_lastfm, "lastfm_tags"),
                 (enrich_stats_lastfm, "lastfm_stats"),
+                (enrich_deezer_artist, "deezer_artist_stats"),
+                (enrich_similar_artists, "similar_artists"),
+                (enrich_musicbrainz_rich, "musicbrainz_rich"),
             ]
 
             with concurrent.futures.ThreadPoolExecutor(
-                max_workers=3, thread_name_prefix="stage3"
+                max_workers=4, thread_name_prefix="stage3"
             ) as pool:
                 futures = {
                     pool.submit(
