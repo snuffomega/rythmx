@@ -69,10 +69,10 @@ INSERT OR IGNORE INTO lib_releases
     (id, artist_id, artist_name, artist_name_lower, title, title_lower,
      normalized_title, version_type, kind_deezer,
      deezer_album_id,
-     track_count, thumb_url_deezer, release_date_deezer, explicit,
+     track_count, thumb_url_deezer, release_date_deezer, explicit, genre_deezer,
      catalog_source, confidence, user_dismissed,
      first_seen_at, last_checked_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'deezer', ?, ?,
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'deezer', ?, ?,
         CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 """
 
@@ -124,6 +124,7 @@ SET deezer_album_id  = COALESCE(deezer_album_id, ?),
     kind_deezer      = COALESCE(kind_deezer, ?),
     thumb_url_deezer = COALESCE(thumb_url_deezer, ?),
     release_date_deezer = COALESCE(release_date_deezer, ?),
+    genre_deezer     = COALESCE(genre_deezer, ?),
     last_checked_at  = CURRENT_TIMESTAMP
 WHERE id = ?
 """
@@ -200,10 +201,11 @@ def promote_catalog_to_releases(
                              artwork_url, release_date, release_id),
                         )
                     elif source == "deezer":
+                        genre_deezer = item.get("genre") or None
                         conn.execute(
                             _SECONDARY_DEEZER_UPDATE_SQL,
                             (album_id_str, kind_value,
-                             artwork_url, release_date, release_id),
+                             artwork_url, release_date, genre_deezer, release_id),
                         )
                     secondary_enriched += 1
                 except Exception as exc:
@@ -313,6 +315,7 @@ def promote_catalog_to_releases(
                             artwork_url or None,
                             release_date,
                             is_explicit,
+                            genre or None,
                             validation_confidence,
                             user_dismissed,
                         ),
