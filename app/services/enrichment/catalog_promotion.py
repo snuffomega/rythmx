@@ -69,7 +69,7 @@ INSERT OR IGNORE INTO lib_releases
     (id, artist_id, artist_name, artist_name_lower, title, title_lower,
      normalized_title, version_type, kind_deezer,
      deezer_album_id,
-     track_count, thumb_url, release_date, explicit,
+     track_count, thumb_url_deezer, release_date_deezer, explicit,
      catalog_source, confidence, user_dismissed,
      first_seen_at, last_checked_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'deezer', ?, ?,
@@ -81,7 +81,7 @@ INSERT OR IGNORE INTO lib_releases
     (id, artist_id, artist_name, artist_name_lower, title, title_lower,
      normalized_title, version_type, kind_itunes,
      itunes_album_id,
-     track_count, thumb_url, release_date, explicit, label, genre_itunes,
+     track_count, thumb_url_itunes, release_date_itunes, explicit, label, genre_itunes,
      catalog_source, confidence, user_dismissed,
      first_seen_at, last_checked_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'itunes', ?, ?,
@@ -108,19 +108,23 @@ LIMIT 1
 
 _SECONDARY_ITUNES_UPDATE_SQL = """
 UPDATE lib_releases
-SET itunes_album_id = COALESCE(itunes_album_id, ?),
-    label           = COALESCE(label, ?),
-    genre_itunes    = COALESCE(genre_itunes, ?),
-    kind_itunes     = COALESCE(kind_itunes, ?),
-    last_checked_at = CURRENT_TIMESTAMP
+SET itunes_album_id  = COALESCE(itunes_album_id, ?),
+    label            = COALESCE(label, ?),
+    genre_itunes     = COALESCE(genre_itunes, ?),
+    kind_itunes      = COALESCE(kind_itunes, ?),
+    thumb_url_itunes = COALESCE(thumb_url_itunes, ?),
+    release_date_itunes = COALESCE(release_date_itunes, ?),
+    last_checked_at  = CURRENT_TIMESTAMP
 WHERE id = ?
 """
 
 _SECONDARY_DEEZER_UPDATE_SQL = """
 UPDATE lib_releases
-SET deezer_album_id = COALESCE(deezer_album_id, ?),
-    kind_deezer     = COALESCE(kind_deezer, ?),
-    last_checked_at = CURRENT_TIMESTAMP
+SET deezer_album_id  = COALESCE(deezer_album_id, ?),
+    kind_deezer      = COALESCE(kind_deezer, ?),
+    thumb_url_deezer = COALESCE(thumb_url_deezer, ?),
+    release_date_deezer = COALESCE(release_date_deezer, ?),
+    last_checked_at  = CURRENT_TIMESTAMP
 WHERE id = ?
 """
 
@@ -181,18 +185,25 @@ def promote_catalog_to_releases(
                 track_count = item.get("track_count") or None
                 kind_value = _classify_kind(record_type, track_count)
 
+                artwork_url = item.get("artwork_url") or None
+                release_date = item.get("release_date") or None
+                if release_date and "T" in release_date:
+                    release_date = release_date.split("T")[0]
+
                 try:
                     if source == "itunes":
                         label = item.get("label") or None
                         genre = item.get("genre") or None
                         conn.execute(
                             _SECONDARY_ITUNES_UPDATE_SQL,
-                            (album_id_str, label, genre, kind_value, release_id),
+                            (album_id_str, label, genre, kind_value,
+                             artwork_url, release_date, release_id),
                         )
                     elif source == "deezer":
                         conn.execute(
                             _SECONDARY_DEEZER_UPDATE_SQL,
-                            (album_id_str, kind_value, release_id),
+                            (album_id_str, kind_value,
+                             artwork_url, release_date, release_id),
                         )
                     secondary_enriched += 1
                 except Exception as exc:

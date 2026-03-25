@@ -49,8 +49,8 @@ def _process_item(conn, row):
         conn.execute(
             """
             UPDATE lib_artists
-            SET listener_count_lastfm = ?,
-                play_count_lastfm = ?,
+            SET listener_count_lastfm = COALESCE(NULLIF(?, 0), listener_count_lastfm),
+                play_count_lastfm     = COALESCE(NULLIF(?, 0), play_count_lastfm),
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,

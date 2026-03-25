@@ -18,162 +18,19 @@ def _connect():
     return conn
 
 
-def _migrate_add_column(table: str, column: str, col_type: str):
-    """Add a column to an existing table if it doesn't already exist. No-op otherwise.
-
-    SQLite PRAGMA and ALTER TABLE do not support bound parameters — f-strings are
-    required here. All callers pass hardcoded string literals; no user input reaches
-    this function. Safe by construction.
-    """
-    try:
-        with _connect() as conn:
-            cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
-            if column not in cols:
-                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
-    except Exception:
-        pass  # table may not exist yet on first run — CREATE TABLE in init_db handles it
-
 
 def init_db():
-    """Create all rythmx.db tables if they don't exist. Safe to call on every startup."""
-    # Run pending SQL migrations first (renames old cc_* tables on existing installs)
+    """Create all rythmx.db tables if they don't exist. Safe to call on every startup.
+
+    The genesis migration (000_genesis.sql) creates ALL tables and indexes.
+    init_db() only runs migrations and performs post-schema maintenance.
+    """
     from migrations.runner import run_pending_migrations
     run_pending_migrations(config.RYTHMX_DB)
-
-    with _connect() as conn:
-        conn.executescript("""
-            CREATE TABLE IF NOT EXISTS history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                track_name TEXT,
-                artist_name TEXT,
-                album_name TEXT,
-                source TEXT,
-                score REAL,
-                acquisition_status TEXT,
-                reason TEXT,
-                cycle_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS playlist_tracks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                playlist_name TEXT DEFAULT 'For You',
-                track_id TEXT,
-                spotify_track_id TEXT,
-                track_name TEXT,
-                artist_name TEXT,
-                album_name TEXT,
-                album_cover_url TEXT,
-                score REAL,
-                position INT,
-                added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                plex_playlist_id TEXT,
-                is_owned INTEGER DEFAULT 1,
-                release_date TEXT,
-                UNIQUE(track_id)
-            );
-
-            CREATE TABLE IF NOT EXISTS taste_cache (
-                artist_name TEXT PRIMARY KEY,
-                play_count INT,
-                period TEXT,
-                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS app_settings (
-                key TEXT PRIMARY KEY,
-                value TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS artist_identity_cache (
-                lastfm_name TEXT PRIMARY KEY,
-                deezer_artist_id TEXT,
-                spotify_artist_id TEXT,
-                itunes_artist_id TEXT,
-                mb_artist_id TEXT,
-                soulsync_artist_id TEXT,
-                confidence INTEGER DEFAULT 80,
-                last_resolved_ts INTEGER DEFAULT 0
-            );
-
-            CREATE TABLE IF NOT EXISTS candidates (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                spotify_track_id TEXT UNIQUE,
-                track_name TEXT,
-                artist_name TEXT,
-                album_name TEXT,
-                album_cover_url TEXT,
-                score REAL,
-                is_owned INTEGER DEFAULT 0,
-                plex_rating_key TEXT,
-                source TEXT,
-                scored_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS playlists (
-                name TEXT PRIMARY KEY,
-                source TEXT DEFAULT 'manual',
-                source_url TEXT,
-                auto_sync INTEGER DEFAULT 0,
-                mode TEXT DEFAULT 'library_only',
-                last_synced_ts INTEGER DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS release_cache (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                artist_name TEXT    NOT NULL,
-                source      TEXT    NOT NULL,
-                album_title TEXT    NOT NULL,
-                release_date TEXT,
-                kind        TEXT,
-                itunes_album_id  TEXT,
-                deezer_album_id  TEXT,
-                spotify_album_id TEXT,
-                is_upcoming INTEGER DEFAULT 0,
-                cached_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(artist_name, source, album_title)
-            );
-
-            CREATE TABLE IF NOT EXISTS download_queue (
-                id               INTEGER PRIMARY KEY AUTOINCREMENT,
-                artist_name      TEXT NOT NULL,
-                album_title      TEXT NOT NULL,
-                release_date     TEXT,
-                kind             TEXT,
-                source           TEXT,
-                itunes_album_id  TEXT,
-                deezer_album_id  TEXT,
-                spotify_album_id TEXT,
-                status           TEXT DEFAULT 'pending',
-                requested_by     TEXT,
-                playlist_name    TEXT,
-                provider_response TEXT,
-                created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(artist_name, album_title)
-            );
-
-            CREATE TABLE IF NOT EXISTS image_cache (
-                entity_type  TEXT NOT NULL,
-                entity_key   TEXT NOT NULL,
-                image_url    TEXT DEFAULT '',
-                last_accessed TEXT DEFAULT (datetime('now')),
-                PRIMARY KEY (entity_type, entity_key)
-            );
-        """)
 
     # Prune stale image cache entries (> 30 days since last access)
     with _connect() as conn:
         conn.execute("DELETE FROM image_cache WHERE last_accessed < datetime('now', '-30 days')")
-
-    # Migrations: add columns that may not exist in older rythmx.db files
-    _migrate_add_column("artist_identity_cache", "itunes_artist_id", "TEXT")
-    _migrate_add_column("artist_identity_cache", "soulsync_artist_id", "TEXT")
-    _migrate_add_column("artist_identity_cache", "resolution_method", "TEXT")
-    _migrate_add_column("playlists", "max_tracks", "INTEGER DEFAULT 50")
-    _migrate_add_column("playlist_tracks", "is_owned", "INTEGER DEFAULT 1")
-    _migrate_add_column("playlist_tracks", "release_date", "TEXT")
-    _migrate_add_column("release_cache", "artwork_url", "TEXT DEFAULT ''")
 
     logger.info("rythmx.db initialized at %s", config.RYTHMX_DB)
 
@@ -760,10 +617,11 @@ def remove_playlist_row(row_id: int):
         conn.execute("DELETE FROM playlist_tracks WHERE id = ?", (row_id,))
 
 
-# --- Release cache ---
+# --- Release cache (DEPRECATED — CC pipeline will be deleted; release_cache table removed in genesis) ---
 
 def get_cached_releases(artist_name: str, max_age_days: int = 7):
-    """
+    """DEPRECATED: Legacy CC pipeline only. release_cache table removed in genesis migration.
+
     Return Release objects for this artist if fetched within max_age_days, else None.
     Returns ALL stored releases (including upcoming) — caller filters as needed.
     Returns None  → cache miss (never fetched, or stale) — call providers.
@@ -809,7 +667,8 @@ def get_cached_releases(artist_name: str, max_age_days: int = 7):
 
 
 def save_releases_to_cache(artist_name: str, releases: list, artist_lib_id: str = None):
-    """
+    """DEPRECATED: Legacy CC pipeline only. release_cache table removed in genesis migration.
+
     Upsert a list of Release objects into release_cache (including upcoming).
     If releases is empty, writes a sentinel row (source='sentinel', album_title='')
     so that get_cached_releases() can distinguish "checked but found nothing" from
@@ -922,7 +781,8 @@ def get_release_itunes_album_id(artist_name: str, album_title: str) -> str | Non
 
 
 def clear_release_cache(artist_name: str | None = None):
-    """Delete all rows (or rows for one artist) from release_cache."""
+    """DEPRECATED — Legacy CC pipeline artifact. Will be removed with CC deletion.
+    Delete all rows (or rows for one artist) from release_cache."""
     with _connect() as conn:
         if artist_name:
             conn.execute("DELETE FROM release_cache WHERE artist_name = ?", (artist_name,))
@@ -994,12 +854,15 @@ def backfill_normalized_titles() -> int:
     return updated
 
 
-def recompute_normalized_titles() -> int:
-    """Recompute normalized_title and version_type for ALL lib_releases rows.
+def recompute_normalized_titles(artist_ids: list[str] | None = None) -> int:
+    """Recompute normalized_title and version_type for lib_releases rows.
 
     Unlike backfill_normalized_titles() which skips rows where normalized_title
     is already set, this overwrites all rows. Use after updating the title
     normalization regex so existing rows pick up the new logic.
+
+    Args:
+        artist_ids: If provided, only recompute for these artists. Otherwise all.
 
     Returns count of rows updated.
     """
@@ -1008,7 +871,14 @@ def recompute_normalized_titles() -> int:
 
     updated = 0
     with _connect() as conn:
-        rows = conn.execute("SELECT id, title FROM lib_releases").fetchall()
+        if artist_ids:
+            placeholders = ",".join("?" * len(artist_ids))
+            rows = conn.execute(
+                f"SELECT id, title FROM lib_releases WHERE artist_id IN ({placeholders})",
+                artist_ids,
+            ).fetchall()
+        else:
+            rows = conn.execute("SELECT id, title FROM lib_releases").fetchall()
         for row in rows:
             cleaned_title, version_type = detect_version_type(row["title"])
             normalized_title = norm(cleaned_title)
@@ -1017,11 +887,13 @@ def recompute_normalized_titles() -> int:
                 (normalized_title, version_type, row["id"]),
             )
             updated += 1
-    logger.info("recompute_normalized_titles: reprocessed %d lib_releases rows", updated)
+    logger.info("recompute_normalized_titles: reprocessed %d lib_releases rows%s",
+                updated, f" (scoped to {len(artist_ids)} artists)" if artist_ids else "")
     return updated
 
 
-def refresh_missing_counts(artist_id: str | None = None) -> int:
+def refresh_missing_counts(artist_id: str | None = None,
+                           artist_ids: list[str] | None = None) -> int:
     """Recompute lib_artists.missing_count from lib_releases with full dedup logic.
 
     Mirrors the ROW_NUMBER dedup in library_browse.library_artist_detail():
@@ -1030,12 +902,22 @@ def refresh_missing_counts(artist_id: str | None = None) -> int:
       - singles suppressed when album/ep exists with same normalized_title
 
     Args:
-        artist_id: If provided, refresh only this artist. Otherwise refresh all.
+        artist_id: If provided, refresh only this artist.
+        artist_ids: If provided, refresh only these artists (takes precedence over artist_id).
+        If neither provided, refresh all.
 
     Returns number of artists updated.
     """
-    scope_clause = "WHERE lib_artists.id = ?" if artist_id else ""
-    params: tuple = (artist_id,) if artist_id else ()
+    if artist_ids:
+        placeholders = ",".join("?" * len(artist_ids))
+        scope_clause = f"WHERE lib_artists.id IN ({placeholders})"
+        params: tuple = tuple(artist_ids)
+    elif artist_id:
+        scope_clause = "WHERE lib_artists.id = ?"
+        params = (artist_id,)
+    else:
+        scope_clause = ""
+        params = ()
 
     with _connect() as conn:
         # Step 1: Compute deduplicated missing count per artist
@@ -1066,8 +948,8 @@ def refresh_missing_counts(artist_id: str | None = None) -> int:
                                             )
                                ORDER BY
                                    CASE catalog_source WHEN 'deezer' THEN 1 WHEN 'itunes' THEN 2 ELSE 3 END,
-                                   thumb_url IS NOT NULL DESC,
-                                   release_date IS NOT NULL DESC
+                                   COALESCE(thumb_url_deezer, thumb_url_itunes) IS NOT NULL DESC,
+                                   COALESCE(release_date_itunes, release_date_deezer) IS NOT NULL DESC
                            ) AS rn
                     FROM lib_releases
                     WHERE artist_id = lib_artists.id
@@ -1092,12 +974,17 @@ def refresh_missing_counts(artist_id: str | None = None) -> int:
             "SELECT changes()"
         ).fetchone()[0]
 
-    logger.info("refresh_missing_counts: updated %d artists%s", updated,
-                f" (artist_id={artist_id})" if artist_id else "")
+    scope_msg = ""
+    if artist_ids:
+        scope_msg = f" (scoped to {len(artist_ids)} artists)"
+    elif artist_id:
+        scope_msg = f" (artist_id={artist_id})"
+    logger.info("refresh_missing_counts: updated %d artists%s", updated, scope_msg)
     return updated
 
 
-def populate_canonical_release_ids(artist_id: str | None = None) -> int:
+def populate_canonical_release_ids(artist_id: str | None = None,
+                                   artist_ids: list[str] | None = None) -> int:
     """Assign canonical_release_id to lib_releases rows.
 
     Groups by (artist_id, normalized_title). The "primary" release per group is
@@ -1106,13 +993,18 @@ def populate_canonical_release_ids(artist_id: str | None = None) -> int:
 
     Args:
         artist_id: If provided, only refresh rows for this artist.
-                   If None, refresh all rows.
+        artist_ids: If provided, only refresh rows for these artists (takes precedence).
+        If neither provided, refresh all rows.
 
     Returns count of rows updated.
     """
     where = "WHERE normalized_title IS NOT NULL AND artist_id IS NOT NULL"
     params: tuple = ()
-    if artist_id:
+    if artist_ids:
+        placeholders = ",".join("?" * len(artist_ids))
+        where += f" AND artist_id IN ({placeholders})"
+        params = tuple(artist_ids)
+    elif artist_id:
         where += " AND artist_id = ?"
         params = (artist_id,)
 
@@ -1129,7 +1021,7 @@ def populate_canonical_release_ids(artist_id: str | None = None) -> int:
                 ORDER BY
                     sub.is_owned DESC,
                     CASE sub.version_type WHEN 'original' THEN 0 ELSE 1 END,
-                    sub.release_date ASC,
+                    COALESCE(sub.release_date_itunes, sub.release_date_deezer) ASC,
                     CASE sub.catalog_source WHEN 'deezer' THEN 1 ELSE 2 END
                 LIMIT 1
             )
@@ -1139,7 +1031,8 @@ def populate_canonical_release_ids(artist_id: str | None = None) -> int:
         )
         updated = cursor.rowcount
 
-    logger.info("populate_canonical_release_ids: updated %d rows (artist_id=%s)", updated, artist_id or "all")
+    scope_label = f"{len(artist_ids)} artists" if artist_ids else (artist_id or "all")
+    logger.info("populate_canonical_release_ids: updated %d rows (scope=%s)", updated, scope_label)
     return updated
 
 

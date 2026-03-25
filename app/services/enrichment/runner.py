@@ -173,13 +173,15 @@ class PipelineRunner:
 
             # === Stage 2a: iTunes/Deezer IDs (sequential — feeds catalog promotion) ===
             self._set_phase("id_itunes_deezer", on_phase)
+            modified_artist_ids: list[str] = []
             try:
                 from app.services.enrichment.id_itunes_deezer import enrich_library
-                enrich_library(
+                s2a_result = enrich_library(
                     batch_size=batch_size,
                     stop_event=stop_event,
                     on_progress=self._progress_fn(on_progress, "library"),
                 )
+                modified_artist_ids = s2a_result.get("modified_artist_ids", [])
             except Exception as e:
                 logger.error("PipelineRunner: iTunes/Deezer IDs failed: %s", e)
 
@@ -254,30 +256,31 @@ class PipelineRunner:
                 result["status"] = "stopped"
                 return result
 
-            # Normalize titles
+            # Normalize titles (scoped to modified artists when available)
             self._set_phase("normalize_titles", on_phase)
+            scope = modified_artist_ids or None
             try:
                 from app.db.rythmx_store import recompute_normalized_titles
-                recomputed = recompute_normalized_titles()
+                recomputed = recompute_normalized_titles(artist_ids=scope)
                 result["recompute_titles"] = recomputed
                 logger.info("PipelineRunner: normalized_title recomputed for %d rows", recomputed)
             except Exception as e:
                 logger.warning("PipelineRunner: normalized_title recompute failed: %s", e)
 
-            # Missing counts
+            # Missing counts (scoped to modified artists when available)
             self._set_phase("missing_counts", on_phase)
             try:
                 from app.db.rythmx_store import refresh_missing_counts
-                refresh_missing_counts()
+                refresh_missing_counts(artist_ids=scope)
                 logger.info("PipelineRunner: missing_count refresh complete")
             except Exception as e:
                 logger.warning("PipelineRunner: missing_count refresh failed: %s", e)
 
-            # Canonical grouping
+            # Canonical grouping (scoped to modified artists when available)
             self._set_phase("canonical", on_phase)
             try:
                 from app.db.rythmx_store import populate_canonical_release_ids
-                canonical_updated = populate_canonical_release_ids()
+                canonical_updated = populate_canonical_release_ids(artist_ids=scope)
                 result["canonical_refresh"] = canonical_updated
                 logger.info("PipelineRunner: canonical refresh — %d rows", canonical_updated)
             except Exception as e:

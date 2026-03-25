@@ -38,6 +38,7 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
     enriched = 0
     failed = 0
     skipped = 0
+    modified_artist_ids: list[str] = []
 
     # Load artists that still have albums needing iTunes or Deezer IDs
     try:
@@ -88,6 +89,7 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
             continue
 
         try:
+            artist_had_enrichment = False
             # Load this artist's albums that still need IDs
             album_rows = conn.execute(
                 """
@@ -323,12 +325,16 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
                         on_progress(enriched, skipped, failed, _total_pending)
                 elif album_enriched:
                     enriched += 1
+                    artist_had_enrichment = True
                     if on_progress:
                         on_progress(enriched, skipped, failed, _total_pending)
                 else:
                     skipped += 1
                     if on_progress:
                         on_progress(enriched, skipped, failed, _total_pending)
+
+            if artist_had_enrichment:
+                modified_artist_ids.append(artist_id)
 
         except Exception as e:
             logger.warning("enrich_library: failed processing artist '%s': %s", artist_name, e)
@@ -354,4 +360,5 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
         "enrich_library: enriched=%d, skipped=%d, failed=%d, remaining=%d",
         enriched, skipped, failed, remaining,
     )
-    return {"enriched": enriched, "failed": failed, "skipped": skipped, "remaining": remaining}
+    return {"enriched": enriched, "failed": failed, "skipped": skipped, "remaining": remaining,
+            "modified_artist_ids": modified_artist_ids}

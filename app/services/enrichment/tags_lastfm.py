@@ -72,7 +72,7 @@ def enrich_tags_lastfm(batch_size: int = 50, stop_event: threading.Event | None 
             tags_json = json.dumps(canonical)
             status = "found" if canonical else "not_found"
             conn.execute(
-                "UPDATE lib_artists SET lastfm_tags_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                "UPDATE lib_artists SET lastfm_tags_json = COALESCE(?, lastfm_tags_json), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (tags_json, artist_id),
             )
             write_enrichment_meta(conn, "lastfm_tags", "artist", artist_id, status)
@@ -142,7 +142,7 @@ def enrich_tags_lastfm(batch_size: int = 50, stop_event: threading.Event | None 
                 tags_json = artist_tags_json or json.dumps([])
                 status = "fallback"
             conn.execute(
-                "UPDATE lib_albums SET lastfm_tags_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                "UPDATE lib_albums SET lastfm_tags_json = COALESCE(?, lastfm_tags_json), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (tags_json, album_id),
             )
             write_enrichment_meta(conn, "lastfm_tags", "album", album_id, status)

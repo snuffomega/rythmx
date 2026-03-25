@@ -171,15 +171,19 @@ def library_artist_detail(artist_id: str):
                                             )
                                ORDER BY
                                    CASE catalog_source WHEN 'deezer' THEN 1 WHEN 'itunes' THEN 2 ELSE 3 END,
-                                   thumb_url IS NOT NULL DESC,
-                                   release_date IS NOT NULL DESC
+                                   COALESCE(thumb_url_deezer, thumb_url_itunes) IS NOT NULL DESC,
+                                   COALESCE(release_date_itunes, release_date_deezer) IS NOT NULL DESC
                            ) AS rn
                     FROM lib_releases
                     WHERE artist_id = ? AND is_owned = 0 AND user_dismissed = 0
                 )
                 SELECT title AS album_title, resolved_kind AS kind, resolved_kind AS record_type,
-                       version_type, release_date, catalog_source AS source,
-                       deezer_album_id, itunes_album_id, thumb_url, track_count, id
+                       version_type,
+                       COALESCE(release_date_itunes, release_date_deezer) AS release_date,
+                       catalog_source AS source,
+                       deezer_album_id, itunes_album_id,
+                       COALESCE(thumb_url_deezer, thumb_url_itunes) AS thumb_url,
+                       track_count, id
                 FROM base
                 WHERE rn = 1
                   AND NOT (
@@ -209,9 +213,11 @@ def library_artist_detail(artist_id: str):
         try:
             group_rows = conn.execute(
                 """
-                SELECT id, title AS album_title, version_type, release_date,
+                SELECT id, title AS album_title, version_type,
+                       COALESCE(release_date_itunes, release_date_deezer) AS release_date,
                        catalog_source AS source, deezer_album_id, itunes_album_id,
-                       thumb_url, track_count, is_owned, canonical_release_id,
+                       COALESCE(thumb_url_deezer, thumb_url_itunes) AS thumb_url,
+                       track_count, is_owned, canonical_release_id,
                        COALESCE(
                            kind_deezer, kind_itunes,
                            CASE
@@ -308,18 +314,20 @@ def library_releases_global(
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
-    order_col = "lr.release_date DESC" if sort == "date" else "lr.artist_name ASC, lr.release_date DESC"
+    order_col = "COALESCE(lr.release_date_itunes, lr.release_date_deezer) DESC" if sort == "date" else "lr.artist_name ASC, COALESCE(lr.release_date_itunes, lr.release_date_deezer) DESC"
 
     sql = f"""
         SELECT lr.id, lr.artist_id, lr.artist_name, lr.title,
-               lr.release_date, lr.is_owned, lr.user_dismissed,
+               COALESCE(lr.release_date_itunes, lr.release_date_deezer) AS release_date,
+               lr.is_owned, lr.user_dismissed,
                COALESCE(lr.kind_deezer, lr.kind_itunes,
                    CASE
                        WHEN lr.track_count IS NOT NULL AND lr.track_count <= 3 THEN 'single'
                        WHEN lr.track_count IS NOT NULL AND lr.track_count <= 6 THEN 'ep'
                        ELSE 'album'
                    END) AS kind,
-               lr.version_type, lr.track_count, lr.thumb_url,
+               lr.version_type, lr.track_count,
+               COALESCE(lr.thumb_url_deezer, lr.thumb_url_itunes) AS thumb_url,
                lr.catalog_source, lr.deezer_album_id, lr.itunes_album_id,
                lr.explicit, lr.label, lr.genre_itunes, lr.canonical_release_id
         FROM lib_releases lr
@@ -352,7 +360,8 @@ def library_release_detail(release_id: str):
     with rythmx_store._connect() as conn:
         row = conn.execute(
             """
-            SELECT id, artist_id, artist_name, title, release_date,
+            SELECT id, artist_id, artist_name, title,
+                   COALESCE(release_date_itunes, release_date_deezer) AS release_date,
                    COALESCE(
                        kind_deezer, kind_itunes,
                        CASE
@@ -361,7 +370,9 @@ def library_release_detail(release_id: str):
                            ELSE 'album'
                        END
                    ) AS kind,
-                   version_type, track_count, thumb_url, catalog_source,
+                   version_type, track_count,
+                   COALESCE(thumb_url_deezer, thumb_url_itunes) AS thumb_url,
+                   catalog_source,
                    deezer_album_id, itunes_album_id, explicit, label, genre_itunes,
                    canonical_release_id
             FROM lib_releases WHERE id = ?
@@ -379,7 +390,10 @@ def library_release_detail(release_id: str):
         with rythmx_store._connect() as conn:
             sib_rows = conn.execute(
                 """
-                SELECT id, title, version_type, release_date, thumb_url, is_owned,
+                SELECT id, title, version_type,
+                       COALESCE(release_date_itunes, release_date_deezer) AS release_date,
+                       COALESCE(thumb_url_deezer, thumb_url_itunes) AS thumb_url,
+                       is_owned,
                        COALESCE(
                            kind_deezer, kind_itunes,
                            CASE
@@ -393,7 +407,7 @@ def library_release_detail(release_id: str):
                 ORDER BY
                     is_owned DESC,
                     CASE version_type WHEN 'original' THEN 0 ELSE 1 END,
-                    release_date ASC
+                    COALESCE(release_date_itunes, release_date_deezer) ASC
                 """,
                 (release["canonical_release_id"], release_id),
             ).fetchall()

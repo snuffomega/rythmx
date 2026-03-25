@@ -110,8 +110,8 @@ def enrich_genres_spotify(batch_size: int = 20, stop_event: threading.Event | No
             conn.execute(
                 """
                 UPDATE lib_artists
-                SET genres_json_spotify = ?,
-                    popularity_spotify = ?,
+                SET genres_json_spotify = COALESCE(?, genres_json_spotify),
+                    popularity_spotify  = COALESCE(?, popularity_spotify),
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,

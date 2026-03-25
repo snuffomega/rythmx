@@ -184,8 +184,12 @@ def normalize_lastfm_tags(raw_tags: list) -> list[str]:
 def persist_artist_catalog(conn, artist_id: str, source: str, catalog: list[dict]) -> None:
     """
     Store an API-fetched album catalog for later gap analysis.
-    Idempotent: INSERT OR REPLACE so re-enrichment refreshes stale rows.
-    catalog items: {id, title, track_count?, record_type?}.
+
+    Uses additive ON CONFLICT upsert — existing values are preserved when the new
+    API response omits a field (e.g. artwork_url, track_count).  Never uses INSERT
+    OR REPLACE (which deletes + re-inserts, losing any columns not in the new row).
+
+    catalog items: {id, title, track_count?, record_type?, artwork_url?}.
     """
     if not catalog:
         return
@@ -196,9 +200,15 @@ def persist_artist_catalog(conn, artist_id: str, source: str, catalog: list[dict
             continue
         conn.execute(
             """
-            INSERT OR REPLACE INTO lib_artist_catalog
+            INSERT INTO lib_artist_catalog
                 (artist_id, source, album_id, album_title, record_type, track_count, artwork_url, fetched_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(artist_id, source, album_id) DO UPDATE SET
+                album_title = COALESCE(excluded.album_title, lib_artist_catalog.album_title),
+                record_type = COALESCE(excluded.record_type, lib_artist_catalog.record_type),
+                track_count = COALESCE(NULLIF(excluded.track_count, 0), lib_artist_catalog.track_count),
+                artwork_url = COALESCE(NULLIF(excluded.artwork_url, ''), lib_artist_catalog.artwork_url),
+                fetched_at  = datetime('now')
             """,
             (artist_id, source, album_id, title,
              item.get("record_type"), item.get("track_count"),
