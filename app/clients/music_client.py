@@ -462,7 +462,42 @@ def get_deezer_album_info(deezer_album_id: str) -> dict | None:
     return {
         "record_type": data.get("record_type", "") or "",
         "thumb_url": data.get("cover_medium", "") or data.get("cover", "") or "",
+        "upc": data.get("upc", "") or "",
     }
+
+
+def get_deezer_artist_info(deezer_artist_id: str) -> dict | None:
+    """Fetch artist-level stats from Deezer.
+
+    Returns {nb_fan: int, nb_album: int} or None on error.
+    Used by enrich_deezer_artist() (Stage 3).
+    """
+    data = _deezer_get(f"/artist/{deezer_artist_id}")
+    if not data:
+        return None
+    return {
+        "nb_fan": data.get("nb_fan", 0),
+        "nb_album": data.get("nb_album", 0),
+    }
+
+
+def get_deezer_related_artists(deezer_artist_id: str, limit: int = 10) -> list[dict]:
+    """Fetch related/similar artists from Deezer.
+
+    Returns [{name: str, deezer_id: int, nb_fan: int}, ...].
+    Free endpoint, no auth required.
+    """
+    data = _deezer_get(f"/artist/{deezer_artist_id}/related", {"limit": limit})
+    if not data or not data.get("data"):
+        return []
+    results = []
+    for a in data["data"]:
+        results.append({
+            "name": a.get("name", ""),
+            "deezer_id": a.get("id"),
+            "nb_fan": a.get("nb_fan", 0),
+        })
+    return results
 
 
 def get_album_tracks_itunes(itunes_album_id: str) -> list[dict]:

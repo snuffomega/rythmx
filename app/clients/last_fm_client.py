@@ -7,6 +7,7 @@ IMPORTANT: api_key is never logged.
 """
 import requests
 import logging
+import re
 from app import config
 from app.services.api_orchestrator import rate_limiter
 
@@ -372,7 +373,8 @@ def get_artist_top_albums_lastfm(mbid_or_name: str, use_mbid: bool = False) -> l
 
 def get_artist_info_lastfm(mbid: str = "", name: str = "") -> dict | None:
     """
-    Fetch artist.getInfo from Last.fm. Returns {listeners: int, playcount: int} or None.
+    Fetch artist.getInfo from Last.fm.
+    Returns {listeners: int, playcount: int, bio: str|None} or None.
     Prefers mbid lookup for precision; falls back to name-based lookup.
     Returns None if API key not set, API returns no data, or stats are unavailable.
     Used by enrich_stats_lastfm() (Stage 3 S3-5).
@@ -397,7 +399,18 @@ def get_artist_info_lastfm(mbid: str = "", name: str = "") -> dict | None:
         playcount = int(stats.get("playcount", 0))
     except (ValueError, TypeError):
         return None
-    return {"listeners": listeners, "playcount": playcount}
+
+    # Extract bio (strip HTML link tags Last.fm appends)
+    bio = None
+    bio_data = artist.get("bio", {})
+    if bio_data:
+        summary = bio_data.get("summary", "")
+        if summary:
+            bio = re.sub(r"<a\s[^>]*>.*?</a>", "", summary).strip()
+            if not bio:
+                bio = None
+
+    return {"listeners": listeners, "playcount": playcount, "bio": bio}
 
 
 def test_connection() -> dict:

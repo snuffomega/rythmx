@@ -1,8 +1,8 @@
 """
-stats_lastfm.py — Stage 3 Last.fm listener/play count worker.
+stats_lastfm.py — Stage 3 Last.fm listener/play count + bio worker.
 
 Requires: lastfm_mbid (from Stage 2 enrich_artist_ids_lastfm).
-Writes: lib_artists.listener_count_lastfm, lib_artists.play_count_lastfm.
+Writes: lib_artists.listener_count_lastfm, lib_artists.play_count_lastfm, lib_artists.bio_lastfm.
 """
 import logging
 
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 _CANDIDATE_SQL = """
     SELECT id, name, lastfm_mbid FROM lib_artists
     WHERE lastfm_mbid IS NOT NULL
-      AND (listener_count_lastfm IS NULL OR play_count_lastfm IS NULL)
+      AND (listener_count_lastfm IS NULL OR play_count_lastfm IS NULL OR bio_lastfm IS NULL)
       AND id NOT IN (
           SELECT entity_id FROM enrichment_meta
           WHERE entity_type = 'artist' AND source = 'lastfm_stats'
@@ -26,7 +26,7 @@ _CANDIDATE_SQL = """
 _REMAINING_SQL = """
     SELECT COUNT(*) FROM lib_artists
     WHERE lastfm_mbid IS NOT NULL
-      AND (listener_count_lastfm IS NULL OR play_count_lastfm IS NULL)
+      AND (listener_count_lastfm IS NULL OR play_count_lastfm IS NULL OR bio_lastfm IS NULL)
       AND id NOT IN (
           SELECT entity_id FROM enrichment_meta
           WHERE entity_type = 'artist' AND source = 'lastfm_stats'
@@ -51,14 +51,16 @@ def _process_item(conn, row):
             UPDATE lib_artists
             SET listener_count_lastfm = COALESCE(NULLIF(?, 0), listener_count_lastfm),
                 play_count_lastfm     = COALESCE(NULLIF(?, 0), play_count_lastfm),
+                bio_lastfm            = COALESCE(bio_lastfm, ?),
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
-            (stats["listeners"], stats["playcount"], artist_id),
+            (stats["listeners"], stats["playcount"], stats.get("bio") or None, artist_id),
         )
         write_enrichment_meta(conn, "lastfm_stats", "artist", artist_id, "found")
-        logger.debug("enrich_stats_lastfm: '%s' -> listeners=%d plays=%d",
-                     artist_name, stats["listeners"], stats["playcount"])
+        logger.debug("enrich_stats_lastfm: '%s' -> listeners=%d plays=%d bio=%s",
+                     artist_name, stats["listeners"], stats["playcount"],
+                     bool(stats.get("bio")))
         return "found"
     else:
         write_enrichment_meta(conn, "lastfm_stats", "artist", artist_id, "not_found")

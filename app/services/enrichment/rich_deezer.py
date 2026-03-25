@@ -1,8 +1,8 @@
 """
-rich_deezer.py — Stage 3 Deezer release data worker: record_type_deezer + thumb_url.
+rich_deezer.py — Stage 3 Deezer release data worker: record_type_deezer + thumb_url + UPC.
 
 Requires: deezer_id (from Stage 2 enrich_library).
-Writes: lib_albums.record_type_deezer (COALESCE), lib_albums.thumb_url_deezer (per-source column).
+Writes: lib_albums.record_type_deezer (COALESCE), lib_albums.thumb_url_deezer, lib_releases.upc_deezer.
 """
 import logging
 
@@ -56,9 +56,20 @@ def _process_item(conn, row):
              result.get("thumb_url") or None,
              album_id),
         )
+        # Piggyback: store UPC on lib_releases if available (zero extra API calls)
+        upc = result.get("upc") or None
+        if upc:
+            conn.execute(
+                """
+                UPDATE lib_releases
+                SET upc_deezer = COALESCE(upc_deezer, ?)
+                WHERE deezer_album_id = ?
+                """,
+                (upc, deezer_id),
+            )
         write_enrichment_meta(conn, "deezer_rich", "album", album_id, "found")
-        logger.debug("enrich_deezer_release: '%s' -> record_type_deezer=%s thumb=%s",
-                     album_title, result.get("record_type"), bool(result.get("thumb_url")))
+        logger.debug("enrich_deezer_release: '%s' -> record_type_deezer=%s thumb=%s upc=%s",
+                     album_title, result.get("record_type"), bool(result.get("thumb_url")), upc)
         return "found"
     else:
         write_enrichment_meta(conn, "deezer_rich", "album", album_id, "not_found")
