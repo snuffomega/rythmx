@@ -238,6 +238,12 @@ export interface LibArtist {
   listener_count: number | null;
   global_play_count: number | null;
   image_url: string | null;
+  bio_lastfm: string | null;
+  fans_deezer: number | null;
+  similar_artists_json: string | null;
+  area_musicbrainz: string | null;
+  begin_area_musicbrainz: string | null;
+  formed_year_musicbrainz: number | null;
 }
 
 export interface LibAlbum {
@@ -336,6 +342,7 @@ export interface ReleaseDetail {
   label: string | null;
   genre_itunes: string | null;
   canonical_release_id: string | null;
+  upc_deezer: string | null;
 }
 
 export interface ReleaseSibling {

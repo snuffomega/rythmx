@@ -32,6 +32,12 @@ CREATE TABLE IF NOT EXISTS lib_artists (
     lastfm_tags_json     TEXT,                    -- JSON array, normalized canonical tags
     listener_count_lastfm INTEGER,               -- Last.fm global listeners
     play_count_lastfm    INTEGER,                -- Last.fm global scrobbles
+    bio_lastfm           TEXT,                    -- Last.fm artist bio (HTML stripped)
+    fans_deezer          INTEGER,                -- Deezer nb_fan count
+    similar_artists_json TEXT,                    -- JSON array [{name, match, source}, ...]
+    area_musicbrainz     TEXT,                    -- MusicBrainz area (country/region)
+    begin_area_musicbrainz TEXT,                  -- MusicBrainz begin area (city/origin)
+    formed_year_musicbrainz INTEGER,             -- MusicBrainz life-span begin year
     -- Per-source artwork (In-Kind Rule #1)
     image_url_fanart     TEXT,                    -- Fanart.tv artist photo
     image_url_deezer     TEXT,                    -- Deezer picture_xl fallback
@@ -212,6 +218,7 @@ CREATE TABLE IF NOT EXISTS lib_releases (
     label                        TEXT,
     genre_itunes                 TEXT,               -- primaryGenreName
     genre_deezer                 TEXT,               -- Deezer genre
+    upc_deezer                   TEXT,               -- UPC from Deezer /album/{id}
     -- Grouping
     canonical_release_id         TEXT,               -- Self-FK for version grouping
     -- Future enrichment (nullable)
