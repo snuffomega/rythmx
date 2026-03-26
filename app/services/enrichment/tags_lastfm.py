@@ -145,6 +145,16 @@ def enrich_tags_lastfm(batch_size: int = 50, stop_event: threading.Event | None 
                 "UPDATE lib_albums SET lastfm_tags_json = COALESCE(?, lastfm_tags_json), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (tags_json, album_id),
             )
+            # Piggyback: propagate to lib_releases via deezer_id join (zero extra API calls)
+            conn.execute(
+                """
+                UPDATE lib_releases
+                SET lastfm_tags_json = COALESCE(lastfm_tags_json, ?)
+                WHERE deezer_album_id = (SELECT deezer_id FROM lib_albums WHERE id = ?)
+                  AND deezer_album_id IS NOT NULL
+                """,
+                (tags_json, album_id),
+            )
             write_enrichment_meta(conn, "lastfm_tags", "album", album_id, status)
             enriched_albums += 1
             if on_progress:

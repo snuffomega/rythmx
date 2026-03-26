@@ -459,10 +459,13 @@ def get_deezer_album_info(deezer_album_id: str) -> dict | None:
     data = _deezer_get(f"/album/{deezer_album_id}")
     if not data:
         return None
+    genres = data.get("genres", {}).get("data", [])
+    genre = genres[0].get("name", "") if genres else ""
     return {
         "record_type": data.get("record_type", "") or "",
         "thumb_url": data.get("cover_medium", "") or data.get("cover", "") or "",
         "upc": data.get("upc", "") or "",
+        "genre": genre or "",
     }
 
 

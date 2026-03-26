@@ -56,20 +56,22 @@ def _process_item(conn, row):
              result.get("thumb_url") or None,
              album_id),
         )
-        # Piggyback: store UPC on lib_releases if available (zero extra API calls)
+        # Piggyback: store UPC + genre on lib_releases if available (zero extra API calls)
         upc = result.get("upc") or None
-        if upc:
+        genre = result.get("genre") or None
+        if upc or genre:
             conn.execute(
                 """
                 UPDATE lib_releases
-                SET upc_deezer = COALESCE(upc_deezer, ?)
+                SET upc_deezer   = COALESCE(upc_deezer, ?),
+                    genre_deezer = COALESCE(genre_deezer, ?)
                 WHERE deezer_album_id = ?
                 """,
-                (upc, deezer_id),
+                (upc, genre, deezer_id),
             )
         write_enrichment_meta(conn, "deezer_rich", "album", album_id, "found")
-        logger.debug("enrich_deezer_release: '%s' -> record_type_deezer=%s thumb=%s upc=%s",
-                     album_title, result.get("record_type"), bool(result.get("thumb_url")), upc)
+        logger.debug("enrich_deezer_release: '%s' -> record_type_deezer=%s thumb=%s upc=%s genre=%s",
+                     album_title, result.get("record_type"), bool(result.get("thumb_url")), upc, genre)
         return "found"
     else:
         write_enrichment_meta(conn, "deezer_rich", "album", album_id, "not_found")
