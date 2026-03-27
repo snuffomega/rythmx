@@ -56,6 +56,9 @@ CREATE INDEX IF NOT EXISTS idx_lib_artists_deezer_artist_id
     ON lib_artists(deezer_artist_id) WHERE deezer_artist_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_lib_artists_lastfm_mbid
     ON lib_artists(lastfm_mbid) WHERE lastfm_mbid IS NOT NULL;
+-- Added mig 027: MusicBrainz ID lookups for Stage 2b + Stage 3
+CREATE INDEX IF NOT EXISTS idx_lib_artists_musicbrainz_id
+    ON lib_artists(musicbrainz_id) WHERE musicbrainz_id IS NOT NULL;
 
 -- -------------------------------------------------------------------------
 
@@ -134,6 +137,9 @@ CREATE TABLE IF NOT EXISTS lib_tracks (
     updated_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(file_path, file_size)
 );
+-- Added mig 027: Deezer BPM worker lookups (manual-only Stage 3)
+CREATE INDEX IF NOT EXISTS idx_lib_tracks_deezer_id
+    ON lib_tracks(deezer_id) WHERE deezer_id IS NOT NULL;
 
 -- -------------------------------------------------------------------------
 
@@ -185,7 +191,7 @@ CREATE TABLE IF NOT EXISTS lib_artist_catalog (
 
 CREATE TABLE IF NOT EXISTS lib_releases (
     id                           TEXT PRIMARY KEY, -- {source}_{album_id} e.g. deezer_12345
-    artist_id                    TEXT,              -- FK → lib_artists.id
+    artist_id                    TEXT NOT NULL,      -- FK → lib_artists.id (enforced mig 028)
     artist_name                  TEXT NOT NULL,
     artist_name_lower            TEXT NOT NULL,
     title                        TEXT NOT NULL,
@@ -242,6 +248,32 @@ CREATE INDEX IF NOT EXISTS idx_lib_releases_norm_title
     ON lib_releases(artist_name_lower, normalized_title);
 CREATE INDEX IF NOT EXISTS idx_lib_releases_missing
     ON lib_releases(is_owned, artist_id) WHERE is_owned = 0;
+-- Added mig 027: bridging-ID indexes for Stage 3 enrichment + ownership sync
+CREATE INDEX IF NOT EXISTS idx_lib_releases_deezer_album_id
+    ON lib_releases(deezer_album_id) WHERE deezer_album_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_lib_releases_itunes_album_id
+    ON lib_releases(itunes_album_id) WHERE itunes_album_id IS NOT NULL;
+
+-- Enforcement triggers (mig 028): log + abort on NULL artist_id
+CREATE TRIGGER IF NOT EXISTS trg_lib_releases_artistid_insert
+BEFORE INSERT ON lib_releases
+WHEN NEW.artist_id IS NULL
+BEGIN
+    INSERT INTO fk_violation_log(table_name, op, row_id, payload)
+    VALUES ('lib_releases', 'INSERT_NULL_ARTIST', NEW.id,
+            json_object('id', NEW.id, 'artist_name', NEW.artist_name));
+    SELECT RAISE(ABORT, 'lib_releases.artist_id must not be NULL');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_lib_releases_artistid_update
+BEFORE UPDATE ON lib_releases
+WHEN NEW.artist_id IS NULL
+BEGIN
+    INSERT INTO fk_violation_log(table_name, op, row_id, payload)
+    VALUES ('lib_releases', 'UPDATE_NULL_ARTIST', NEW.id,
+            json_object('id', NEW.id, 'artist_name', NEW.artist_name));
+    SELECT RAISE(ABORT, 'lib_releases.artist_id must not be NULL on UPDATE');
+END;
 
 -- -------------------------------------------------------------------------
 
@@ -429,4 +461,26 @@ CREATE TABLE IF NOT EXISTS taste_cache (
     play_count   INT,
     period       TEXT,
     last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- =========================================================================
+-- AUDIT INFRASTRUCTURE (added mig 027)
+-- =========================================================================
+
+CREATE TABLE IF NOT EXISTS migration_audit (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    action     TEXT NOT NULL,
+    table_name TEXT NOT NULL,
+    row_id     TEXT,
+    details    TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS fk_violation_log (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    table_name TEXT NOT NULL,
+    op         TEXT NOT NULL,
+    row_id     TEXT,
+    payload    TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
 );

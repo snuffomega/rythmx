@@ -667,16 +667,11 @@ def get_cached_releases(artist_name: str, max_age_days: int = 7):
 
 
 def save_releases_to_cache(artist_name: str, releases: list, artist_lib_id: str = None):
-    """DEPRECATED: Legacy CC pipeline only. release_cache table removed in genesis migration.
+    """DEAD: CC pipeline release import — scheduled for deletion after db-audit.
 
-    Upsert a list of Release objects into release_cache (including upcoming).
-    If releases is empty, writes a sentinel row (source='sentinel', album_title='')
-    so that get_cached_releases() can distinguish "checked but found nothing" from
-    "never checked" — preventing an API call on every re-run for quiet artists.
-
-    Also writes non-upcoming releases to lib_releases for permanent storage.
-    artist_lib_id is the lib_artists.id (e.g. Plex ratingKey or 'ss_*') — optional,
-    used to FK into lib_artists for future library page queries.
+    Legacy CC pipeline only. release_cache table removed in genesis migration.
+    Contains dead-column references (thumb_url, release_date) that no longer exist
+    in the current schema. Do not fix — delete entire function after audit.
     """
     with _connect() as conn:
         if not releases:
