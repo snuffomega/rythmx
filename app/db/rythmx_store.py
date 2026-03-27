@@ -19,6 +19,29 @@ def _connect():
 
 
 
+_TRIGGER_DDL = """
+CREATE TRIGGER IF NOT EXISTS trg_lib_releases_artistid_insert
+BEFORE INSERT ON lib_releases
+WHEN NEW.artist_id IS NULL
+BEGIN
+    INSERT INTO fk_violation_log(table_name, op, row_id, payload)
+    VALUES ('lib_releases', 'INSERT_NULL_ARTIST', NEW.id,
+            json_object('id', NEW.id, 'artist_name', NEW.artist_name));
+    SELECT RAISE(ABORT, 'lib_releases.artist_id must not be NULL');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_lib_releases_artistid_update
+BEFORE UPDATE ON lib_releases
+WHEN NEW.artist_id IS NULL
+BEGIN
+    INSERT INTO fk_violation_log(table_name, op, row_id, payload)
+    VALUES ('lib_releases', 'UPDATE_NULL_ARTIST', NEW.id,
+            json_object('id', NEW.id, 'artist_name', NEW.artist_name));
+    SELECT RAISE(ABORT, 'lib_releases.artist_id must not be NULL on UPDATE');
+END;
+"""
+
+
 def init_db():
     """Create all rythmx.db tables if they don't exist. Safe to call on every startup.
 
@@ -28,8 +51,11 @@ def init_db():
     from migrations.runner import run_pending_migrations
     run_pending_migrations(config.RYTHMX_DB)
 
-    # Prune stale image cache entries (> 30 days since last access)
     with _connect() as conn:
+        # Apply enforcement triggers via executescript() — the migration runner
+        # cannot handle multi-statement DDL (splits on semicolons).
+        conn.executescript(_TRIGGER_DDL)
+        # Prune stale image cache entries (> 30 days since last access)
         conn.execute("DELETE FROM image_cache WHERE last_accessed < datetime('now', '-30 days')")
 
     logger.info("rythmx.db initialized at %s", config.RYTHMX_DB)

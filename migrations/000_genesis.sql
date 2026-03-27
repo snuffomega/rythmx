@@ -253,27 +253,9 @@ CREATE INDEX IF NOT EXISTS idx_lib_releases_deezer_album_id
     ON lib_releases(deezer_album_id) WHERE deezer_album_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_lib_releases_itunes_album_id
     ON lib_releases(itunes_album_id) WHERE itunes_album_id IS NOT NULL;
-
--- Enforcement triggers (mig 028): log + abort on NULL artist_id
-CREATE TRIGGER IF NOT EXISTS trg_lib_releases_artistid_insert
-BEFORE INSERT ON lib_releases
-WHEN NEW.artist_id IS NULL
-BEGIN
-    INSERT INTO fk_violation_log(table_name, op, row_id, payload)
-    VALUES ('lib_releases', 'INSERT_NULL_ARTIST', NEW.id,
-            json_object('id', NEW.id, 'artist_name', NEW.artist_name));
-    SELECT RAISE(ABORT, 'lib_releases.artist_id must not be NULL');
-END;
-
-CREATE TRIGGER IF NOT EXISTS trg_lib_releases_artistid_update
-BEFORE UPDATE ON lib_releases
-WHEN NEW.artist_id IS NULL
-BEGIN
-    INSERT INTO fk_violation_log(table_name, op, row_id, payload)
-    VALUES ('lib_releases', 'UPDATE_NULL_ARTIST', NEW.id,
-            json_object('id', NEW.id, 'artist_name', NEW.artist_name));
-    SELECT RAISE(ABORT, 'lib_releases.artist_id must not be NULL on UPDATE');
-END;
+-- NOTE: enforcement triggers (trg_lib_releases_artistid_*) are created by
+-- init_db() via executescript() — the migration runner cannot handle
+-- multi-statement DDL (triggers) because it splits on semicolons.
 
 -- -------------------------------------------------------------------------
 

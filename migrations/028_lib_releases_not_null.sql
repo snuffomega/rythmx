@@ -9,6 +9,11 @@
 
 PRAGMA foreign_keys=OFF;
 
+-- Safety guard: drop any leftover table from a previously interrupted run.
+-- Python's sqlite3 auto-commits DDL, so a partial run can leave lib_releases_new
+-- behind even after conn.rollback(). This makes the migration idempotent.
+DROP TABLE IF EXISTS lib_releases_new;
+
 CREATE TABLE lib_releases_new (
     id                           TEXT PRIMARY KEY,
     artist_id                    TEXT NOT NULL,     -- ← ENFORCED (was nullable)
@@ -76,30 +81,8 @@ CREATE INDEX IF NOT EXISTS idx_lib_releases_deezer_album_id
 CREATE INDEX IF NOT EXISTS idx_lib_releases_itunes_album_id
     ON lib_releases(itunes_album_id) WHERE itunes_album_id IS NOT NULL;
 
--- ═══════════════════════════════════════════════════════════════
--- STEP 3: Enforcement triggers (RAISE ABORT — hard stop on NULL)
--- All active INSERT paths already set artist_id. CC pipeline dead code
--- is scheduled for deletion. Safe to enforce.
--- ═══════════════════════════════════════════════════════════════
-
-CREATE TRIGGER IF NOT EXISTS trg_lib_releases_artistid_insert
-BEFORE INSERT ON lib_releases
-WHEN NEW.artist_id IS NULL
-BEGIN
-    INSERT INTO fk_violation_log(table_name, op, row_id, payload)
-    VALUES ('lib_releases', 'INSERT_NULL_ARTIST', NEW.id,
-            json_object('id', NEW.id, 'artist_name', NEW.artist_name));
-    SELECT RAISE(ABORT, 'lib_releases.artist_id must not be NULL');
-END;
-
-CREATE TRIGGER IF NOT EXISTS trg_lib_releases_artistid_update
-BEFORE UPDATE ON lib_releases
-WHEN NEW.artist_id IS NULL
-BEGIN
-    INSERT INTO fk_violation_log(table_name, op, row_id, payload)
-    VALUES ('lib_releases', 'UPDATE_NULL_ARTIST', NEW.id,
-            json_object('id', NEW.id, 'artist_name', NEW.artist_name));
-    SELECT RAISE(ABORT, 'lib_releases.artist_id must not be NULL on UPDATE');
-END;
+-- NOTE: enforcement triggers are applied by init_db() via executescript().
+-- The migration runner splits SQL on semicolons and cannot handle
+-- multi-statement DDL (trigger bodies contain internal semicolons).
 
 ANALYZE;
