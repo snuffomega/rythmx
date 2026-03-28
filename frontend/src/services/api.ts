@@ -36,6 +36,7 @@ import type {
   ReleaseTrack,
   ReleaseSibling,
   UserReleasePrefs,
+  SimilarArtist,
 } from '../types';
 
 const BASE_URL = '/api/v1';
@@ -339,14 +340,18 @@ export const personalDiscoveryApi = {
 };
 
 export const libraryBrowseApi = {
-  getArtists: (p: { q?: string; page?: number; per_page?: number; backend?: string } = {}) => {
+  getArtists: (p: { q?: string; page?: number; per_page?: number; backend?: string; decade?: number | null; region?: string | null } = {}) => {
     const qs = new URLSearchParams(
-      Object.entries({ per_page: '50', ...p }).filter(([, v]) => v != null) as [string, string][]
+      Object.entries({ per_page: '50', ...p }).filter(([, v]) => v != null && v !== '') as [string, string][]
     ).toString();
     return request<{ status: string; artists: LibArtist[]; total: number; page: number }>(`/library/artists?${qs}`);
   },
+  getArtistFilterOptions: () =>
+    request<{ status: string; decades: number[]; regions: string[] }>('/library/artists/filter-options'),
   getArtist: (id: string) =>
     request<{ status: string } & LibArtistDetail>(`/library/artists/${encodeURIComponent(id)}`),
+  getSimilarArtists: (id: string) =>
+    request<{ status: string; similar: SimilarArtist[] }>(`/library/artists/${encodeURIComponent(id)}/similar`),
   getAlbums: (p: { q?: string; page?: number; per_page?: number; backend?: string; record_type?: string } = {}) => {
     const qs = new URLSearchParams(
       Object.entries({ per_page: '50', ...p }).filter(([, v]) => v != null) as [string, string][]

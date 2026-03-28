@@ -228,6 +228,7 @@ export interface Toast {
 export interface LibArtist {
   id: string;
   name: string;
+  sort_name: string;
   album_count: number;
   missing_count: number;
   match_confidence: number;
@@ -244,6 +245,12 @@ export interface LibArtist {
   area_musicbrainz: string | null;
   begin_area_musicbrainz: string | null;
   formed_year_musicbrainz: number | null;
+}
+
+export interface SimilarArtist {
+  name: string;
+  in_library: boolean;
+  library_id?: string;
 }
 
 export interface LibAlbum {
