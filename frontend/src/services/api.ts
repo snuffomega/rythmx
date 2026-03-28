@@ -340,7 +340,7 @@ export const personalDiscoveryApi = {
 };
 
 export const libraryBrowseApi = {
-  getArtists: (p: { q?: string; page?: number; per_page?: number; backend?: string; decade?: number | null; region?: string | null } = {}) => {
+  getArtists: (p: { q?: string; page?: number; per_page?: number; backend?: string; decade?: number | null; region?: string | null; letter?: string | null } = {}) => {
     const qs = new URLSearchParams(
       Object.entries({ per_page: '50', ...p }).filter(([, v]) => v != null && v !== '') as [string, string][]
     ).toString();

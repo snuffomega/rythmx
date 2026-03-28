@@ -60,10 +60,11 @@ def library_artist_filter_options():
 def library_artists(
     q: str = "",
     page: int = Query(default=1, ge=1),
-    per_page: int = Query(default=50, le=1000),
+    per_page: int = Query(default=50, le=200),
     platform: str = "all",
     decade: Optional[int] = Query(default=None),
     region: Optional[str] = Query(default=None),
+    letter: Optional[str] = Query(default=None),
 ):
     q = q.strip()
     where = ["a.removed_at IS NULL"]
@@ -80,6 +81,19 @@ def library_artists(
     if region:
         where.append("lower(a.area_musicbrainz) LIKE lower(?)")
         params.append(region)
+    if letter:
+        letter = letter.strip().upper()
+        sort_expr = """CASE
+            WHEN lower(a.name) LIKE 'the %%' THEN substr(a.name, 5)
+            WHEN lower(a.name) LIKE 'a %%'   THEN substr(a.name, 3)
+            WHEN lower(a.name) LIKE 'an %%'  THEN substr(a.name, 4)
+            ELSE a.name
+        END"""
+        if letter == '#':
+            where.append(f"upper(substr(({sort_expr}), 1, 1)) NOT BETWEEN 'A' AND 'Z'")
+        else:
+            where.append(f"upper(substr(({sort_expr}), 1, 1)) = ?")
+            params.append(letter)
 
     where_clause = " AND ".join(where)
     offset = (page - 1) * per_page

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Loader2, Search, Grid3X3, List, RefreshCw,
   Library as LibraryIcon, ChevronLeft, ChevronRight, Star,
@@ -818,28 +818,6 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
 
 const AZ_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ#'.split('');
 
-function getSortLetter(sortName: string): string {
-  const c = sortName.trim()[0]?.toUpperCase() ?? '#';
-  return /[A-Z]/.test(c) ? c : '#';
-}
-
-interface LetterGroup { letter: string; artists: LibArtist[] }
-
-function groupArtistsByLetter(artists: LibArtist[]): LetterGroup[] {
-  const map = new Map<string, LibArtist[]>();
-  for (const a of artists) {
-    const letter = getSortLetter(a.sort_name ?? a.name);
-    if (!map.has(letter)) map.set(letter, []);
-    map.get(letter)!.push(a);
-  }
-  // Sort: A-Z then #
-  const sorted = [...map.entries()].sort(([a], [b]) => {
-    if (a === '#') return 1;
-    if (b === '#') return -1;
-    return a.localeCompare(b);
-  });
-  return sorted.map(([letter, artists]) => ({ letter, artists }));
-}
 
 export function LibraryRoot() {
   const [tab, setTab] = useState<Tab>('artists');
@@ -868,11 +846,12 @@ export function LibraryRoot() {
   const [regionFilter, setRegionFilter] = useState<string | null>(null);
   const [filterOptions, setFilterOptions] = useState<{ decades: number[]; regions: string[] }>({ decades: [], regions: [] });
 
-  // A–Z scroll ref
-  const listScrollRef = useRef<HTMLDivElement>(null);
+  // A–Z letter filter
+  const [letterFilter, setLetterFilter] = useState<string | null>(null);
 
-  // Debounce search
+  // Debounce search — clear letter filter when user types
   useEffect(() => {
+    if (search) setLetterFilter(null);
     const t = setTimeout(() => setDebouncedSearch(search), 300);
     return () => clearTimeout(t);
   }, [search]);
@@ -890,18 +869,17 @@ export function LibraryRoot() {
   }, []);
 
   // Fetch data when tab / filters / search change
-  const fetchArtists = useCallback(async (q: string, backend: string, decade: number | null, region: string | null) => {
+  const fetchArtists = useCallback(async (q: string, backend: string, decade: number | null, region: string | null, letter: string | null) => {
     setLoading(true);
     setFetchError(null);
     try {
-      // Load all artists when no search active (for A–Z to work across full library)
-      const perPage = q ? 200 : 1000;
       const res = await libraryBrowseApi.getArtists({
         q: q || undefined,
         backend: backend !== 'all' ? backend : undefined,
         decade: decade ?? undefined,
         region: region ?? undefined,
-        per_page: perPage,
+        letter: letter ?? undefined,
+        per_page: 200,
       });
       setArtists(res.artists);
       setTotalArtists(res.total);
@@ -945,10 +923,10 @@ export function LibraryRoot() {
   }, []);
 
   useEffect(() => {
-    if (tab === 'artists') fetchArtists(debouncedSearch, backendFilter, decadeFilter, regionFilter);
+    if (tab === 'artists') fetchArtists(debouncedSearch, backendFilter, decadeFilter, regionFilter, letterFilter);
     else if (tab === 'albums') fetchAlbums(debouncedSearch, backendFilter, recordTypeFilter);
     else fetchTracks(debouncedSearch);
-  }, [tab, debouncedSearch, backendFilter, recordTypeFilter, decadeFilter, regionFilter, fetchArtists, fetchAlbums, fetchTracks]);
+  }, [tab, debouncedSearch, backendFilter, recordTypeFilter, decadeFilter, regionFilter, letterFilter, fetchArtists, fetchAlbums, fetchTracks]);
 
   // Run pipeline (sync + enrich in one pass)
   const handleSync = useCallback(async () => {
@@ -1115,13 +1093,14 @@ export function LibraryRoot() {
       </div>
 
       {/* Content */}
-      <div className="flex-1 min-h-0 overflow-y-auto" ref={listScrollRef}>
+      <div className="flex-1 min-h-0 overflow-y-auto flex">
+        <div className="flex-1 min-w-0">
         {fetchError && (
           <div className="p-4">
             <ApiErrorBanner
               error={fetchError}
               onRetry={() => {
-                if (tab === 'artists') fetchArtists(debouncedSearch, backendFilter, decadeFilter, regionFilter);
+                if (tab === 'artists') fetchArtists(debouncedSearch, backendFilter, decadeFilter, regionFilter, letterFilter);
                 else if (tab === 'albums') fetchAlbums(debouncedSearch, backendFilter, recordTypeFilter);
                 else fetchTracks(debouncedSearch);
               }}
@@ -1135,56 +1114,17 @@ export function LibraryRoot() {
           </div>
         )}
 
-        {!loading && !fetchError && tab === 'artists' && (() => {
-          const showAZ = viewMode === 'list' && !debouncedSearch;
-          if (viewMode === 'grid') {
-            return (
-              <div className="p-4 grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-3">
-                {artists.map(a => <ArtistCard key={a.id} artist={a} viewMode="grid" />)}
-              </div>
-            );
-          }
-          const groups = groupArtistsByLetter(artists);
-          const activeLetters = new Set(groups.map(g => g.letter));
-          return (
-            <div className="relative flex">
-              {/* Artist list with letter group headers */}
-              <div className="flex-1 min-w-0 py-2 pr-8">
-                {groups.map(group => (
-                  <div key={group.letter} id={`az-${group.letter}`}>
-                    <div className="px-4 py-1 sticky top-0 bg-[#0d0d0d] z-10">
-                      <span className="font-mono text-[10px] text-text-muted uppercase tracking-widest">{group.letter}</span>
-                    </div>
-                    {group.artists.map(a => <ArtistCard key={a.id} artist={a} viewMode="list" />)}
-                  </div>
-                ))}
-              </div>
-
-              {/* Sticky A–Z right rail */}
-              {showAZ && (
-                <div className="w-6 flex-shrink-0 flex flex-col items-center py-2 sticky top-0 self-start h-screen overflow-y-auto">
-                  {AZ_LETTERS.map(letter => (
-                    <button
-                      key={letter}
-                      onClick={() => {
-                        const el = listScrollRef.current?.querySelector(`#az-${letter}`);
-                        el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                      }}
-                      className={`font-mono text-[9px] leading-4 w-5 text-center rounded transition-colors ${
-                        activeLetters.has(letter)
-                          ? 'text-text-secondary hover:text-accent hover:bg-[#1a1a1a]'
-                          : 'text-[#333] cursor-default'
-                      }`}
-                      disabled={!activeLetters.has(letter)}
-                    >
-                      {letter}
-                    </button>
-                  ))}
-                </div>
-              )}
+        {!loading && !fetchError && tab === 'artists' && (
+          viewMode === 'grid' ? (
+            <div className="p-4 grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-3">
+              {artists.map(a => <ArtistCard key={a.id} artist={a} viewMode="grid" />)}
             </div>
-          );
-        })()}
+          ) : (
+            <div className="py-2">
+              {artists.map(a => <ArtistCard key={a.id} artist={a} viewMode="list" />)}
+            </div>
+          )
+        )}
 
         {!loading && !fetchError && tab === 'albums' && (
           viewMode === 'grid' ? (
@@ -1225,8 +1165,32 @@ export function LibraryRoot() {
           (tab === 'tracks' && tracks.length === 0)
         ) && (
           <p className="text-center text-text-muted text-sm py-20">
-            {debouncedSearch ? `No ${tab} matching "${debouncedSearch}"` : `No ${tab} in library`}
+            {debouncedSearch
+              ? `No ${tab} matching "${debouncedSearch}"`
+              : letterFilter
+                ? `No ${tab} starting with "${letterFilter}"`
+                : `No ${tab} in library`}
           </p>
+        )}
+        </div>
+
+        {/* A–Z filter rail — visible for artists tab when no search active */}
+        {tab === 'artists' && !debouncedSearch && (
+          <div className="w-7 flex-shrink-0 flex flex-col items-center py-2 sticky top-0 self-start">
+            {AZ_LETTERS.map(letter => (
+              <button
+                key={letter}
+                onClick={() => setLetterFilter(letterFilter === letter ? null : letter)}
+                className={`font-mono text-[11px] leading-[18px] w-6 text-center rounded transition-colors ${
+                  letterFilter === letter
+                    ? 'text-accent bg-accent/10 font-bold'
+                    : 'text-text-muted hover:text-text-secondary hover:bg-[#1a1a1a]'
+                }`}
+              >
+                {letter}
+              </button>
+            ))}
+          </div>
         )}
       </div>
 
