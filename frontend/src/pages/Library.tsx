@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Loader2, Search, Grid3X3, List, RefreshCw,
   Library as LibraryIcon, ChevronLeft, ChevronRight, Star,
@@ -10,7 +10,7 @@ import { useImage } from '../hooks/useImage';
 import { getImageUrl } from '../utils/imageUrl';
 import { usePlayerStore } from '../stores/usePlayerStore';
 import { ApiErrorBanner } from '../components/common';
-import type { LibArtist, LibAlbum, LibTrack, LibArtistDetail as LibArtistDetailType, LibAlbumDetail as LibAlbumDetailType, LibraryStatus, MissingAlbum, MissingReleaseGroup, ReleaseDetail, ReleaseTrack, ReleaseSibling, UserReleasePrefs } from '../types';
+import type { LibArtist, LibAlbum, LibTrack, LibArtistDetail as LibArtistDetailType, LibAlbumDetail as LibAlbumDetailType, LibraryStatus, MissingAlbum, MissingReleaseGroup, ReleaseDetail, ReleaseTrack, ReleaseSibling, UserReleasePrefs, SimilarArtist } from '../types';
 
 type Tab = 'artists' | 'albums' | 'tracks';
 type ViewMode = 'grid' | 'list';
@@ -56,6 +56,28 @@ function groupByKind<T extends { kind?: string | null; record_type?: string | nu
       label: k === 'ep' ? 'EPs' : k.charAt(0).toUpperCase() + k.slice(1) + 's',
       items: groups.get(k)!,
     }));
+}
+
+function parseTags(json: string | null): string[] {
+  try { return (JSON.parse(json ?? '[]') as string[]).filter(Boolean); }
+  catch { return []; }
+}
+
+function mergeUniqueTags(a: string | null, b: string | null): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const t of [...parseTags(a), ...parseTags(b)]) {
+    const k = t.toLowerCase();
+    if (!seen.has(k)) { seen.add(k); result.push(t); }
+  }
+  return result;
+}
+
+function formatCount(n: number | null): string | null {
+  if (n == null) return null;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
+  return n.toLocaleString();
 }
 
 // ---------------------------------------------------------------------------
@@ -376,11 +398,15 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
   const [showMissing, setShowMissing] = useState(false);
   const [dismissedCount, setDismissedCount] = useState(0);
   const [missingGroups, setMissingGroups] = useState<MissingReleaseGroup[]>([]);
+  const [bioExpanded, setBioExpanded] = useState(false);
+  const [similar, setSimilar] = useState<SimilarArtist[] | null>(null);
   const showPlayer = usePlayerStore(s => s.show);
 
   useEffect(() => {
     setLoading(true);
     setError(null);
+    setSimilar(null);
+    setBioExpanded(false);
     libraryBrowseApi.getArtist(artistId)
       .then(res => {
         setData({ artist: res.artist, albums: res.albums, top_tracks: res.top_tracks, missing_albums: res.missing_albums || [] });
@@ -389,6 +415,12 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
       })
       .catch(err => setError(err instanceof Error ? err.message : 'Failed to load artist'))
       .finally(() => setLoading(false));
+  }, [artistId]);
+
+  useEffect(() => {
+    libraryBrowseApi.getSimilarArtists(artistId)
+      .then(res => setSimilar(res.similar ?? []))
+      .catch(() => setSimilar([]));
   }, [artistId]);
 
   const handleDismiss = useCallback((releaseId: string) => {
@@ -421,8 +453,15 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
   }
 
   const { artist, albums, top_tracks, missing_albums = [] } = data;
-  const genre = firstTag(artist.lastfm_tags_json);
   const totalDuration = top_tracks.reduce((s, t) => s + (t.duration ?? 0), 0);
+  const tags = mergeUniqueTags(artist.lastfm_tags_json, artist.genres_json).slice(0, 8);
+  const listeners = formatCount(artist.listener_count);
+  const fans = formatCount(artist.fans_deezer);
+  const bioShort = artist.bio_lastfm ? artist.bio_lastfm.slice(0, 220) : null;
+  const bioFull = artist.bio_lastfm ?? null;
+  const bioTruncated = bioFull && bioFull.length > 220;
+  const similarInLib = (similar ?? []).filter(s => s.in_library);
+  const similarNotInLib = (similar ?? []).filter(s => !s.in_library);
 
   return (
     <div className="flex-1 overflow-y-auto">
@@ -440,14 +479,112 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
         </div>
         <div className="flex flex-col justify-center min-w-0 flex-1">
           <h1 className="text-3xl font-bold tracking-tighter text-text-primary mb-1">{artist.name}</h1>
-          {genre && <p className="font-mono text-sm text-text-secondary mb-2">{genre}</p>}
-          <div className="flex items-center gap-2 mt-3">
+
+          {/* Tag chips */}
+          {tags.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {tags.map(tag => (
+                <span key={tag} className="font-mono text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-[#1a1a1a] border border-[#2a2a2a] text-text-muted">
+                  {tag}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Formation badges */}
+          {(artist.formed_year_musicbrainz || artist.area_musicbrainz || artist.begin_area_musicbrainz) && (
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {artist.formed_year_musicbrainz && (
+                <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-[#1a1a1a] border border-[#2a2a2a] text-text-secondary">
+                  est. {artist.formed_year_musicbrainz}
+                </span>
+              )}
+              {(artist.begin_area_musicbrainz || artist.area_musicbrainz) && (
+                <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-[#1a1a1a] border border-[#2a2a2a] text-text-secondary">
+                  {artist.begin_area_musicbrainz ?? artist.area_musicbrainz}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Popularity signals */}
+          {(listeners || fans) && (
+            <p className="font-mono text-[10px] text-text-muted mb-2">
+              {[listeners && `${listeners} listeners`, fans && `${fans} fans`].filter(Boolean).join(' · ')}
+            </p>
+          )}
+
+          <div className="flex items-center gap-2 mt-1">
             <ConfidenceBadge value={artist.match_confidence} />
             <SourceChip backend={artist.source_platform} />
             <span className="font-mono text-[10px] text-text-muted">{artist.album_count} albums</span>
           </div>
         </div>
       </div>
+
+      <div className="border-t border-[#1a1a1a]" />
+
+      {/* Bio */}
+      {bioFull && (
+        <div className="px-8 py-5">
+          <h2 className="text-xs font-mono font-semibold text-text-muted uppercase tracking-widest mb-2">About</h2>
+          <p className="text-sm text-text-secondary leading-relaxed whitespace-pre-line">
+            {bioExpanded ? bioFull : (bioTruncated ? `${bioShort}…` : bioFull)}
+          </p>
+          {bioTruncated && (
+            <button
+              onClick={() => setBioExpanded(v => !v)}
+              className="mt-1.5 font-mono text-[10px] text-accent hover:text-accent/80 transition-colors"
+            >
+              {bioExpanded ? 'Show less' : 'Show more'}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Similar Artists */}
+      {similar !== null && (similarInLib.length > 0 || similarNotInLib.length > 0) && (
+        <>
+          <div className="border-t border-[#1a1a1a]" />
+          <div className="px-8 py-5">
+            <h2 className="text-xs font-mono font-semibold text-text-muted uppercase tracking-widest mb-3">Similar Artists</h2>
+
+            {similarInLib.length > 0 && (
+              <div className="mb-3">
+                <p className="text-[10px] font-mono text-text-muted uppercase tracking-wider mb-1.5">In Your Library</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {similarInLib.map(s => (
+                    <Link
+                      key={s.name}
+                      to="/library/artist/$id"
+                      params={{ id: s.library_id! }}
+                      className="font-mono text-xs px-2 py-1 rounded bg-accent/10 border border-accent/20 text-accent hover:bg-accent/20 transition-colors"
+                    >
+                      {s.name}
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {similarNotInLib.length > 0 && (
+              <div>
+                <p className="text-[10px] font-mono text-text-muted uppercase tracking-wider mb-1.5">Also Try</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {similarNotInLib.map(s => (
+                    <span
+                      key={s.name}
+                      className="font-mono text-xs px-2 py-1 rounded bg-[#1a1a1a] border border-[#2a2a2a] text-text-muted"
+                    >
+                      {s.name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </>
+      )}
 
       <div className="border-t border-[#1a1a1a]" />
 
@@ -679,6 +816,31 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
 // Library page (root)
 // ---------------------------------------------------------------------------
 
+const AZ_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ#'.split('');
+
+function getSortLetter(sortName: string): string {
+  const c = sortName.trim()[0]?.toUpperCase() ?? '#';
+  return /[A-Z]/.test(c) ? c : '#';
+}
+
+interface LetterGroup { letter: string; artists: LibArtist[] }
+
+function groupArtistsByLetter(artists: LibArtist[]): LetterGroup[] {
+  const map = new Map<string, LibArtist[]>();
+  for (const a of artists) {
+    const letter = getSortLetter(a.sort_name ?? a.name);
+    if (!map.has(letter)) map.set(letter, []);
+    map.get(letter)!.push(a);
+  }
+  // Sort: A-Z then #
+  const sorted = [...map.entries()].sort(([a], [b]) => {
+    if (a === '#') return 1;
+    if (b === '#') return -1;
+    return a.localeCompare(b);
+  });
+  return sorted.map(([letter, artists]) => ({ letter, artists }));
+}
+
 export function LibraryRoot() {
   const [tab, setTab] = useState<Tab>('artists');
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
@@ -702,6 +864,12 @@ export function LibraryRoot() {
   // Filters
   const [backendFilter, setBackendFilter] = useState('all');
   const [recordTypeFilter, setRecordTypeFilter] = useState('all');
+  const [decadeFilter, setDecadeFilter] = useState<number | null>(null);
+  const [regionFilter, setRegionFilter] = useState<string | null>(null);
+  const [filterOptions, setFilterOptions] = useState<{ decades: number[]; regions: string[] }>({ decades: [], regions: [] });
+
+  // A–Z scroll ref
+  const listScrollRef = useRef<HTMLDivElement>(null);
 
   // Debounce search
   useEffect(() => {
@@ -714,12 +882,27 @@ export function LibraryRoot() {
     libraryApi.getStatus().then(setStatus).catch(() => {});
   }, []);
 
+  // Load filter options once
+  useEffect(() => {
+    libraryBrowseApi.getArtistFilterOptions()
+      .then(res => setFilterOptions({ decades: res.decades, regions: res.regions }))
+      .catch(() => {});
+  }, []);
+
   // Fetch data when tab / filters / search change
-  const fetchArtists = useCallback(async (q: string, backend: string) => {
+  const fetchArtists = useCallback(async (q: string, backend: string, decade: number | null, region: string | null) => {
     setLoading(true);
     setFetchError(null);
     try {
-      const res = await libraryBrowseApi.getArtists({ q: q || undefined, backend: backend !== 'all' ? backend : undefined });
+      // Load all artists when no search active (for A–Z to work across full library)
+      const perPage = q ? 200 : 1000;
+      const res = await libraryBrowseApi.getArtists({
+        q: q || undefined,
+        backend: backend !== 'all' ? backend : undefined,
+        decade: decade ?? undefined,
+        region: region ?? undefined,
+        per_page: perPage,
+      });
       setArtists(res.artists);
       setTotalArtists(res.total);
     } catch (err) {
@@ -762,10 +945,10 @@ export function LibraryRoot() {
   }, []);
 
   useEffect(() => {
-    if (tab === 'artists') fetchArtists(debouncedSearch, backendFilter);
+    if (tab === 'artists') fetchArtists(debouncedSearch, backendFilter, decadeFilter, regionFilter);
     else if (tab === 'albums') fetchAlbums(debouncedSearch, backendFilter, recordTypeFilter);
     else fetchTracks(debouncedSearch);
-  }, [tab, debouncedSearch, backendFilter, recordTypeFilter, fetchArtists, fetchAlbums, fetchTracks]);
+  }, [tab, debouncedSearch, backendFilter, recordTypeFilter, decadeFilter, regionFilter, fetchArtists, fetchAlbums, fetchTracks]);
 
   // Run pipeline (sync + enrich in one pass)
   const handleSync = useCallback(async () => {
@@ -861,6 +1044,32 @@ export function LibraryRoot() {
               </select>
             )}
 
+            {tab === 'artists' && filterOptions.decades.length >= 2 && (
+              <select
+                value={decadeFilter ?? ''}
+                onChange={e => setDecadeFilter(e.target.value ? Number(e.target.value) : null)}
+                className="bg-[#111] border border-[#222] text-text-primary text-xs font-mono rounded-sm px-2 py-1.5 appearance-none cursor-pointer focus:outline-none focus:border-accent"
+              >
+                <option value="">All Eras</option>
+                {filterOptions.decades.map(d => (
+                  <option key={d} value={d}>{d}s</option>
+                ))}
+              </select>
+            )}
+
+            {tab === 'artists' && filterOptions.regions.length >= 2 && (
+              <select
+                value={regionFilter ?? ''}
+                onChange={e => setRegionFilter(e.target.value || null)}
+                className="bg-[#111] border border-[#222] text-text-primary text-xs font-mono rounded-sm px-2 py-1.5 appearance-none cursor-pointer focus:outline-none focus:border-accent"
+              >
+                <option value="">All Regions</option>
+                {filterOptions.regions.map(r => (
+                  <option key={r} value={r}>{r}</option>
+                ))}
+              </select>
+            )}
+
             {tab !== 'tracks' && (
               <select
                 value={backendFilter}
@@ -906,13 +1115,13 @@ export function LibraryRoot() {
       </div>
 
       {/* Content */}
-      <div className="flex-1 min-h-0 overflow-y-auto">
+      <div className="flex-1 min-h-0 overflow-y-auto" ref={listScrollRef}>
         {fetchError && (
           <div className="p-4">
             <ApiErrorBanner
               error={fetchError}
               onRetry={() => {
-                if (tab === 'artists') fetchArtists(debouncedSearch, backendFilter);
+                if (tab === 'artists') fetchArtists(debouncedSearch, backendFilter, decadeFilter, regionFilter);
                 else if (tab === 'albums') fetchAlbums(debouncedSearch, backendFilter, recordTypeFilter);
                 else fetchTracks(debouncedSearch);
               }}
@@ -926,17 +1135,56 @@ export function LibraryRoot() {
           </div>
         )}
 
-        {!loading && !fetchError && tab === 'artists' && (
-          viewMode === 'grid' ? (
-            <div className="p-4 grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-3">
-              {artists.map(a => <ArtistCard key={a.id} artist={a} viewMode="grid" />)}
+        {!loading && !fetchError && tab === 'artists' && (() => {
+          const showAZ = viewMode === 'list' && !debouncedSearch;
+          if (viewMode === 'grid') {
+            return (
+              <div className="p-4 grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-3">
+                {artists.map(a => <ArtistCard key={a.id} artist={a} viewMode="grid" />)}
+              </div>
+            );
+          }
+          const groups = groupArtistsByLetter(artists);
+          const activeLetters = new Set(groups.map(g => g.letter));
+          return (
+            <div className="relative flex">
+              {/* Artist list with letter group headers */}
+              <div className="flex-1 min-w-0 py-2 pr-8">
+                {groups.map(group => (
+                  <div key={group.letter} id={`az-${group.letter}`}>
+                    <div className="px-4 py-1 sticky top-0 bg-[#0d0d0d] z-10">
+                      <span className="font-mono text-[10px] text-text-muted uppercase tracking-widest">{group.letter}</span>
+                    </div>
+                    {group.artists.map(a => <ArtistCard key={a.id} artist={a} viewMode="list" />)}
+                  </div>
+                ))}
+              </div>
+
+              {/* Sticky A–Z right rail */}
+              {showAZ && (
+                <div className="w-6 flex-shrink-0 flex flex-col items-center py-2 sticky top-0 self-start h-screen overflow-y-auto">
+                  {AZ_LETTERS.map(letter => (
+                    <button
+                      key={letter}
+                      onClick={() => {
+                        const el = listScrollRef.current?.querySelector(`#az-${letter}`);
+                        el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                      }}
+                      className={`font-mono text-[9px] leading-4 w-5 text-center rounded transition-colors ${
+                        activeLetters.has(letter)
+                          ? 'text-text-secondary hover:text-accent hover:bg-[#1a1a1a]'
+                          : 'text-[#333] cursor-default'
+                      }`}
+                      disabled={!activeLetters.has(letter)}
+                    >
+                      {letter}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
-          ) : (
-            <div className="py-2">
-              {artists.map(a => <ArtistCard key={a.id} artist={a} viewMode="list" />)}
-            </div>
-          )
-        )}
+          );
+        })()}
 
         {!loading && !fetchError && tab === 'albums' && (
           viewMode === 'grid' ? (
