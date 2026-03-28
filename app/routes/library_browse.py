@@ -60,7 +60,7 @@ def library_artist_filter_options():
 def library_artists(
     q: str = "",
     page: int = Query(default=1, ge=1),
-    per_page: int = Query(default=50, le=200),
+    per_page: int = Query(default=50, le=1000),
     platform: str = "all",
     decade: Optional[int] = Query(default=None),
     region: Optional[str] = Query(default=None),
