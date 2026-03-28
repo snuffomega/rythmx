@@ -466,3 +466,70 @@ CREATE TABLE IF NOT EXISTS fk_violation_log (
     payload    TEXT,
     created_at TEXT DEFAULT (datetime('now'))
 );
+
+-- =========================================================================
+-- FORGE TABLES (added mig 029–032)
+-- =========================================================================
+
+-- Tier 3 — Permanent: user-created playlists (never auto-purged)
+CREATE TABLE IF NOT EXISTS forge_playlists (
+    id            TEXT PRIMARY KEY,
+    name          TEXT NOT NULL,
+    created_at    TEXT DEFAULT (datetime('now')),
+    updated_at    TEXT DEFAULT (datetime('now')),
+    plex_push_at  TEXT
+);
+
+CREATE TABLE IF NOT EXISTS forge_playlist_tracks (
+    playlist_id   TEXT NOT NULL,
+    track_id      TEXT NOT NULL,
+    position      INTEGER NOT NULL,
+    added_at      TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (playlist_id, track_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_forge_playlist_tracks_playlist
+    ON forge_playlist_tracks(playlist_id);
+
+-- Tier 2 — Rebuildable: 2-hop similarity cache for Discovery tab
+CREATE TABLE IF NOT EXISTS forge_similarity_graph (
+    artist_id     TEXT NOT NULL,
+    similar_name  TEXT NOT NULL,
+    similar_name_lower TEXT NOT NULL,
+    hop           INTEGER NOT NULL DEFAULT 1,
+    score         REAL,
+    source        TEXT,
+    updated_at    TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (artist_id, similar_name_lower)
+);
+
+CREATE INDEX IF NOT EXISTS idx_forge_similarity_artist
+    ON forge_similarity_graph(artist_id);
+
+-- Tier 2 — Rebuildable: external artist cache (TTL 30d)
+CREATE TABLE IF NOT EXISTS forge_discovered_artists (
+    deezer_id     TEXT PRIMARY KEY,
+    name          TEXT NOT NULL,
+    name_lower    TEXT NOT NULL,
+    image_url     TEXT,
+    fans_deezer   INTEGER,
+    source_artist_id TEXT,
+    fetched_at    TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_forge_discovered_artists_name
+    ON forge_discovered_artists(name_lower);
+
+-- Tier 2 — Rebuildable: recent releases from discovered artists (TTL 7d)
+CREATE TABLE IF NOT EXISTS forge_discovered_releases (
+    id              TEXT PRIMARY KEY,
+    artist_deezer_id TEXT NOT NULL,
+    title           TEXT NOT NULL,
+    record_type     TEXT,
+    release_date    TEXT,
+    cover_url       TEXT,
+    fetched_at      TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_forge_discovered_releases_artist
+    ON forge_discovered_releases(artist_deezer_id);
