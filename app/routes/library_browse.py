@@ -25,12 +25,45 @@ router = APIRouter(dependencies=[Depends(verify_api_key)])
 # Artists
 # ---------------------------------------------------------------------------
 
+@router.get("/library/artists/filter-options")
+def library_artist_filter_options():
+    """Returns available decade and region filter values for the artist list.
+
+    Only includes values that actually exist in the library, so dropdowns
+    stay empty when enrichment hasn't run.
+    """
+    with rythmx_store._connect() as conn:
+        decade_rows = conn.execute(
+            """
+            SELECT DISTINCT (formed_year_musicbrainz / 10) * 10 AS decade
+            FROM lib_artists
+            WHERE formed_year_musicbrainz IS NOT NULL AND removed_at IS NULL
+            ORDER BY decade DESC
+            """
+        ).fetchall()
+        region_rows = conn.execute(
+            """
+            SELECT DISTINCT area_musicbrainz AS region
+            FROM lib_artists
+            WHERE area_musicbrainz IS NOT NULL AND removed_at IS NULL
+            ORDER BY area_musicbrainz COLLATE NOCASE
+            """
+        ).fetchall()
+    return {
+        "status": "ok",
+        "decades": [r["decade"] for r in decade_rows],
+        "regions": [r["region"] for r in region_rows],
+    }
+
+
 @router.get("/library/artists")
 def library_artists(
     q: str = "",
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=50, le=200),
     platform: str = "all",
+    decade: Optional[int] = Query(default=None),
+    region: Optional[str] = Query(default=None),
 ):
     q = q.strip()
     where = ["a.removed_at IS NULL"]
@@ -41,6 +74,12 @@ def library_artists(
     if platform != "all":
         where.append("a.source_platform = ?")
         params.append(platform)
+    if decade is not None:
+        where.append("(a.formed_year_musicbrainz / 10) * 10 = ?")
+        params.append(decade)
+    if region:
+        where.append("lower(a.area_musicbrainz) LIKE lower(?)")
+        params.append(region)
 
     where_clause = " AND ".join(where)
     offset = (page - 1) * per_page
@@ -61,13 +100,25 @@ def library_artists(
                    a.play_count_lastfm AS global_play_count,
                    a.missing_count,
                    COALESCE(a.image_url_fanart, a.image_url_deezer) AS image_url,
-                   COUNT(al.id) AS album_count
+                   COUNT(al.id) AS album_count,
+                   CASE
+                       WHEN lower(a.name) LIKE 'the %' THEN substr(a.name, 5)
+                       WHEN lower(a.name) LIKE 'a %'   THEN substr(a.name, 3)
+                       WHEN lower(a.name) LIKE 'an %'  THEN substr(a.name, 4)
+                       ELSE a.name
+                   END AS sort_name
             FROM lib_artists a
             LEFT JOIN lib_albums al
                    ON al.artist_id = a.id AND al.removed_at IS NULL
             WHERE {where_clause}
             GROUP BY a.id
-            ORDER BY a.name COLLATE NOCASE
+            ORDER BY
+                CASE
+                    WHEN lower(a.name) LIKE 'the %' THEN substr(a.name, 5)
+                    WHEN lower(a.name) LIKE 'a %'   THEN substr(a.name, 3)
+                    WHEN lower(a.name) LIKE 'an %'  THEN substr(a.name, 4)
+                    ELSE a.name
+                END COLLATE NOCASE
             LIMIT ? OFFSET ?
             """,
             params + [per_page, offset],
@@ -89,7 +140,13 @@ def library_artist_detail(artist_id: str):
                    a.listener_count_lastfm AS listener_count,
                    a.play_count_lastfm AS global_play_count,
                    COALESCE(a.image_url_fanart, a.image_url_deezer) AS image_url,
-                   COUNT(al.id) AS album_count
+                   COUNT(al.id) AS album_count,
+                   a.bio_lastfm,
+                   a.fans_deezer,
+                   a.similar_artists_json,
+                   a.area_musicbrainz,
+                   a.begin_area_musicbrainz,
+                   a.formed_year_musicbrainz
             FROM lib_artists a
             LEFT JOIN lib_albums al
                    ON al.artist_id = a.id AND al.removed_at IS NULL
@@ -274,6 +331,51 @@ def library_artist_detail(artist_id: str):
         "missing_groups": missing_groups,
         "dismissed_count": dismissed_count,
     }
+
+
+@router.get("/library/artists/{artist_id}/similar")
+def library_artist_similar(artist_id: str):
+    """Resolve similar_artists_json entries against the local library.
+
+    For each similar artist name, checks lib_artists for an exact
+    case-insensitive match. Returns in_library + library_id when found.
+    """
+    import json as _json
+
+    with rythmx_store._connect() as conn:
+        row = conn.execute(
+            "SELECT similar_artists_json FROM lib_artists WHERE id = ? AND removed_at IS NULL",
+            (artist_id,),
+        ).fetchone()
+
+    if not row or not row["similar_artists_json"]:
+        return {"status": "ok", "similar": []}
+
+    try:
+        raw: list[dict] = _json.loads(row["similar_artists_json"])
+    except (ValueError, TypeError):
+        return {"status": "ok", "similar": []}
+
+    # Bulk-load library artist names once for O(1) lookup
+    with rythmx_store._connect() as conn:
+        lib_rows = conn.execute(
+            "SELECT id, name FROM lib_artists WHERE removed_at IS NULL"
+        ).fetchall()
+
+    lib_by_name: dict[str, str] = {r["name"].lower(): r["id"] for r in lib_rows}
+
+    result = []
+    for entry in raw[:20]:  # cap at 20 similar artists
+        name = entry.get("name", "").strip()
+        if not name:
+            continue
+        lib_id = lib_by_name.get(name.lower())
+        if lib_id:
+            result.append({"name": name, "in_library": True, "library_id": lib_id})
+        else:
+            result.append({"name": name, "in_library": False})
+
+    return {"status": "ok", "similar": result}
 
 
 @router.get("/library/releases")
