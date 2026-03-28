@@ -506,7 +506,6 @@ def reset_db():
             DELETE FROM candidates;
             DELETE FROM playlists;
             DELETE FROM download_queue;
-            DELETE FROM release_cache;
         """)
     logger.info("rythmx.db reset — all user data cleared")
 
@@ -643,142 +642,12 @@ def remove_playlist_row(row_id: int):
         conn.execute("DELETE FROM playlist_tracks WHERE id = ?", (row_id,))
 
 
-# --- Release cache (DEPRECATED — CC pipeline will be deleted; release_cache table removed in genesis) ---
-
-def get_cached_releases(artist_name: str, max_age_days: int = 7):
-    """DEPRECATED: Legacy CC pipeline only. release_cache table removed in genesis migration.
-
-    Return Release objects for this artist if fetched within max_age_days, else None.
-    Returns ALL stored releases (including upcoming) — caller filters as needed.
-    Returns None  → cache miss (never fetched, or stale) — call providers.
-    Returns []    → cache hit, no releases found (sentinel row present).
-    Returns [...]  → cache hit with results.
-    """
-    import time
-    from app.clients.music_client import Release
-    max_age_secs = max_age_days * 86400
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT COUNT(*), MAX(strftime('%s', cached_at)) FROM release_cache WHERE artist_name = ?",
-            (artist_name,)
-        ).fetchone()
-        if not row or not row[1]:
-            return None
-        if time.time() - int(row[1]) > max_age_secs:
-            return None
-        # Fetch real releases only (exclude sentinel rows)
-        rows = conn.execute(
-            """SELECT album_title, release_date, kind, source,
-                      itunes_album_id, deezer_album_id, spotify_album_id, is_upcoming,
-                      COALESCE(artwork_url, '') AS artwork_url
-               FROM release_cache WHERE artist_name = ? AND source != 'sentinel'""",
-            (artist_name,)
-        ).fetchall()
-        # Returns [] for sentinel-only (cache hit, no releases found)
-        return [
-            Release(
-                artist=artist_name,
-                title=r["album_title"],
-                release_date=r["release_date"] or "",
-                kind=r["kind"] or "album",
-                source=r["source"],
-                itunes_album_id=r["itunes_album_id"] or "",
-                deezer_album_id=r["deezer_album_id"] or "",
-                spotify_album_id=r["spotify_album_id"] or "",
-                is_upcoming=bool(r["is_upcoming"]),
-                artwork_url=r["artwork_url"],
-            )
-            for r in rows
-        ]
-
-
-def save_releases_to_cache(artist_name: str, releases: list, artist_lib_id: str = None):
-    """DEAD: CC pipeline release import — scheduled for deletion after db-audit.
-
-    Legacy CC pipeline only. release_cache table removed in genesis migration.
-    Contains dead-column references (thumb_url, release_date) that no longer exist
-    in the current schema. Do not fix — delete entire function after audit.
-    """
-    with _connect() as conn:
-        if not releases:
-            conn.execute(
-                """INSERT INTO release_cache
-                   (artist_name, source, album_title, cached_at)
-                   VALUES (?, 'sentinel', '', CURRENT_TIMESTAMP)
-                   ON CONFLICT(artist_name, source, album_title) DO UPDATE SET
-                       cached_at = CURRENT_TIMESTAMP""",
-                (artist_name,)
-            )
-            return
-        for r in releases:
-            conn.execute(
-                """INSERT INTO release_cache
-                   (artist_name, source, album_title, release_date, kind,
-                    itunes_album_id, deezer_album_id, spotify_album_id, is_upcoming,
-                    artwork_url, cached_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                   ON CONFLICT(artist_name, source, album_title) DO UPDATE SET
-                       release_date     = excluded.release_date,
-                       kind             = excluded.kind,
-                       itunes_album_id  = COALESCE(excluded.itunes_album_id,  itunes_album_id),
-                       deezer_album_id  = COALESCE(excluded.deezer_album_id,  deezer_album_id),
-                       spotify_album_id = COALESCE(excluded.spotify_album_id, spotify_album_id),
-                       is_upcoming      = excluded.is_upcoming,
-                       artwork_url      = COALESCE(NULLIF(excluded.artwork_url, ''), artwork_url),
-                       cached_at        = CURRENT_TIMESTAMP""",
-                (
-                    artist_name, r.source, r.title, r.release_date, r.kind,
-                    r.itunes_album_id or None,
-                    r.deezer_album_id or None,
-                    r.spotify_album_id or None,
-                    1 if r.is_upcoming else 0,
-                    r.artwork_url or "",
-                )
-            )
-            # Also write to lib_releases for permanent history (skip upcoming releases)
-            if not r.is_upcoming:
-                dz_id = r.deezer_album_id or None
-                it_id = r.itunes_album_id or None
-                sp_id = r.spotify_album_id or None
-                kind_val = (r.kind or "album").strip()
-                # PK = {source}_{album_id} — pick the ID matching the source
-                src = (r.source or "").lower()
-                src_id = {"deezer": dz_id, "itunes": it_id, "spotify": sp_id}.get(src) or dz_id or it_id or sp_id
-                if src_id:
-                    rel_id = f"{src}_{src_id}" if src else f"unknown_{src_id}"
-                    # Per-source kind columns
-                    kind_deezer = kind_val if src == "deezer" else None
-                    kind_itunes = kind_val if src == "itunes" else None
-                    catalog_source = src or "unknown"
-                    conn.execute(
-                        """INSERT OR IGNORE INTO lib_releases
-                           (id, artist_id, artist_name, artist_name_lower, title, title_lower,
-                            release_date, kind_deezer, kind_itunes, deezer_album_id,
-                            itunes_album_id, spotify_album_id, thumb_url,
-                            catalog_source, first_seen_at, last_checked_at)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                                   ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-                        (rel_id, artist_lib_id, artist_name, artist_name.lower(),
-                         r.title, r.title.lower(), r.release_date,
-                         kind_deezer, kind_itunes,
-                         dz_id, it_id, sp_id, r.artwork_url or None,
-                         catalog_source),
-                    )
-                    # Update last_checked_at for already-existing rows
-                    conn.execute(
-                        "UPDATE lib_releases SET last_checked_at = CURRENT_TIMESTAMP WHERE id = ?",
-                        (rel_id,),
-                    )
-
-
 def get_release_itunes_album_id(artist_name: str, album_title: str) -> str | None:
     """
     Return itunes_album_id for a known artist+album, or None.
-    Checks lib_releases first (permanent store), then release_cache (TTL cache).
     Used by image_service as Tier 0 for album art lookups.
     """
     with _connect() as conn:
-        # Check permanent store first
         row = conn.execute(
             """SELECT itunes_album_id FROM lib_releases
                WHERE artist_name_lower = lower(?)
@@ -787,28 +656,7 @@ def get_release_itunes_album_id(artist_name: str, album_title: str) -> str | Non
                LIMIT 1""",
             (artist_name, album_title),
         ).fetchone()
-        if row:
-            return row["itunes_album_id"]
-        # Fall back to TTL cache
-        row = conn.execute(
-            """SELECT itunes_album_id FROM release_cache
-               WHERE lower(artist_name) = lower(?)
-                 AND lower(album_title) = lower(?)
-                 AND itunes_album_id IS NOT NULL AND itunes_album_id != ''
-               ORDER BY cached_at DESC LIMIT 1""",
-            (artist_name, album_title),
-        ).fetchone()
     return row["itunes_album_id"] if row else None
-
-
-def clear_release_cache(artist_name: str | None = None):
-    """DEPRECATED — Legacy CC pipeline artifact. Will be removed with CC deletion.
-    Delete all rows (or rows for one artist) from release_cache."""
-    with _connect() as conn:
-        if artist_name:
-            conn.execute("DELETE FROM release_cache WHERE artist_name = ?", (artist_name,))
-        else:
-            conn.execute("DELETE FROM release_cache")
 
 
 def get_missing_image_entities(limit: int = 40) -> list[tuple[str, str, str]]:
