@@ -6,6 +6,7 @@ data/
 
 # Local reference notes
 local-notes/
+docs/
 
 # Logs
 logs/
@@ -42,3 +43,4 @@ Thumbs.db
 frontend/node_modules/
 frontend/dist/
 frontend/src/routeTree.gen.ts
+
