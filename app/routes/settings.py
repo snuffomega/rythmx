@@ -46,6 +46,7 @@ def settings_get():
         "library_accessible": accessible,
         "library_track_count": lr.get_track_count() if accessible else 0,
         "library_last_synced": rythmx_store.get_setting("library_last_synced"),
+        "fetch_enabled": rythmx_store.get_setting("fetch_enabled", "0") == "1",
     }
 
 
@@ -346,3 +347,11 @@ def settings_regenerate_api_key():
     new_key = rythmx_store.generate_new_api_key()
     logger.info("API key regenerated")
     return {"status": "ok", "api_key": new_key}
+
+
+@router.post("/settings/fetch-enabled")
+def settings_set_fetch_enabled(data: Optional[dict[str, Any]] = Body(default=None)):
+    data = data or {}
+    enabled = bool(data.get("enabled", False))
+    rythmx_store.set_setting("fetch_enabled", "1" if enabled else "0")
+    return {"status": "ok", "fetch_enabled": enabled}
