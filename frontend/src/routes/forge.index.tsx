@@ -2,6 +2,6 @@ import { createFileRoute, redirect } from '@tanstack/react-router';
 
 export const Route = createFileRoute('/forge/')({
   beforeLoad: () => {
-    throw redirect({ to: '/forge/sync' });
+    throw redirect({ to: '/forge/new-music' });
   },
 });
