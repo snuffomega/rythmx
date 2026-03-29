@@ -21,10 +21,7 @@ const HOURS = Array.from({ length: 24 }, (_, i) => {
   return { value: i, label: `${h}:00 ${ampm}` };
 });
 
-type PDRunMode = 'build' | 'fetch';
-
 interface PDConfig extends PersonalDiscoveryConfig {
-  run_mode: PDRunMode;
   auto_publish: boolean;
   schedule_enabled: boolean;
   schedule_weekday: number;
@@ -38,7 +35,6 @@ interface ForgeCustomDiscoveryProps {
 
 export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
   const [config, setConfig] = useState<PDConfig>({
-    run_mode: 'build',
     closeness: 5,
     seed_period: '1month',
     min_scrobbles: 10,
@@ -72,7 +68,7 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
   const handleRun = async () => {
     setRunning(true);
     try {
-      const data = await personalDiscoveryApi.run(config);
+      const data = await personalDiscoveryApi.run({ ...config, run_mode: 'build' } as PersonalDiscoveryConfig);
       setResults(data);
       toast.success('Custom Discovery complete');
     } catch {
@@ -97,30 +93,6 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
         </div>
 
         <div className="space-y-7">
-          <div>
-            <div className="flex border border-[#2a2a2a] w-fit mb-3">
-              {(['build', 'fetch'] as PDRunMode[]).map(mode => {
-                const active = config.run_mode === mode;
-                return (
-                  <button
-                    key={mode}
-                    onClick={() => update('run_mode', mode)}
-                    className={`px-4 py-1.5 text-sm font-semibold transition-all duration-150 border-r border-[#2a2a2a] last:border-r-0 ${
-                      active ? 'bg-[#1e1e1e] text-text-primary' : 'text-[#3a3a3a] hover:text-[#666]'
-                    }`}
-                  >
-                    {mode === 'build' ? 'Build' : 'Fetch'}
-                  </button>
-                );
-              })}
-            </div>
-            <p className="text-[#555] text-xs leading-relaxed">
-              {config.run_mode === 'build'
-                ? 'Generates a curated playlist of tracks from artists similar to your listening history.'
-                : 'Queues similar-artist albums directly into your acquisition pipeline.'}
-            </p>
-          </div>
-
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="label mb-0">Closeness to Taste</label>
@@ -164,7 +136,7 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
         </div>
       </div>
 
-      <DiscoveryPipelineViz runMode={config.run_mode} />
+      <DiscoveryPipelineViz runMode="build" />
 
       <section className="border-t border-[#1a1a1a] pt-6">
         <h2 className="text-text-muted text-xs font-semibold uppercase tracking-widest mb-5">Automation</h2>
