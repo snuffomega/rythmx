@@ -4,6 +4,7 @@ import { useApi } from '../hooks/useApi';
 import { settingsApi, libraryApi, libraryBrowseApi, setApiKey, enrichmentApi } from '../services/api';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useEnrichmentStore } from '../stores/useEnrichmentStore';
+import { useSettingsStore } from '../stores/useSettingsStore';
 import type { LibraryPlatform, EnrichmentWorkerStatus, Settings } from '../types';
 
 const PLATFORM_LABELS: Record<string, string> = {
@@ -436,6 +437,10 @@ export function SettingsPage({ toast }: SettingsPageProps) {
   const [copied, setCopied] = useState(false);
   const [settingsStatus, setSettingsStatus] = useState<Settings | null>(null);
 
+  const fetchEnabled = useSettingsStore(s => s.fetchEnabled);
+  const { initFromApi, setFetchEnabled } = useSettingsStore();
+  const [fetchToggling, setFetchToggling] = useState(false);
+
   // Enrichment state from global store — kept live by wsService
   const { running, workers, activeWorkers, startedAt, phase, reset } = useEnrichmentStore();
 
@@ -449,7 +454,10 @@ export function SettingsPage({ toast }: SettingsPageProps) {
 
   useEffect(() => {
     settingsApi.getApiKey().then(setApiKeyState).catch(() => {});
-    settingsApi.get().then(setSettingsStatus).catch(() => {});
+    settingsApi.get().then(s => {
+      setSettingsStatus(s);
+      initFromApi(s);
+    }).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -520,6 +528,20 @@ export function SettingsPage({ toast }: SettingsPageProps) {
       setTimeout(() => setCopied(false), 2000);
     } finally {
       document.body.removeChild(el);
+    }
+  };
+
+  const handleFetchToggle = async () => {
+    setFetchToggling(true);
+    try {
+      const newValue = !fetchEnabled;
+      await settingsApi.setFetchEnabled(newValue);
+      setFetchEnabled(newValue);
+      toast.success(newValue ? 'Fetch enabled' : 'Fetch disabled');
+    } catch {
+      toast.error('Failed to update fetch setting');
+    } finally {
+      setFetchToggling(false);
     }
   };
 
@@ -595,6 +617,32 @@ export function SettingsPage({ toast }: SettingsPageProps) {
             configured={settingsStatus?.fanart_configured}
             onTest={settingsApi.testFanart}
           />
+        </div>
+      </section>
+
+      <section className="border-t border-[#1a1a1a] pt-8">
+        <h2 className="text-text-muted text-xs font-semibold uppercase tracking-widest mb-3">Capabilities</h2>
+        <div className="bg-[#0e0e0e] border border-[#1a1a1a] p-4 flex items-center justify-between">
+          <div>
+            <p className="text-text-primary text-sm font-medium">Enable Fetch</p>
+            <p className="text-[#444] text-[10px] mt-0.5">
+              Show download actions in the Forge. Requires a downloader plugin (Lidarr, Soulseek).
+            </p>
+          </div>
+          <button
+            onClick={handleFetchToggle}
+            disabled={fetchToggling}
+            className={`relative w-10 h-5 rounded-full transition-colors duration-200 flex-shrink-0 ${
+              fetchEnabled ? 'bg-accent' : 'bg-[#2a2a2a]'
+            } ${fetchToggling ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+            aria-label={fetchEnabled ? 'Disable fetch' : 'Enable fetch'}
+          >
+            <span
+              className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform duration-200 ${
+                fetchEnabled ? 'translate-x-5' : 'translate-x-0.5'
+              }`}
+            />
+          </button>
         </div>
       </section>
 
