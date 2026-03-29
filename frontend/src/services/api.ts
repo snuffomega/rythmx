@@ -282,6 +282,11 @@ export const settingsApi = {
   regenerateApiKey: () =>
     request<{ status: string; api_key: string }>('/settings/regenerate-api-key', { method: 'POST' })
       .then(r => r.api_key),
+  setFetchEnabled: (enabled: boolean) =>
+    request<{ status: string; fetch_enabled: boolean }>('/settings/fetch-enabled', {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
+    }).then(r => r.fetch_enabled),
 };
 
 export const connectionsApi = {
