@@ -213,6 +213,7 @@ export interface Settings {
   spotify_configured?: boolean;
   fanart_configured?: boolean;
   library_platform: LibraryPlatform;
+  fetch_enabled?: boolean;
 }
 
 export interface Toast {
