@@ -17,14 +17,32 @@ from app.db import rythmx_store
 
 logger = logging.getLogger(__name__)
 
-# Service definitions: (key, display_name, required, test_fn_name)
-SERVICES = [
-    ("plex", "Plex", True),
-    ("spotify", "Spotify", False),
-    ("lastfm", "Last.fm", False),
-    ("fanart", "Fanart.tv", False),
-    ("deezer", "Deezer", False),
-]
+def _get_services() -> list[tuple]:
+    """Return service definitions based on the active library platform."""
+    platform = config.LIBRARY_PLATFORM
+    try:
+        from app.db import rythmx_store
+        saved = rythmx_store.get_setting("library_platform")
+        if saved:
+            platform = saved
+    except Exception:
+        pass
+
+    services = []
+    if platform == "navidrome":
+        services.append(("navidrome", "Navidrome", True))
+        services.append(("plex", "Plex", False))
+    else:
+        services.append(("plex", "Plex", True))
+        services.append(("navidrome", "Navidrome", False))
+
+    services += [
+        ("spotify", "Spotify", False),
+        ("lastfm", "Last.fm", False),
+        ("fanart", "Fanart.tv", False),
+        ("deezer", "Deezer", False),
+    ]
+    return services
 
 
 def _verified_at_key(service: str) -> str:
@@ -40,6 +58,9 @@ def verify_service(service: str) -> dict:
         from app.clients.plex_push import test_connection
         r = test_connection()
         result.update(r)
+
+    elif service == "navidrome":
+        result.update(_test_navidrome())
 
     elif service == "spotify":
         result.update(_test_spotify())
@@ -74,7 +95,7 @@ def verify_all() -> dict:
     all_ok = True
     required_ok = True
 
-    for key, name, required in SERVICES:
+    for key, name, required in _get_services():
         r = verify_service(key)
         r["display_name"] = name
         results[key] = r
@@ -104,7 +125,7 @@ def get_verification_status() -> dict:
     settings = rythmx_store.get_all_settings()
     services = {}
 
-    for key, name, required in SERVICES:
+    for key, name, required in _get_services():
         verified_at = settings.get(_verified_at_key(key), "")
         services[key] = {
             "service": key,
@@ -114,16 +135,24 @@ def get_verification_status() -> dict:
             "status": "verified" if verified_at else "unverified",
         }
 
-    plex_verified = bool(settings.get(_verified_at_key("plex")))
+    pipeline_ready = is_pipeline_ready()
     return {
         "services": services,
-        "pipeline_ready": plex_verified,
+        "pipeline_ready": pipeline_ready,
     }
 
 
 def is_pipeline_ready() -> bool:
     """Quick check: is the required library reader verified?"""
-    return bool(rythmx_store.get_setting(_verified_at_key("plex")))
+    platform = config.LIBRARY_PLATFORM
+    try:
+        saved = rythmx_store.get_setting("library_platform")
+        if saved:
+            platform = saved
+    except Exception:
+        pass
+    required_service = "navidrome" if platform == "navidrome" else "plex"
+    return bool(rythmx_store.get_setting(_verified_at_key(required_service)))
 
 
 # ------------------------------------------------------------------
@@ -189,3 +218,25 @@ def _test_deezer() -> dict:
         return {"status": "error", "message": f"Deezer returned {resp.status_code}"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+def _test_navidrome() -> dict:
+    """Test Navidrome connectivity using NavidromeClient.ping()."""
+    url = rythmx_store.get_setting("navidrome_url") or config.NAVIDROME_URL
+    user = rythmx_store.get_setting("navidrome_user") or config.NAVIDROME_USER
+    password = rythmx_store.get_setting("navidrome_pass") or config.NAVIDROME_PASS
+
+    if not url or not user or not password:
+        return {
+            "status": "not_configured",
+            "message": "NAVIDROME_URL, NAVIDROME_USER, and NAVIDROME_PASS must be set",
+        }
+    try:
+        from app.clients.navidrome_client import NavidromeClient
+        client = NavidromeClient(url, user, password)
+        if client.ping():
+            return {"status": "ok"}
+        return {"status": "error", "message": "Navidrome ping failed — check credentials"}
+    except Exception as exc:
+        # Never include URL or credentials in the message
+        return {"status": "error", "message": f"Navidrome connection error: {type(exc).__name__}"}

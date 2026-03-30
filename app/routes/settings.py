@@ -73,7 +73,7 @@ def settings_test_soulsync():
     active_backend = rythmx_store.get_setting("library_platform") or "plex"
 
     if active_backend == "navidrome":
-        return {"connected": False, "message": "Navidrome not yet implemented"}
+        return _verify_to_connected("navidrome")
     if active_backend == "jellyfin":
         return {"connected": False, "message": "Jellyfin not yet implemented"}
     if active_backend == "plex":
@@ -318,8 +318,66 @@ def settings_set_library_platform(data: Optional[dict[str, Any]] = Body(default=
         return JSONResponse(
             {"status": "error", "message": f"Invalid platform: {platform}"}, status_code=400
         )
+
+    old_platform = rythmx_store.get_setting("library_platform") or config.LIBRARY_PLATFORM
     rythmx_store.set_setting("library_platform", platform)
-    return {"status": "ok", "platform": platform}
+
+    if old_platform != platform:
+        # Soft-delete all rows from the old platform so the new platform starts clean.
+        # Enrichment data is preserved — COALESCE guards re-match by artist name on next sync.
+        _soft_delete_platform_rows(old_platform)
+        logger.info(
+            "library_platform changed %s → %s; old rows tombstoned; resync triggered",
+            old_platform, platform,
+        )
+        _trigger_background_sync()
+
+    return {"status": "ok", "platform": platform, "resync_triggered": old_platform != platform}
+
+
+def _soft_delete_platform_rows(platform: str) -> None:
+    """Tombstone all lib_* rows for the given platform."""
+    import sqlite3 as _sq
+    try:
+        conn = _sq.connect(config.RYTHMX_DB, timeout=10)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute(
+            "UPDATE lib_tracks SET removed_at = CURRENT_TIMESTAMP "
+            "WHERE source_platform = ? AND removed_at IS NULL",
+            (platform,),
+        )
+        conn.execute(
+            "UPDATE lib_albums SET removed_at = CURRENT_TIMESTAMP "
+            "WHERE source_platform = ? AND removed_at IS NULL",
+            (platform,),
+        )
+        conn.execute(
+            "UPDATE lib_artists SET removed_at = CURRENT_TIMESTAMP "
+            "WHERE source_platform = ? AND removed_at IS NULL",
+            (platform,),
+        )
+        conn.commit()
+        conn.close()
+        logger.info("_soft_delete_platform_rows: tombstoned all '%s' rows", platform)
+    except Exception as exc:
+        logger.error("_soft_delete_platform_rows failed for platform '%s': %s", platform, exc)
+
+
+def _trigger_background_sync() -> None:
+    """Start a background thread to sync the newly selected platform's library."""
+    import threading as _threading
+
+    def _run():
+        try:
+            from app.db import get_library_reader
+            reader = get_library_reader()
+            result = reader.sync_library()
+            logger.info("Background sync after platform switch complete: %s", result)
+        except Exception as exc:
+            logger.error("Background sync after platform switch failed: %s", exc)
+
+    t = _threading.Thread(target=_run, daemon=True, name="platform-switch-sync")
+    t.start()
 
 
 @router.post("/settings/clear-history")
