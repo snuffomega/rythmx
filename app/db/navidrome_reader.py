@@ -270,60 +270,196 @@ def sync_library() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Identity / ownership stubs (Task 4)
+# Health
 # ---------------------------------------------------------------------------
 
 def is_db_accessible() -> bool:
-    return False
+    """Return True if lib_tracks has at least one navidrome-sourced row."""
+    try:
+        with _connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM lib_tracks WHERE source_platform = 'navidrome'"
+            ).fetchone()
+            return row[0] > 0
+    except Exception:
+        return False
 
 
 def get_track_count() -> int:
-    return 0
+    """Return total navidrome track count from lib_tracks."""
+    try:
+        with _connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM lib_tracks WHERE source_platform = 'navidrome'"
+            ).fetchone()
+            return row[0] if row else 0
+    except Exception:
+        return 0
 
 
-def get_native_artist_id(artist_name: str):
-    return None
+# ---------------------------------------------------------------------------
+# Identity helpers
+# ---------------------------------------------------------------------------
+
+def get_native_artist_id(artist_name: str) -> str | None:
+    """Return the Navidrome artist ID for an artist by name."""
+    try:
+        with _connect() as conn:
+            row = conn.execute(
+                "SELECT id FROM lib_artists WHERE name_lower = lower(?) "
+                "AND source_platform = 'navidrome' LIMIT 1",
+                (artist_name,),
+            ).fetchone()
+            return row[0] if row else None
+    except Exception:
+        return None
 
 
-def get_spotify_artist_id(artist_name: str):
-    return None
+def get_spotify_artist_id(artist_name: str) -> str | None:
+    """Return stored Spotify artist ID for an artist by name."""
+    try:
+        with _connect() as conn:
+            row = conn.execute(
+                "SELECT spotify_artist_id FROM lib_artists WHERE name_lower = lower(?) LIMIT 1",
+                (artist_name,),
+            ).fetchone()
+            return row[0] if row else None
+    except Exception:
+        return None
 
 
-def get_deezer_artist_id(artist_name: str):
-    return None
+def get_deezer_artist_id(artist_name: str) -> str | None:
+    """Return stored Deezer artist ID for an artist by name."""
+    try:
+        with _connect() as conn:
+            row = conn.execute(
+                "SELECT deezer_artist_id FROM lib_artists WHERE name_lower = lower(?) LIMIT 1",
+                (artist_name,),
+            ).fetchone()
+            return row[0] if row else None
+    except Exception:
+        return None
 
 
-def get_itunes_artist_id(artist_name: str):
-    return None
+def get_itunes_artist_id(artist_name: str) -> str | None:
+    """Return stored iTunes artist ID for an artist by name."""
+    try:
+        with _connect() as conn:
+            row = conn.execute(
+                "SELECT itunes_artist_id FROM lib_artists WHERE name_lower = lower(?) LIMIT 1",
+                (artist_name,),
+            ).fetchone()
+            return row[0] if row else None
+    except Exception:
+        return None
 
 
-def check_album_owned(*args, **kwargs):
-    return None
+# ---------------------------------------------------------------------------
+# Ownership checks
+# ---------------------------------------------------------------------------
+
+def check_album_owned(artist_name: str, album_name: str, *args, **kwargs) -> str | None:
+    """Return album ID if the user owns this album, else None."""
+    try:
+        with _connect() as conn:
+            row = conn.execute(
+                "SELECT la.id FROM lib_albums la "
+                "JOIN lib_artists ar ON ar.id = la.artist_id "
+                "WHERE ar.name_lower = lower(?) AND la.title_lower = lower(?) "
+                "AND la.removed_at IS NULL LIMIT 1",
+                (artist_name, album_name),
+            ).fetchone()
+            return row[0] if row else None
+    except Exception:
+        return None
 
 
-def check_owned_exact(spotify_track_id: str):
-    return None
+def check_owned_exact(spotify_track_id: str) -> str | None:
+    """Return track ID if this Spotify track ID is in the library."""
+    try:
+        with _connect() as conn:
+            row = conn.execute(
+                "SELECT id FROM lib_tracks WHERE spotify_track_id = ? "
+                "AND removed_at IS NULL LIMIT 1",
+                (spotify_track_id,),
+            ).fetchone()
+            return row[0] if row else None
+    except Exception:
+        return None
 
 
-def check_owned_deezer(deezer_track_id: str):
-    return None
+def check_owned_deezer(deezer_track_id: str) -> str | None:
+    """Return track ID if this Deezer track ID is in the library."""
+    try:
+        with _connect() as conn:
+            row = conn.execute(
+                "SELECT id FROM lib_tracks WHERE deezer_id = ? "
+                "AND removed_at IS NULL LIMIT 1",
+                (deezer_track_id,),
+            ).fetchone()
+            return row[0] if row else None
+    except Exception:
+        return None
 
 
-def find_track_by_name(artist_name: str, track_title: str):
-    return None
+def find_track_by_name(artist_name: str, track_title: str) -> dict | None:
+    """Find a track by artist name + track title. Returns first match or None."""
+    try:
+        with _connect() as conn:
+            row = conn.execute(
+                "SELECT t.id, t.title, t.album_id FROM lib_tracks t "
+                "JOIN lib_artists a ON a.id = t.artist_id "
+                "WHERE a.name_lower = lower(?) AND t.title_lower = lower(?) "
+                "AND t.removed_at IS NULL LIMIT 1",
+                (artist_name, track_title),
+            ).fetchone()
+            if row:
+                return {"id": row[0], "title": row[1], "album_id": row[2]}
+            return None
+    except Exception:
+        return None
 
 
 def get_all_tracks_for_artist(artist_id: str) -> list:
-    return []
+    """Return all non-removed tracks for an artist."""
+    try:
+        with _connect() as conn:
+            rows = conn.execute(
+                "SELECT id, title, album_id, track_number, duration "
+                "FROM lib_tracks WHERE artist_id = ? AND removed_at IS NULL",
+                (artist_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+    except Exception:
+        return []
 
 
 def get_tracks_for_album(artist_id: str, album_title: str) -> list:
-    return []
+    """Return all non-removed tracks for a specific album."""
+    try:
+        with _connect() as conn:
+            rows = conn.execute(
+                "SELECT t.id, t.title, t.track_number, t.duration "
+                "FROM lib_tracks t "
+                "JOIN lib_albums a ON a.id = t.album_id "
+                "WHERE t.artist_id = ? AND a.title_lower = lower(?) "
+                "AND t.removed_at IS NULL",
+                (artist_id, album_title),
+            ).fetchall()
+            return [dict(r) for r in rows]
+    except Exception:
+        return []
 
+
+# ---------------------------------------------------------------------------
+# SoulSync stubs (Plex-only enrichment API)
+# ---------------------------------------------------------------------------
 
 def get_discovery_pool(**kwargs) -> list:
+    """Not applicable for Navidrome — SoulSync is Plex-only. Returns []."""
     return []
 
 
 def get_similar_artists_map(**kwargs) -> dict:
+    """Not applicable for Navidrome — SoulSync is Plex-only. Returns {}."""
     return {}

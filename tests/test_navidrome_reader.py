@@ -278,3 +278,72 @@ def test_sync_library_idempotent_preserves_enrichment(tmp_db):
     conn.close()
     assert row[0] == "a74b1b7f-71a5-4011-9441-d0b5e4122711"  # preserved
     assert row[1] == '["Alternative Rock"]'  # preserved
+
+
+def test_is_db_accessible_false_when_empty(tmp_db):
+    """is_db_accessible returns False when no navidrome tracks in DB."""
+    with patch("app.db.navidrome_reader.config") as mock_config:
+        mock_config.RYTHMX_DB = tmp_db
+        import app.db.navidrome_reader as reader
+        # No sync run yet — DB is empty
+        assert reader.is_db_accessible() is False
+
+
+def test_get_track_count_after_sync(tmp_db):
+    """get_track_count returns correct count after sync."""
+    mock_client = _make_mock_client()
+    with patch("app.db.navidrome_reader._get_client", return_value=mock_client), \
+         patch("app.db.navidrome_reader.config") as mock_config:
+        mock_config.RYTHMX_DB = tmp_db
+        mock_config.NAVIDROME_URL = "http://localhost:4533"
+        mock_config.NAVIDROME_USER = "admin"
+        mock_config.NAVIDROME_PASS = "password"
+
+        import app.db.navidrome_reader as reader
+        reader.sync_library()
+
+    with patch("app.db.navidrome_reader.config") as mock_config:
+        mock_config.RYTHMX_DB = tmp_db
+        assert reader.get_track_count() == 1
+
+
+def test_get_native_artist_id(tmp_db):
+    """get_native_artist_id returns ID for case-insensitive name match."""
+    conn = sqlite3.connect(tmp_db)
+    conn.execute(
+        "INSERT INTO lib_artists (id, name, name_lower, source_platform) "
+        "VALUES ('ar-1', 'Radiohead', 'radiohead', 'navidrome')"
+    )
+    conn.commit()
+    conn.close()
+
+    with patch("app.db.navidrome_reader.config") as mock_config:
+        mock_config.RYTHMX_DB = tmp_db
+        import app.db.navidrome_reader as reader
+        assert reader.get_native_artist_id("Radiohead") == "ar-1"
+        assert reader.get_native_artist_id("radiohead") == "ar-1"
+        assert reader.get_native_artist_id("Unknown") is None
+
+
+def test_check_album_owned_returns_id_on_match(tmp_db):
+    """check_album_owned returns album id when artist + title match."""
+    conn = sqlite3.connect(tmp_db)
+    conn.execute(
+        "INSERT INTO lib_artists (id, name, name_lower, source_platform) "
+        "VALUES ('ar-1', 'Radiohead', 'radiohead', 'navidrome')"
+    )
+    conn.execute(
+        "INSERT INTO lib_albums (id, artist_id, title, local_title, title_lower, source_platform) "
+        "VALUES ('al-1', 'ar-1', 'OK Computer', 'OK Computer', 'ok computer', 'navidrome')"
+    )
+    conn.commit()
+    conn.close()
+
+    with patch("app.db.navidrome_reader.config") as mock_config:
+        mock_config.RYTHMX_DB = tmp_db
+        import app.db.navidrome_reader as reader
+        result = reader.check_album_owned("Radiohead", "OK Computer")
+        assert result == "al-1"
+
+        result_miss = reader.check_album_owned("Radiohead", "Pablo Honey")
+        assert result_miss is None
