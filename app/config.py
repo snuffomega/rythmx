@@ -39,6 +39,14 @@ PLEX_URL = _optional("PLEX_URL")
 PLEX_TOKEN = _optional("PLEX_TOKEN")
 PLEX_MUSIC_SECTION = _optional("PLEX_MUSIC_SECTION", "Music")
 
+# --- Navidrome ---
+# Required when LIBRARY_PLATFORM=navidrome.
+# Base URL of your Navidrome server (e.g. http://10.10.1.10:4533)
+NAVIDROME_URL = _optional("NAVIDROME_URL", "")
+# Navidrome username and password (used for token-mode auth — password never sent in plaintext)
+NAVIDROME_USER = _optional("NAVIDROME_USER", "")
+NAVIDROME_PASS = _optional("NAVIDROME_PASS", "")
+
 # --- Spotify ---
 SPOTIFY_CLIENT_ID = _optional("SPOTIFY_CLIENT_ID")
 SPOTIFY_CLIENT_SECRET = _optional("SPOTIFY_CLIENT_SECRET")
@@ -108,7 +116,7 @@ elif _lp_old:
     )
     LIBRARY_PLATFORM = _lp_old
 else:
-    LIBRARY_PLATFORM = "plex"
+    LIBRARY_PLATFORM = "navidrome"
 
 # --- WebSocket ---
 # Comma-separated substrings checked against the Origin header on WS upgrade.
@@ -236,6 +244,10 @@ def log_config_summary():
     if LIBRARY_PLATFORM == "plex":
         logger.info("  PLEX_URL: %s", PLEX_URL or "(not set)")
         logger.info("  PLEX_TOKEN: %s", "set" if PLEX_TOKEN else "NOT SET")
+    if LIBRARY_PLATFORM == "navidrome":
+        logger.info("  NAVIDROME_URL: %s", NAVIDROME_URL or "(not set)")
+        logger.info("  NAVIDROME_USER: %s", NAVIDROME_USER or "(not set)")
+        logger.info("  NAVIDROME_PASS: %s", "set" if NAVIDROME_PASS else "NOT SET")
     logger.info("  SOULSYNC_DB: %s", SOULSYNC_DB)
     logger.info("  SOULSYNC_URL: %s", SOULSYNC_URL)
     logger.info("  LASTFM_USERNAME: %s", LASTFM_USERNAME or "(not set)")
