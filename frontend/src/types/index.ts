@@ -504,6 +504,34 @@ export interface ConnectionStatusResult {
 }
 
 // ---------------------------------------------------------------------------
+// The Forge — New Music pipeline
+// ---------------------------------------------------------------------------
+
+export interface NewMusicConfig {
+  nm_min_scrobbles: number;
+  nm_period: '7day' | '1month' | '3month' | '6month' | '12month' | 'overall';
+  nm_lookback_days: number;
+  nm_match_mode: 'strict' | 'loose';
+  nm_ignore_keywords: string;
+  nm_ignore_artists: string;
+  nm_release_kinds: string;
+  nm_schedule_enabled: boolean;
+  nm_schedule_weekday: number;
+  nm_schedule_hour: number;
+}
+
+export interface DiscoveredRelease {
+  id: string;
+  artist_deezer_id: string;
+  artist_name: string;
+  title: string;
+  record_type: string | null;
+  release_date: string | null;
+  cover_url: string | null;
+  in_library: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // The Forge — Pipeline history
 // ---------------------------------------------------------------------------
 

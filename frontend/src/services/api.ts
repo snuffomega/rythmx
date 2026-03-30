@@ -37,6 +37,8 @@ import type {
   ReleaseSibling,
   UserReleasePrefs,
   SimilarArtist,
+  NewMusicConfig,
+  DiscoveredRelease,
 } from '../types';
 
 const BASE_URL = '/api/v1';
@@ -424,4 +426,23 @@ export const forgeApi = {
       `/forge/pipeline-history?${params}`
     ).then(r => r.runs);
   },
+};
+
+export const forgeNewMusicApi = {
+  getConfig: () =>
+    request<{ status: string; config: NewMusicConfig }>('/forge/new-music/config')
+      .then(r => r.config),
+  saveConfig: (config: Partial<NewMusicConfig>) =>
+    request<{ status: string }>('/forge/new-music/config', {
+      method: 'POST',
+      body: JSON.stringify(config),
+    }),
+  run: (config?: Partial<NewMusicConfig>) =>
+    request<{ status: string; releases: DiscoveredRelease[]; artists_checked: number; releases_found: number }>(
+      '/forge/new-music/run',
+      { method: 'POST', body: JSON.stringify(config ?? {}) }
+    ),
+  getResults: () =>
+    request<{ status: string; releases: DiscoveredRelease[] }>('/forge/new-music/results')
+      .then(r => r.releases),
 };
