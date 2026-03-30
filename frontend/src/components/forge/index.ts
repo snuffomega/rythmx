@@ -3,7 +3,6 @@ export { AcqIcon } from './AcqIcon';
 export { PlaylistCard } from './PlaylistCard';
 export { InlineNewPlaylistForm } from './InlineNewPlaylistForm';
 export { PipelineVisualization } from './PipelineVisualization';
-export { NewMusicConfigForm } from './NewMusicConfigForm';
 export { RunHistory } from './RunHistory';
 export { PipelineRunHistory } from './PipelineRunHistory';
 export { ArtistResultCard } from './ArtistResultCard';
