@@ -1,0 +1,350 @@
+"""
+new_music_runner.py — New Music pipeline for the Forge.
+
+Discovers recent releases from artists similar to the user's listening history.
+
+Pipeline:
+  1. get_seed_artists()   — top artists from Last.fm or Plex play counts
+  2. expand_neighbors()   — 1-hop expansion via lib_artists.similar_artists_json
+  3. fetch_releases()     — Deezer albums for neighbor artists not in library
+  4. write_discovered()   — write to forge_discovered_artists + forge_discovered_releases
+
+No ORM. All SQL uses ? placeholders.
+"""
+import json
+import logging
+from datetime import datetime, timedelta
+
+from app import config
+from app.db import rythmx_store
+from app.clients import music_client
+
+logger = logging.getLogger(__name__)
+
+
+def _connect():
+    return rythmx_store._connect()
+
+
+# ---------------------------------------------------------------------------
+# Config helpers
+# ---------------------------------------------------------------------------
+
+NM_DEFAULTS = {
+    "nm_min_scrobbles": 10,
+    "nm_period": "1month",
+    "nm_lookback_days": 90,
+    "nm_match_mode": "loose",
+    "nm_ignore_keywords": "",
+    "nm_ignore_artists": "",
+    "nm_release_kinds": "album,single,ep",
+    "nm_schedule_enabled": False,
+    "nm_schedule_weekday": 1,
+    "nm_schedule_hour": 8,
+}
+
+
+def get_config() -> dict:
+    """Return nm_* config from app_settings, merged with defaults."""
+    raw = rythmx_store.get_all_settings()
+    int_keys = {"nm_min_scrobbles", "nm_lookback_days", "nm_schedule_weekday", "nm_schedule_hour"}
+    bool_keys = {"nm_schedule_enabled"}
+    result = {}
+    for key, default in NM_DEFAULTS.items():
+        val = raw.get(key)
+        if val is None:
+            result[key] = default
+        elif key in bool_keys:
+            result[key] = str(val).lower() in ("true", "1")
+        elif key in int_keys:
+            try:
+                result[key] = int(val)
+            except (ValueError, TypeError):
+                result[key] = default
+        else:
+            result[key] = val
+    return result
+
+
+def save_config(updates: dict) -> None:
+    """Persist nm_* config keys to app_settings. Ignores unknown keys."""
+    allowed = set(NM_DEFAULTS.keys())
+    for key, value in updates.items():
+        if key in allowed:
+            rythmx_store.set_setting(key, str(value))
+
+
+# ---------------------------------------------------------------------------
+# Step 1: Seed artists
+# ---------------------------------------------------------------------------
+
+def get_seed_artists(period: str, min_scrobbles: int) -> list[dict]:
+    """
+    Return seed artists with play counts.
+    Priority: Last.fm (if configured) -> Plex play_count.
+    Returns: [{name: str, name_lower: str, play_count: int}]
+    """
+    # Try Last.fm first
+    if config.LASTFM_USERNAME and config.LASTFM_API_KEY:
+        try:
+            from app.clients import last_fm_client
+            ranked = last_fm_client.get_top_artists_ranked(period=period, limit=500)
+            seeds = [
+                {"name": a["name"], "name_lower": a["name"].lower(), "play_count": a["playcount"]}
+                for a in ranked
+                if a.get("playcount", 0) >= min_scrobbles
+            ]
+            logger.info("new_music: seed_artists=%d from Last.fm (period=%s, min=%d)", len(seeds), period, min_scrobbles)
+            return seeds
+        except Exception as exc:
+            logger.warning("new_music: Last.fm seed failed (%s), falling back to Plex", exc)
+
+    # Fallback: Plex play_count aggregated by artist
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT a.name, a.name_lower, SUM(t.play_count) AS total_plays
+            FROM lib_tracks t
+            JOIN lib_artists a ON t.artist_id = a.id
+            GROUP BY a.id
+            HAVING total_plays >= ?
+            ORDER BY total_plays DESC
+            LIMIT 500
+            """,
+            (min_scrobbles,)
+        ).fetchall()
+    seeds = [{"name": r["name"], "name_lower": r["name_lower"], "play_count": r["total_plays"]} for r in rows]
+    logger.info("new_music: seed_artists=%d from Plex play counts (min=%d)", len(seeds), min_scrobbles)
+    return seeds
+
+
+# ---------------------------------------------------------------------------
+# Step 2: Expand neighbors
+# ---------------------------------------------------------------------------
+
+def expand_neighbors(seed_names: list[str]) -> list[str]:
+    """
+    1-hop neighbor expansion via lib_artists.similar_artists_json.
+    Returns a deduplicated list of neighbor artist names (lowercase) not in library.
+    """
+    if not seed_names:
+        return []
+
+    seed_set = {n.lower() for n in seed_names}
+
+    with _connect() as conn:
+        # Get library artist names (to exclude from neighbors)
+        lib_rows = conn.execute("SELECT name_lower FROM lib_artists").fetchall()
+        lib_set = {r["name_lower"] for r in lib_rows}
+
+        # Get similar_artists_json for seed artists
+        placeholders = ",".join("?" for _ in seed_names)
+        similar_rows = conn.execute(
+            "SELECT similar_artists_json FROM lib_artists WHERE name_lower IN (" + placeholders + ")",
+            [n.lower() for n in seed_names]
+        ).fetchall()
+
+    neighbors = set()
+    for row in similar_rows:
+        raw = row["similar_artists_json"]
+        if not raw:
+            continue
+        try:
+            names = json.loads(raw)
+            for name in names:
+                nl = name.lower()
+                if nl not in lib_set and nl not in seed_set:
+                    neighbors.add(nl)
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+    logger.info("new_music: expanded %d seeds -> %d neighbor candidates", len(seed_names), len(neighbors))
+    return list(neighbors)
+
+
+# ---------------------------------------------------------------------------
+# Step 3: Fetch releases for neighbors
+# ---------------------------------------------------------------------------
+
+def fetch_releases_for_neighbors(
+    neighbor_names: list[str],
+    lookback_days: int,
+    match_mode: str,
+    release_kinds: str,
+    ignore_keywords: str,
+    ignore_artists: str,
+) -> tuple[list[dict], list[dict]]:
+    """
+    For each neighbor artist, resolve Deezer ID and fetch recent albums.
+    Returns: (discovered_artists, discovered_releases)
+    """
+    cutoff_date = (datetime.now() - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+    allowed_kinds = {k.strip().lower() for k in release_kinds.split(",") if k.strip()}
+
+    # Parse ignore lists
+    ignore_kw = [kw.strip().lower() for kw in ignore_keywords.split(",") if kw.strip()]
+    ignore_art = {a.strip().lower() for a in ignore_artists.split(",") if a.strip()}
+
+    discovered_artists = []
+    discovered_releases = []
+    seen_artist_ids = set()
+
+    # Limit to avoid hammering Deezer API on first run
+    names_to_process = neighbor_names[:100]
+
+    for name in names_to_process:
+        if name.lower() in ignore_art:
+            continue
+
+        # Resolve Deezer artist ID
+        candidates = music_client.search_artist_candidates_deezer(name, limit=1)
+        if not candidates:
+            continue
+        artist = candidates[0]
+        deezer_id = str(artist.get("deezer_id") or artist.get("id", ""))
+        if not deezer_id or deezer_id in seen_artist_ids:
+            continue
+        seen_artist_ids.add(deezer_id)
+
+        # Queue artist for storage
+        discovered_artists.append({
+            "deezer_id": deezer_id,
+            "name": artist.get("name", name),
+            "name_lower": artist.get("name", name).lower(),
+            "image_url": artist.get("image_url") or artist.get("picture_medium") or None,
+            "fans_deezer": artist.get("nb_fan") or 0,
+        })
+
+        # Fetch albums
+        albums = music_client.get_artist_albums_deezer(deezer_id)
+        for album in albums:
+            # Date filter
+            rel_date = album.get("release_date", "") or ""
+            if rel_date and rel_date < cutoff_date:
+                continue
+
+            # Kind filter
+            record_type = (album.get("record_type") or "album").lower()
+            # Normalise deezer 'compile' -> 'ep' for matching
+            kind_mapped = "ep" if record_type == "compile" else record_type
+            if allowed_kinds and kind_mapped not in allowed_kinds:
+                continue
+
+            # Keyword filter on title
+            title = album.get("title", "")
+            title_lower = title.lower()
+            if any(kw in title_lower for kw in ignore_kw):
+                continue
+
+            # match_mode: strict = skip if this is a feature-only appearance
+            # For now match_mode is informational — full strict filtering requires track-level data
+            # We store all, and the UI can filter
+
+            discovered_releases.append({
+                "id": str(album["id"]),
+                "artist_deezer_id": deezer_id,
+                "artist_name": artist.get("name", name),
+                "title": title,
+                "record_type": record_type,
+                "release_date": rel_date or None,
+                "cover_url": album.get("artwork_url") or None,
+            })
+
+    logger.info(
+        "new_music: fetched artists=%d releases=%d (lookback=%dd, kinds=%s)",
+        len(discovered_artists), len(discovered_releases), lookback_days, release_kinds
+    )
+    return discovered_artists, discovered_releases
+
+
+# ---------------------------------------------------------------------------
+# Step 4: Write to DB
+# ---------------------------------------------------------------------------
+
+def write_discovered(artists: list[dict], releases: list[dict]) -> None:
+    """
+    Upsert discovered artists and releases into forge tables.
+    Uses ON CONFLICT DO UPDATE to keep data fresh.
+    """
+    now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+
+    with _connect() as conn:
+        for a in artists:
+            conn.execute(
+                """
+                INSERT INTO forge_discovered_artists
+                    (deezer_id, name, name_lower, image_url, fans_deezer, fetched_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(deezer_id) DO UPDATE SET
+                    name        = excluded.name,
+                    name_lower  = excluded.name_lower,
+                    image_url   = COALESCE(excluded.image_url, image_url),
+                    fans_deezer = COALESCE(excluded.fans_deezer, fans_deezer),
+                    fetched_at  = excluded.fetched_at
+                """,
+                (a["deezer_id"], a["name"], a["name_lower"], a.get("image_url"), a.get("fans_deezer", 0), now)
+            )
+
+        for r in releases:
+            conn.execute(
+                """
+                INSERT INTO forge_discovered_releases
+                    (id, artist_deezer_id, title, record_type, release_date, cover_url, fetched_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    title        = excluded.title,
+                    record_type  = excluded.record_type,
+                    release_date = COALESCE(excluded.release_date, release_date),
+                    cover_url    = COALESCE(excluded.cover_url, cover_url),
+                    fetched_at   = excluded.fetched_at
+                """,
+                (r["id"], r["artist_deezer_id"], r["title"], r.get("record_type"), r.get("release_date"), r.get("cover_url"), now)
+            )
+
+
+# ---------------------------------------------------------------------------
+# Main pipeline entry point
+# ---------------------------------------------------------------------------
+
+def run_new_music_pipeline(config_override: dict | None = None) -> dict:
+    """
+    Run the full New Music pipeline.
+    Returns summary: {artists_checked, neighbors_found, releases_found, releases: [...]}
+    """
+    cfg = get_config()
+    if config_override:
+        cfg.update({k: v for k, v in config_override.items() if k in NM_DEFAULTS})
+
+    period = cfg["nm_period"]
+    min_scrobbles = int(cfg["nm_min_scrobbles"])
+    lookback_days = int(cfg["nm_lookback_days"])
+    match_mode = cfg["nm_match_mode"]
+    release_kinds = cfg["nm_release_kinds"]
+    ignore_keywords = cfg["nm_ignore_keywords"]
+    ignore_artists = cfg["nm_ignore_artists"]
+
+    # Step 1
+    seeds = get_seed_artists(period, min_scrobbles)
+    seed_names = [s["name"] for s in seeds]
+
+    # Step 2
+    neighbors = expand_neighbors(seed_names)
+
+    # Step 3
+    artists, releases = fetch_releases_for_neighbors(
+        neighbors, lookback_days, match_mode, release_kinds, ignore_keywords, ignore_artists
+    )
+
+    # Step 4
+    write_discovered(artists, releases)
+
+    logger.info(
+        "new_music: pipeline complete — seeds=%d neighbors=%d artists_stored=%d releases_stored=%d",
+        len(seeds), len(neighbors), len(artists), len(releases)
+    )
+
+    return {
+        "artists_checked": len(seeds),
+        "neighbors_found": len(neighbors),
+        "releases_found": len(releases),
+    }
