@@ -187,7 +187,6 @@ app.add_middleware(SecurityHeadersMiddleware)
 # --- Register routers at /api/v1 ---
 from app.routes.auth import router as auth_router
 from app.routes.dash import router as dash_router
-from app.routes.new_music import router as new_music_router
 from app.routes.acquisition import router as acquisition_router
 from app.routes.playlists import router as playlists_router
 from app.routes.stats import router as stats_router
@@ -200,7 +199,7 @@ from app.routes.forge import router as forge_router
 from app.routes.ws import router as ws_router
 
 for _router in (
-    auth_router, dash_router, new_music_router, acquisition_router, playlists_router,
+    auth_router, dash_router, acquisition_router, playlists_router,
     stats_router, settings_router, images_router, personal_discovery_router,
     library_browse_router, enrich_router, forge_router,
 ):

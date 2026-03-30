@@ -118,9 +118,6 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
     # Load settings from rythmx.db (user overrides via UI take precedence over config defaults)
     settings = rythmx_store.get_all_settings()
 
-    if force_refresh:
-        rythmx_store.clear_release_cache()
-        logger.info("Stage 2-3: release cache cleared (force_refresh=True)")
     min_listens = int(settings.get("min_listens", config.MIN_LISTENS))
     lookback_days = int(settings.get("lookback_days", config.LOOKBACK_DAYS))
     max_per_cycle = int(settings.get("max_per_cycle", config.MAX_PER_CYCLE))
@@ -608,22 +605,6 @@ def _auto_sync_playlist(pl, owned_releases, top_artists, settings, library_reade
         logger.warning("Stage 8: auto-sync failed for playlist '%s': %s", name, e)
 
 
-def _should_weekly_refresh(settings: dict) -> bool:
-    """
-    Return True if it's time for the weekly release cache refresh.
-    Default: Thursday (weekday=3) at 05:00 UTC.
-    Checks app_settings['release_cache_last_cleared_weekday'] to avoid multiple
-    refreshes in the same day.
-    """
-    weekday = int(settings.get("release_cache_refresh_weekday", "3"))
-    hour = int(settings.get("release_cache_refresh_hour", "5"))
-    now = datetime.utcnow()
-    if now.weekday() != weekday or now.hour < hour:
-        return False
-    last_cleared = rythmx_store.get_setting("release_cache_last_cleared_weekday") or ""
-    return last_cleared != now.date().isoformat()
-
-
 def _should_run_cc(settings: dict) -> bool:
     """
     Return True if it's time to run a CC cycle.
@@ -687,14 +668,7 @@ def _loop():
             settings = rythmx_store.get_all_settings()
             if _should_run_cc(settings):
                 mode = settings.get("run_mode", "fetch")
-                force = _should_weekly_refresh(settings)
-                if force:
-                    rythmx_store.set_setting("release_cache_last_cleared_weekday",
-                                         datetime.utcnow().date().isoformat())
-                    logger.info("Weekly release cache refresh triggered (weekday=%s, hour=%s)",
-                                settings.get("release_cache_refresh_weekday", "3"),
-                                settings.get("release_cache_refresh_hour", "5"))
-                run_cycle(run_mode=mode, force_refresh=force, triggered_by="schedule")
+                run_cycle(run_mode=mode, force_refresh=False, triggered_by="schedule")
                 rythmx_store.set_setting("last_run", datetime.now().isoformat())
                 ran_cc = True
             # Library auto-pipeline — runs independently of CC cycle
