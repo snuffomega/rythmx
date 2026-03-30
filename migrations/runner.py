@@ -43,7 +43,7 @@ def run_pending_migrations(db_path: str) -> None:
                 continue
 
             filepath = os.path.join(MIGRATIONS_DIR, filename)
-            with open(filepath, "r") as fh:
+            with open(filepath, "r", encoding="utf-8") as fh:
                 raw = fh.read()
 
             # Strip comment-only lines and inline comments, then split on semicolons
@@ -68,6 +68,9 @@ def run_pending_migrations(db_path: str) -> None:
                     if "no such table" in msg:
                         # Fresh install — source table never existed; safe to skip this rename
                         logger.debug("Migration stmt skipped (no such table): %.80s", stmt)
+                    elif "duplicate column name" in msg:
+                        # Column already exists (partial retry or out-of-band addition); safe to skip
+                        logger.debug("Migration stmt skipped (duplicate column): %.80s", stmt)
                     else:
                         logger.error(
                             "Migration [%s] failed: %s | stmt: %.80s", filename, exc, stmt
