@@ -55,6 +55,37 @@ _FANART_BASE = "https://webservice.fanart.tv/v3/music"
 _DEEZER_BASE = "https://api.deezer.com"
 
 # ---------------------------------------------------------------------------
+# Navidrome (coverArt — served by the Navidrome server with Subsonic auth)
+# ---------------------------------------------------------------------------
+
+def _navidrome_cover_art_url(cover_art_id: str) -> str:
+    """
+    Construct a Navidrome /getCoverArt URL with token auth baked in.
+    Returns "" if Navidrome is not configured.
+    The URL is safe to embed in <img src> — auth is in the query params.
+    """
+    import hashlib
+    import secrets as _secrets
+    from app.db import rythmx_store
+
+    url = rythmx_store.get_setting("navidrome_url") or config.NAVIDROME_URL
+    user = rythmx_store.get_setting("navidrome_user") or config.NAVIDROME_USER
+    password = rythmx_store.get_setting("navidrome_pass") or config.NAVIDROME_PASS
+
+    if not url or not user or not password:
+        return ""
+
+    salt = _secrets.token_hex(8)
+    token = hashlib.md5((password + salt).encode()).hexdigest()
+    base = url.rstrip("/")
+    return (
+        f"{base}/rest/getCoverArt"
+        f"?id={cover_art_id}&u={user}&t={token}&s={salt}"
+        f"&v=1.16.1&c=rythmx&f=json"
+    )
+
+
+# ---------------------------------------------------------------------------
 # MusicBrainz (for MBID lookups when not in artist_identity_cache)
 # ---------------------------------------------------------------------------
 
@@ -293,6 +324,21 @@ def _fetch_and_cache(entity_type: str, name: str, artist: str) -> None:
         url = ""
 
         if entity_type == "artist":
+            # --- Navidrome primary: coverArt from lib_artists (when platform=navidrome) ---
+            platform = config.LIBRARY_PLATFORM
+            try:
+                platform = rythmx_store.get_setting("library_platform") or platform
+            except Exception:
+                pass
+
+            if platform == "navidrome":
+                try:
+                    cover_art_id = rythmx_store.get_artist_navidrome_cover(name)
+                    if cover_art_id:
+                        url = _navidrome_cover_art_url(cover_art_id)
+                except Exception:
+                    pass
+
             # --- Primary: Fanart.tv (real artist photo) ---
             if config.FANART_API_KEY:
                 cached_artist = rythmx_store.get_cached_artist(name)

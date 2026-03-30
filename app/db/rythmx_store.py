@@ -465,6 +465,20 @@ def cache_artist(lastfm_name: str, deezer_artist_id: str = None,
         )
 
 
+def get_artist_navidrome_cover(artist_name: str) -> str | None:
+    """Return the Navidrome coverArt ID for an artist (used by image_service)."""
+    try:
+        with _connect() as conn:
+            row = conn.execute(
+                "SELECT thumb_url_navidrome FROM lib_artists "
+                "WHERE name_lower = lower(?) LIMIT 1",
+                (artist_name,),
+            ).fetchone()
+            return row[0] if row else None
+    except Exception:
+        return None
+
+
 # --- Taste cache ---
 
 def upsert_taste_cache(artist_name: str, play_count: int, period: str):
