@@ -9,7 +9,7 @@ export const Route = createFileRoute('/forge')({
 });
 
 const TAB_BASE = 'flex items-center gap-2 px-5 py-2.5 text-sm font-semibold transition-all duration-150 text-[#3a3a3a] hover:text-[#666]';
-const TAB_ACTIVE = 'flex items-center gap-2 px-5 py-2.5 text-sm font-semibold transition-all duration-150 bg-[#1e1e1e] text-text-primary shadow-sm border border-[#2a2a2a]';
+const TAB_ACTIVE = 'flex items-center gap-2 px-5 py-2.5 text-sm font-semibold transition-all duration-150 bg-accent text-black';
 
 function ForgeLayout() {
   const { initialized, initFromApi } = useSettingsStore();
@@ -29,10 +29,18 @@ function ForgeLayout() {
         </div>
 
         <div className="flex items-center gap-1.5 bg-[#0e0e0e] border border-[#1a1a1a] p-1.5 w-fit">
+          <Link to="/forge/builder" className={TAB_BASE} activeProps={{ className: TAB_ACTIVE }}>
+            {({ isActive }) => (
+              <>
+                <Layers size={14} className={isActive ? 'text-black' : ''} />
+                Builder
+              </>
+            )}
+          </Link>
           <Link to="/forge/new-music" className={TAB_BASE} activeProps={{ className: TAB_ACTIVE }}>
             {({ isActive }) => (
               <>
-                <Zap size={14} className={isActive ? 'text-accent' : ''} />
+                <Zap size={14} className={isActive ? 'text-black' : ''} />
                 New Music
               </>
             )}
@@ -40,7 +48,7 @@ function ForgeLayout() {
           <Link to="/forge/custom-discovery" className={TAB_BASE} activeProps={{ className: TAB_ACTIVE }}>
             {({ isActive }) => (
               <>
-                <Sparkles size={14} className={isActive ? 'text-accent' : ''} />
+                <Sparkles size={14} className={isActive ? 'text-black' : ''} />
                 Custom Discovery
               </>
             )}
@@ -48,16 +56,8 @@ function ForgeLayout() {
           <Link to="/forge/sync" className={TAB_BASE} activeProps={{ className: TAB_ACTIVE }}>
             {({ isActive }) => (
               <>
-                <ListMusic size={14} className={isActive ? 'text-accent' : ''} />
+                <ListMusic size={14} className={isActive ? 'text-black' : ''} />
                 Sync
-              </>
-            )}
-          </Link>
-          <Link to="/forge/builder" className={TAB_BASE} activeProps={{ className: TAB_ACTIVE }}>
-            {({ isActive }) => (
-              <>
-                <Layers size={14} className={isActive ? 'text-accent' : ''} />
-                Builder
               </>
             )}
           </Link>
