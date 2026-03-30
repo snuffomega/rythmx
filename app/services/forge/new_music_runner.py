@@ -37,7 +37,7 @@ NM_DEFAULTS = {
     "nm_match_mode": "loose",
     "nm_ignore_keywords": "",
     "nm_ignore_artists": "",
-    "nm_release_kinds": "album,single,ep",
+    "nm_release_kinds": "album_preferred",  # all | album_preferred | album
     "nm_schedule_enabled": False,
     "nm_schedule_weekday": 1,
     "nm_schedule_hour": 8,
@@ -152,6 +152,11 @@ def expand_neighbors(seed_names: list[str]) -> list[str]:
         try:
             names = json.loads(raw)
             for name in names:
+                # similar_artists_json stores dicts: {"name": str, "match": float, "source": str}
+                if isinstance(name, dict):
+                    name = name.get("name") or ""
+                if not isinstance(name, str) or not name:
+                    continue
                 nl = name.lower()
                 if nl not in lib_set and nl not in seed_set:
                     neighbors.add(nl)
@@ -166,6 +171,23 @@ def expand_neighbors(seed_names: list[str]) -> list[str]:
 # Step 3: Fetch releases for neighbors
 # ---------------------------------------------------------------------------
 
+def _apply_kind_preference(artist_releases: list[dict], kinds_mode: str) -> list[dict]:
+    """
+    Filter/prefer releases by mode:
+      all            — return everything
+      album_preferred — return albums if any exist in window, else return singles/EPs
+      album          — hard filter: albums only (includes 'compile')
+    """
+    if kinds_mode == "all":
+        return artist_releases
+    if kinds_mode == "album":
+        return [r for r in artist_releases if r["record_type"] in ("album", "compile")]
+    if kinds_mode == "album_preferred":
+        albums = [r for r in artist_releases if r["record_type"] in ("album", "compile")]
+        return albums if albums else artist_releases
+    return artist_releases
+
+
 def fetch_releases_for_neighbors(
     neighbor_names: list[str],
     lookback_days: int,
@@ -176,10 +198,10 @@ def fetch_releases_for_neighbors(
 ) -> tuple[list[dict], list[dict]]:
     """
     For each neighbor artist, resolve Deezer ID and fetch recent albums.
+    release_kinds: mode string — 'all' | 'album_preferred' | 'album'
     Returns: (discovered_artists, discovered_releases)
     """
     cutoff_date = (datetime.now() - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
-    allowed_kinds = {k.strip().lower() for k in release_kinds.split(",") if k.strip()}
 
     # Parse ignore lists
     ignore_kw = [kw.strip().lower() for kw in ignore_keywords.split(",") if kw.strip()]
@@ -215,32 +237,22 @@ def fetch_releases_for_neighbors(
             "fans_deezer": artist.get("nb_fan") or 0,
         })
 
-        # Fetch albums
+        # Fetch all albums in window first, then apply kind preference per artist
+        artist_releases_in_window = []
         albums = music_client.get_artist_albums_deezer(deezer_id)
         for album in albums:
-            # Date filter
             rel_date = album.get("release_date", "") or ""
             if rel_date and rel_date < cutoff_date:
                 continue
 
-            # Kind filter
             record_type = (album.get("record_type") or "album").lower()
-            # Normalise deezer 'compile' -> 'ep' for matching
-            kind_mapped = "ep" if record_type == "compile" else record_type
-            if allowed_kinds and kind_mapped not in allowed_kinds:
-                continue
-
-            # Keyword filter on title
             title = album.get("title", "")
             title_lower = title.lower()
+
             if any(kw in title_lower for kw in ignore_kw):
                 continue
 
-            # match_mode: strict = skip if this is a feature-only appearance
-            # For now match_mode is informational — full strict filtering requires track-level data
-            # We store all, and the UI can filter
-
-            discovered_releases.append({
+            artist_releases_in_window.append({
                 "id": str(album["id"]),
                 "artist_deezer_id": deezer_id,
                 "artist_name": artist.get("name", name),
@@ -250,8 +262,12 @@ def fetch_releases_for_neighbors(
                 "cover_url": album.get("artwork_url") or None,
             })
 
+        # Apply kind preference after collecting all releases for this artist
+        preferred = _apply_kind_preference(artist_releases_in_window, release_kinds)
+        discovered_releases.extend(preferred)
+
     logger.info(
-        "new_music: fetched artists=%d releases=%d (lookback=%dd, kinds=%s)",
+        "new_music: fetched artists=%d releases=%d (lookback=%dd, kinds_mode=%s)",
         len(discovered_artists), len(discovered_releases), lookback_days, release_kinds
     )
     return discovered_artists, discovered_releases
