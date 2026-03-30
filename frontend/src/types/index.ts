@@ -514,7 +514,7 @@ export interface NewMusicConfig {
   nm_match_mode: 'strict' | 'loose';
   nm_ignore_keywords: string;
   nm_ignore_artists: string;
-  nm_release_kinds: string;
+  nm_release_kinds: 'all' | 'album_preferred' | 'album';
   nm_schedule_enabled: boolean;
   nm_schedule_weekday: number;
   nm_schedule_hour: number;
