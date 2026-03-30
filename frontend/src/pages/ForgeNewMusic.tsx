@@ -48,9 +48,8 @@ const DEFAULT_CONFIG: NewMusicConfig = {
 
 // Pipeline stages for progress display
 const STAGES = [
-  { key: 'history', label: 'Fetching your listening history', pct: 10 },
-  { key: 'neighbors', label: 'Expanding artist neighborhood', pct: 30 },
-  { key: 'releases', label: 'Finding new releases', pct: 90 },
+  { key: 'history', label: 'Reading your listening history', pct: 10 },
+  { key: 'releases', label: 'Finding new releases from your listening history', pct: 90 },
   { key: 'done', label: 'Done', pct: 100 },
 ];
 

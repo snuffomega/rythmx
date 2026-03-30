@@ -3,7 +3,7 @@ import { Music2, Users, ChevronLeft, ChevronRight, Disc3, Sparkles, Radio } from
 import { useNavigate } from '@tanstack/react-router';
 import { useApi } from '../hooks/useApi';
 import { useImage } from '../hooks/useImage';
-import { statsApi, cruiseControlApi, acquisitionApi } from '../services/api';
+import { statsApi, forgeNewMusicApi, acquisitionApi } from '../services/api';
 import { getImageUrl } from '../utils/imageUrl';
 import { ApiErrorBanner } from '../components/common';
 import type { Artist, Track, QueueItem } from '../types';
@@ -262,9 +262,9 @@ export function Discovery() {
   const lovedArtists = useApi(() => statsApi.getLovedArtists());
   const topTracks = useApi(() => statsApi.getTopTracks('7day', 20));
   const recentQueue = useApi(() => acquisitionApi.getQueue('pending'));
-  const history = useApi(() => cruiseControlApi.getHistory());
+  const forgeReleases = useApi(() => forgeNewMusicApi.getResults());
 
-  const newReleases = history.data?.length ? history.data.slice(0, 14) : null;
+  const newReleases = forgeReleases.data?.length ? forgeReleases.data.slice(0, 14) : null;
 
   return (
     <div className="py-8 space-y-12">
@@ -278,20 +278,20 @@ export function Discovery() {
         <SectionHeader
           icon={<Disc3 size={15} />}
           title="New Releases"
-          sub="From your last Cruise Control run"
+          sub="From your last New Music run"
           cta="View all"
-          onCta={() => navigate({ to: '/cruise-control' })}
+          onCta={() => navigate({ to: '/forge/new-music' })}
         />
-        {history.error ? (
-          <ApiErrorBanner error={history.error} onRetry={history.refetch} />
-        ) : history.loading ? (
+        {forgeReleases.error ? (
+          <ApiErrorBanner error={forgeReleases.error} onRetry={forgeReleases.refetch} />
+        ) : forgeReleases.loading ? (
           <ShelfSkeleton count={7} size={160} />
         ) : !newReleases || newReleases.length === 0 ? (
-          <EmptyShelf message="Run Cruise Control to populate new releases" />
+          <EmptyShelf message="Run New Music in the Forge to discover releases" />
         ) : (
           <HScrollShelf>
-            {newReleases.map((item, i) => (
-              <AlbumTile key={i} artist={item.artist} title={item.album} sub={new Date(item.date).toLocaleDateString()} />
+            {newReleases.map(item => (
+              <AlbumTile key={item.id} artist={item.artist_name} title={item.title} sub={item.release_date?.slice(0, 7) ?? ''} />
             ))}
           </HScrollShelf>
         )}
