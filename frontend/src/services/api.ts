@@ -263,6 +263,8 @@ export const settingsApi = {
     request<ConnectionStatus>('/settings/test-lastfm', { method: 'POST' }),
   testPlex: () =>
     request<ConnectionStatus>('/settings/test-plex', { method: 'POST' }),
+  testNavidrome: () =>
+    request<ConnectionStatus>('/settings/test-soulsync', { method: 'POST' }),
   testSoulsync: () =>
     request<ConnectionStatus>('/settings/test-soulsync', { method: 'POST' }),
   testSpotify: () =>

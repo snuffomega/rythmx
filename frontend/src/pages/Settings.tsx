@@ -169,11 +169,12 @@ interface PipelineOrchestratorProps {
   phase: string | null;
   libraryTrackCount?: number;
   libraryLastSynced?: string;
+  platform?: LibraryPlatform;
   onRunFull: () => void;
   onStop: () => void;
 }
 
-function PipelineOrchestrator({ running, workers, activeWorkers, elapsedMs, phase, libraryTrackCount, libraryLastSynced, onRunFull, onStop }: PipelineOrchestratorProps) {
+function PipelineOrchestrator({ running, workers, activeWorkers, elapsedMs, phase, libraryTrackCount, libraryLastSynced, platform, onRunFull, onStop }: PipelineOrchestratorProps) {
   const [showStages, setShowStages] = useState(false);
 
   // Overall totals across all backend worker keys
@@ -365,7 +366,7 @@ function PipelineOrchestrator({ running, workers, activeWorkers, elapsedMs, phas
                   <div className="mt-0.5">
                     {phaseDef.id === 'sync' ? (
                       <div className="space-y-0.5">
-                        <p className="text-[10px] font-mono text-text-muted/50">Plex library sync</p>
+                        <p className="text-[10px] font-mono text-text-muted/50">{PLATFORM_LABELS[platform ?? 'plex'] ?? platform} library sync</p>
                         {libraryTrackCount !== undefined && (
                           <p className="text-[10px] font-mono text-text-muted/40">
                             Tracks indexed: {libraryTrackCount.toLocaleString()}
@@ -573,10 +574,10 @@ export function SettingsPage({ toast }: SettingsPageProps) {
             onTest={settingsApi.testLastfm}
           />
           <ServiceCard
-            name="Plex"
-            icon={<span className="text-accent font-bold text-sm">P</span>}
-            configured={settingsStatus?.plex_configured}
-            onTest={settingsApi.testPlex}
+            name={PLATFORM_LABELS[platform] ?? platform}
+            icon={<span className="text-accent font-bold text-sm">{(PLATFORM_LABELS[platform] ?? platform)[0]}</span>}
+            configured={platform === 'navidrome' ? Boolean(settingsStatus?.navidrome_configured) : settingsStatus?.plex_configured}
+            onTest={platform === 'navidrome' ? settingsApi.testNavidrome : settingsApi.testPlex}
             extra={
               <div className="relative">
                 <select
@@ -658,6 +659,7 @@ export function SettingsPage({ toast }: SettingsPageProps) {
           phase={phase}
           libraryTrackCount={libraryStatus?.track_count}
           libraryLastSynced={libraryStatus?.last_synced}
+          platform={platform}
           onRunFull={() => {
             reset();
             enrichmentApi.runFull()
