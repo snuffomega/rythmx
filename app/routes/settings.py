@@ -37,6 +37,7 @@ def settings_get():
         "lastfm_configured": bool(config.LASTFM_API_KEY and config.LASTFM_USERNAME),
         "plex_url": config.PLEX_URL,
         "plex_configured": bool(config.PLEX_URL and config.PLEX_TOKEN),
+        "navidrome_configured": bool(config.NAVIDROME_URL and config.NAVIDROME_USER and config.NAVIDROME_PASS),
         "soulsync_url": config.SOULSYNC_URL,
         "soulsync_db": config.SOULSYNC_DB,
         "soulsync_db_accessible": accessible,
