@@ -171,6 +171,34 @@ class PipelineRunner:
                 result["status"] = "stopped"
                 return result
 
+            # === Stage 1.1: Tag Enrichment (bitrate/codec/container from local files) ===
+            # Navidrome-only; skipped automatically when MUSIC_DIR is not configured.
+            self._set_phase("tag_enrichment", on_phase)
+            try:
+                from app.config import MUSIC_DIR
+                if MUSIC_DIR:
+                    from app.services.enrichment.tag_enrichment import enrich_tags
+                    tag_result = enrich_tags(
+                        batch_size=50,
+                        stop_event=stop_event,
+                        on_progress=self._progress_fn(on_progress, "tag_enrichment"),
+                    )
+                    result["tag_enrichment"] = tag_result
+                    logger.info(
+                        "PipelineRunner: tag_enrichment — processed=%d skipped=%d errors=%d",
+                        tag_result.get("processed", 0),
+                        tag_result.get("skipped", 0),
+                        tag_result.get("errors", 0),
+                    )
+                else:
+                    logger.info("PipelineRunner: tag_enrichment skipped (MUSIC_DIR not set)")
+            except Exception as e:
+                logger.warning("PipelineRunner: tag_enrichment failed: %s", e)
+
+            if self._stopped(stop_event):
+                result["status"] = "stopped"
+                return result
+
             # === Stage 2a: iTunes/Deezer IDs (sequential — feeds catalog promotion) ===
             self._set_phase("id_itunes_deezer", on_phase)
             modified_artist_ids: list[str] = []
@@ -308,6 +336,7 @@ class PipelineRunner:
             from app.services.enrichment.rich_deezer_artist import enrich_deezer_artist
             from app.services.enrichment.rich_similar import enrich_similar_artists
             from app.services.enrichment.rich_musicbrainz import enrich_musicbrainz_rich
+            from app.services.enrichment.rich_musicbrainz_album import enrich_musicbrainz_album_rich
 
             stage3_workers = [
                 (enrich_itunes_rich, "itunes_rich"),
@@ -318,6 +347,7 @@ class PipelineRunner:
                 (enrich_deezer_artist, "deezer_artist_stats"),
                 (enrich_similar_artists, "similar_artists"),
                 (enrich_musicbrainz_rich, "musicbrainz_rich"),
+                (enrich_musicbrainz_album_rich, "musicbrainz_album_rich"),
             ]
 
             with concurrent.futures.ThreadPoolExecutor(
