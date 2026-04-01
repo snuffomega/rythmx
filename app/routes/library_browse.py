@@ -186,7 +186,9 @@ def library_artist_detail(artist_id: str):
                        END
                    ) AS record_type,
                    la.match_confidence, la.needs_verification, la.source_platform,
-                   la.release_date_itunes AS release_date, la.genre_itunes AS genre,
+                   COALESCE(la.original_release_date_musicbrainz, la.release_date_itunes,
+                            la.year || '-01-01') AS release_date,
+                   la.genre_itunes AS genre,
                    COALESCE(la.thumb_url_deezer, la.thumb_url_plex) AS thumb_url,
                    la.lastfm_tags_json
             FROM lib_albums la
@@ -206,6 +208,7 @@ def library_artist_detail(artist_id: str):
             SELECT t.id, t.album_id, t.artist_id, t.title,
                    t.track_number, t.disc_number, t.duration,
                    t.rating, t.play_count, t.tempo_deezer AS tempo,
+                   t.sample_rate, t.bit_depth, t.channel_count, t.replay_gain_track,
                    al.title AS album_title
             FROM lib_tracks t
             JOIN lib_albums al ON al.id = t.album_id
@@ -390,6 +393,40 @@ def library_artist_similar(artist_id: str):
             result.append({"name": name, "in_library": False})
 
     return {"status": "ok", "similar": result}
+
+
+@router.post("/library/artists/{artist_id}/cover")
+def library_artist_set_cover(
+    artist_id: str,
+    data: Optional[dict[str, Any]] = Body(default=None),
+):
+    """Store a custom cover URL for an artist in the image cache.
+
+    Body: { "cover_url": "https://..." }
+    Writes entity_type='artist', entity_key=artist_id so that the image
+    service returns this URL as the primary image.
+    """
+    data = data or {}
+    cover_url = str(data.get("cover_url", "")).strip()
+    if not cover_url or not cover_url.startswith("http"):
+        return JSONResponse(
+            {"status": "error", "message": "cover_url must be a valid http(s) URL"},
+            status_code=400,
+        )
+
+    # Verify the artist exists
+    with rythmx_store._connect() as conn:
+        row = conn.execute(
+            "SELECT id FROM lib_artists WHERE id = ? AND removed_at IS NULL",
+            (artist_id,),
+        ).fetchone()
+    if not row:
+        return JSONResponse(
+            {"status": "error", "message": "Artist not found"}, status_code=404
+        )
+
+    rythmx_store.set_image_cache("artist", artist_id, cover_url)
+    return {"status": "ok"}
 
 
 @router.get("/library/releases")
@@ -782,7 +819,9 @@ def library_albums(
             SELECT al.id, al.artist_id, al.title, al.year,
                    al.record_type_deezer AS record_type,
                    al.match_confidence, al.needs_verification, al.source_platform,
-                   al.release_date_itunes AS release_date, al.genre_itunes AS genre,
+                   COALESCE(al.original_release_date_musicbrainz, al.release_date_itunes,
+                            al.year || '-01-01') AS release_date,
+                   al.genre_itunes AS genre,
                    COALESCE(al.thumb_url_deezer, al.thumb_url_plex) AS thumb_url,
                    al.lastfm_tags_json,
                    ar.name AS artist_name
@@ -807,7 +846,9 @@ def library_album_detail(album_id: str):
             SELECT al.id, al.artist_id, al.title, al.year,
                    al.record_type_deezer AS record_type,
                    al.match_confidence, al.needs_verification, al.source_platform,
-                   al.release_date_itunes AS release_date, al.genre_itunes AS genre,
+                   COALESCE(al.original_release_date_musicbrainz, al.release_date_itunes,
+                            al.year || '-01-01') AS release_date,
+                   al.genre_itunes AS genre,
                    COALESCE(al.thumb_url_deezer, al.thumb_url_plex) AS thumb_url,
                    al.lastfm_tags_json,
                    ar.name AS artist_name
@@ -827,7 +868,8 @@ def library_album_detail(album_id: str):
             """
             SELECT id, album_id, artist_id, title,
                    track_number, disc_number, duration,
-                   rating, play_count, tempo_deezer AS tempo
+                   rating, play_count, tempo_deezer AS tempo,
+                   sample_rate, bit_depth, channel_count, replay_gain_track
             FROM lib_tracks
             WHERE album_id = ? AND removed_at IS NULL
             ORDER BY disc_number, track_number
@@ -881,6 +923,7 @@ def library_tracks(
     q: str = "",
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=100, le=500),
+    artist_id: Optional[str] = Query(default=None),
 ):
     q = q.strip()
     where = ["t.removed_at IS NULL"]
@@ -890,6 +933,9 @@ def library_tracks(
             "(lower(t.title) LIKE lower(?) OR lower(ar.name) LIKE lower(?) OR lower(al.title) LIKE lower(?))"
         )
         params.extend([f"%{q}%", f"%{q}%", f"%{q}%"])
+    if artist_id:
+        where.append("al.artist_id = ?")
+        params.append(artist_id)
 
     where_clause = " AND ".join(where)
     offset = (page - 1) * per_page
@@ -910,6 +956,7 @@ def library_tracks(
             SELECT t.id, t.album_id, t.artist_id, t.title,
                    t.track_number, t.disc_number, t.duration,
                    t.rating, t.play_count, t.tempo_deezer AS tempo,
+                   t.codec, t.bitrate, t.bit_depth, t.sample_rate,
                    al.title AS album_title,
                    ar.name  AS artist_name
             FROM lib_tracks t

@@ -102,6 +102,45 @@ def get_artist(mbid: str) -> dict | None:
         return None
 
 
+def get_release(release_mbid: str) -> dict | None:
+    """Fetch a specific release and its release group to get first-release-date.
+
+    Calls /ws/2/release/{id}?inc=release-groups&fmt=json.
+    Returns {"release_group_id": str, "first_release_date": str} or None.
+    """
+    rate_limiter.acquire("musicbrainz")
+    try:
+        resp = _session.get(
+            f"{_BASE_URL}/release/{release_mbid}",
+            params={"inc": "release-groups", "fmt": "json"},
+            timeout=15,
+        )
+        if resp.status_code == 429:
+            rate_limiter.record_429("musicbrainz")
+            return None
+        if resp.status_code == 404:
+            rate_limiter.record_success("musicbrainz")
+            return None
+        resp.raise_for_status()
+        data = resp.json()
+        rate_limiter.record_success("musicbrainz")
+
+        rg = data.get("release-group") or {}
+        release_group_id = rg.get("id", "")
+        first_release_date = rg.get("first-release-date", "")
+
+        if not release_group_id:
+            return None
+
+        return {
+            "release_group_id": release_group_id,
+            "first_release_date": first_release_date or None,
+        }
+    except requests.RequestException as e:
+        logger.error("MusicBrainz get_release failed for '%s': %s", release_mbid, type(e).__name__)
+        return None
+
+
 def get_artist_release_groups(mbid: str, limit: int = 50) -> list[str]:
     """Fetch release group titles for album-overlap validation.
 

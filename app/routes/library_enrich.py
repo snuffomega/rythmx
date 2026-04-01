@@ -105,6 +105,67 @@ def enrich_full(data: Optional[dict[str, Any]] = Body(default=None)):
     )
 
 
+@router.post("/library/enrich/musicbrainz_album")
+def enrich_musicbrainz_album():
+    """
+    Manual trigger: enrich lib_albums with MusicBrainz Release Group ID and
+    original first-release-date.
+
+    Albums are eligible only when musicbrainz_release_id is populated (requires
+    audio files tagged with MBID). Reports eligible count clearly so callers can
+    distinguish "no work to do" (0 eligible) from an error.
+
+    Response:
+      { "status": "ok", "eligible": N, "message": "..." }
+    """
+    from app.db.rythmx_store import _connect
+    from app.services.enrichment.rich_musicbrainz_album import enrich_musicbrainz_album_rich
+
+    try:
+        with _connect() as conn:
+            eligible = conn.execute(
+                """
+                SELECT COUNT(*) FROM lib_albums
+                WHERE musicbrainz_release_id IS NOT NULL
+                  AND original_release_date_musicbrainz IS NULL
+                  AND removed_at IS NULL
+                  AND id NOT IN (
+                      SELECT entity_id FROM enrichment_meta
+                      WHERE entity_type = 'album' AND source = 'musicbrainz_album_rich'
+                        AND (status = 'found'
+                             OR (status = 'not_found'
+                                 AND (retry_after IS NULL OR retry_after > date('now'))))
+                  )
+                """
+            ).fetchone()[0]
+    except Exception as e:
+        logger.error("enrich_musicbrainz_album: eligible query failed: %s", e)
+        return JSONResponse(
+            {"status": "error", "message": "DB query failed"}, status_code=500
+        )
+
+    if eligible == 0:
+        return {
+            "status": "ok",
+            "eligible": 0,
+            "message": (
+                "No eligible albums — musicbrainz_release_id is not populated. "
+                "Tag your audio files with MusicBrainz release IDs and re-sync the library."
+            ),
+        }
+
+    result = enrich_musicbrainz_album_rich(batch_size=eligible)
+    return {
+        "status": "ok",
+        "eligible": eligible,
+        "enriched": result.get("enriched", 0),
+        "skipped": result.get("skipped", 0),
+        "failed": result.get("failed", 0),
+        "remaining": result.get("remaining", 0),
+        "message": f"MusicBrainz album enrichment complete ({result.get('enriched', 0)} enriched).",
+    }
+
+
 @router.post("/library/enrich/stop")
 def enrich_stop():
     """
