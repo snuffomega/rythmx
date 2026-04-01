@@ -107,7 +107,7 @@ export function VinylPlayerScreen({
     position, duration, volume,
     formattedPosition, formattedDuration,
     shuffle, repeat,
-    nextTrack, prevTrack, playAt,
+    nextTrack, prevTrack,
     toggleShuffle, toggleRepeat, expand,
     setVolume: storeSetVolume,
   } = usePlayerStore();
@@ -140,10 +140,11 @@ export function VinylPlayerScreen({
 
   return (
     // ── Outer canvas — full dark screen, content centered ─────────────────
-    <div className="h-full w-full bg-base flex items-center justify-center overflow-hidden">
+    // overflow-auto so the queue panel can expand downward without clipping
+    <div className="h-full w-full bg-base flex items-center justify-center overflow-auto py-8">
 
-      {/* ── Floating player block — naturally sized, centered ────────────── */}
-      <div className="flex flex-col w-full max-w-[520px] px-6 relative">
+      {/* ── Floating player block — 80% width, 10% negative space each side ── */}
+      <div className="flex flex-col w-full max-w-[760px] px-[10%] relative">
 
         {/* ── Header ──────────────────────────────────────────────────────── */}
         <div className="flex items-center justify-between mb-5">
@@ -181,8 +182,8 @@ export function VinylPlayerScreen({
               className="flex-shrink-0 rounded-xl overflow-hidden focus:outline-none
                          disabled:cursor-default transition-all active:scale-95"
               style={{
-                width: '90px', height: '90px',
-                transform:  'rotateY(28deg) translateX(-6px) scale(0.85)',
+                width: 'clamp(90px, 11vw, 130px)', height: 'clamp(90px, 11vw, 130px)',
+                transform:  'rotateY(28deg) translateX(-8px) scale(0.85)',
                 opacity:    prevTrackItem ? 0.50 : 0.08,
                 border:     '1px solid rgba(255,255,255,0.07)',
                 boxShadow:  '-6px 10px 28px rgba(0,0,0,0.70)',
@@ -196,7 +197,7 @@ export function VinylPlayerScreen({
             <div
               className="flex-shrink-0 rounded-2xl overflow-hidden relative"
               style={{
-                width: '280px', height: '280px',
+                width: 'clamp(280px, 42vw, 460px)', height: 'clamp(280px, 42vw, 460px)',
                 border:     '1.5px solid rgba(255,255,255,0.07)',
                 boxShadow:  '0 28px 70px rgba(0,0,0,0.90), 0 8px 20px rgba(0,0,0,0.70), inset 0 1px 0 rgba(255,255,255,0.05)',
               }}
@@ -216,8 +217,8 @@ export function VinylPlayerScreen({
               className="flex-shrink-0 rounded-xl overflow-hidden focus:outline-none
                          disabled:cursor-default transition-all active:scale-95"
               style={{
-                width: '118px', height: '118px',
-                transform:  'rotateY(-28deg) translateX(6px) scale(0.90)',
+                width: 'clamp(118px, 14vw, 170px)', height: 'clamp(118px, 14vw, 170px)',
+                transform:  'rotateY(-28deg) translateX(8px) scale(0.90)',
                 opacity:    nextTrackItem ? 0.58 : 0.08,
                 border:     '1px solid rgba(255,255,255,0.08)',
                 boxShadow:  '6px 10px 28px rgba(0,0,0,0.70)',
@@ -281,63 +282,10 @@ export function VinylPlayerScreen({
           </span>
         </div>
 
-        {/* ── Button row — relative so popups anchor bottom-full here ─────── */}
+        {/* ── Button row ───────────────────────────────────────────────────── */}
         <div className="grid grid-cols-3 items-center relative">
 
-          {/* Queue popup — floats above the queue button, bottom-right */}
-          {showQueue && (
-            <div
-              className="absolute right-0 bottom-full mb-3 w-[290px] max-h-[46vh]
-                         bg-[#0d0d0d] border border-[#1e1e1e] rounded-xl
-                         flex flex-col shadow-2xl overflow-hidden z-30"
-            >
-              <div className="flex items-center justify-between px-4 py-3 border-b border-[#1a1a1a] flex-shrink-0">
-                <span className="font-mono text-[11px] text-text-muted uppercase tracking-widest">
-                  Queue · {queue.length} track{queue.length !== 1 ? 's' : ''}
-                </span>
-                {queue.length > 0 && (
-                  <button
-                    onClick={() => usePlayerStore.getState().clearQueue()}
-                    className="text-[10px] font-mono text-text-muted hover:text-text-secondary transition-colors"
-                  >
-                    Clear
-                  </button>
-                )}
-              </div>
-              <div className="flex-1 overflow-y-auto">
-                {queue.length === 0 ? (
-                  <p className="text-[12px] text-text-muted font-mono text-center py-8 px-5 leading-relaxed">
-                    Queue empty —<br />play something from your library
-                  </p>
-                ) : (
-                  <ul>
-                    {queue.map((track, i) => (
-                      <li key={`${track.id}-${i}`}>
-                        <button
-                          onClick={() => { playAt(i); setShowQueue(false); }}
-                          className="w-full text-left px-4 py-2.5 flex items-center gap-2.5 hover:bg-[#111] transition-colors"
-                        >
-                          <span className="font-mono text-[10px] text-text-muted w-5 flex-shrink-0 text-right">
-                            {i === queueIndex && isPlaying ? '▶' : i + 1}
-                          </span>
-                          <div className="min-w-0 flex-1">
-                            <p className={`text-[12px] truncate leading-tight ${i === queueIndex ? 'text-accent' : 'text-text-primary'}`}>
-                              {track.title}
-                            </p>
-                            <p className="font-mono text-[10px] text-text-muted truncate leading-tight">
-                              {track.artist}
-                            </p>
-                          </div>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Volume popup — floats above volume button */}
+          {/* Volume popup — floats above volume button (stays absolute/upward) */}
           {showVolume && (
             <div
               className="absolute bottom-full mb-3 bg-[#0d0d0d] border border-[#1e1e1e]
@@ -459,7 +407,56 @@ export function VinylPlayerScreen({
           </div>
 
         </div>
-        {/* end floating block */}
+
+        {/* ── Queue panel — expands inline below button row, scrobble-bar width ── */}
+        {showQueue && (
+          <div className="mt-3 border border-[#1e1e1e] rounded-xl overflow-hidden bg-[#0a0a0a]">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-[#1a1a1a]">
+              <span className="font-mono text-[11px] text-text-muted uppercase tracking-widest">
+                Queue · {queue.length} track{queue.length !== 1 ? 's' : ''}
+              </span>
+              {queue.length > 0 && (
+                <button
+                  onClick={() => usePlayerStore.getState().clearQueue()}
+                  className="text-[10px] font-mono text-text-muted hover:text-text-secondary transition-colors"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            <div className="max-h-[40vh] overflow-y-auto">
+              {queue.length === 0 ? (
+                <p className="text-[12px] text-text-muted font-mono text-center py-8 px-5 leading-relaxed">
+                  Queue empty —<br />play something from your library
+                </p>
+              ) : (
+                <ul>
+                  {queue.map((track, i) => (
+                    <li key={`${track.id}-${i}`}>
+                      <button
+                        onClick={() => { usePlayerStore.getState().playAt(i); setShowQueue(false); }}
+                        className="w-full text-left px-4 py-2.5 flex items-center gap-2.5 hover:bg-[#111] transition-colors"
+                      >
+                        <span className="font-mono text-[10px] text-text-muted w-5 flex-shrink-0 text-right">
+                          {i === queueIndex && isPlaying ? '▶' : i + 1}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className={`text-[12px] truncate leading-tight ${i === queueIndex ? 'text-accent' : 'text-text-primary'}`}>
+                            {track.title}
+                          </p>
+                          <p className="font-mono text-[10px] text-text-muted truncate leading-tight">
+                            {track.artist}
+                          </p>
+                        </div>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        )}
+
       </div>
     </div>
   );
