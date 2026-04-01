@@ -180,6 +180,7 @@ function RootLayout() {
             onPlayPause={togglePlayPause}
             onMinimize={minimizePlayer}
             onSeek={seek}
+            onVolumeChange={setVolume}
           />
         ) : playerState === 'fullpage' ? (
           <FullPagePlayer
