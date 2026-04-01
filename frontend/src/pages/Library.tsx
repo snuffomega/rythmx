@@ -2,14 +2,14 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Loader2, Search, Grid3X3, List, RefreshCw,
   Library as LibraryIcon, ChevronLeft, ChevronRight, Star,
-  ListPlus, MoreHorizontal, User, Disc, Play, X,
+  ListPlus, MoreHorizontal, User, Disc, Play, X, Shuffle, Camera, Check,
 } from 'lucide-react';
 import { Link, useNavigate, useRouter } from '@tanstack/react-router';
 import { libraryBrowseApi, libraryApi, enrichmentApi } from '../services/api';
 import { useImage } from '../hooks/useImage';
 import { getImageUrl } from '../utils/imageUrl';
-import { usePlayerStore } from '../stores/usePlayerStore';
-import { ApiErrorBanner } from '../components/common';
+import { usePlayerStore, type PlayerTrack } from '../stores/usePlayerStore';
+import { ApiErrorBanner, AudioQualityBadge } from '../components/common';
 import type { LibArtist, LibAlbum, LibTrack, LibArtistDetail as LibArtistDetailType, LibAlbumDetail as LibAlbumDetailType, LibraryStatus, MissingAlbum, MissingReleaseGroup, ReleaseDetail, ReleaseTrack, ReleaseSibling, UserReleasePrefs, SimilarArtist } from '../types';
 
 type Tab = 'artists' | 'albums' | 'tracks';
@@ -400,7 +400,12 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
   const [missingGroups, setMissingGroups] = useState<MissingReleaseGroup[]>([]);
   const [bioExpanded, setBioExpanded] = useState(false);
   const [similar, setSimilar] = useState<SimilarArtist[] | null>(null);
-  const showPlayer = usePlayerStore(s => s.show);
+  const [coverEditing, setCoverEditing] = useState(false);
+  const [coverInput, setCoverInput] = useState('');
+  const [coverSaving, setCoverSaving] = useState(false);
+  const [artistImageUrl, setArtistImageUrl] = useState<string | null>(null);
+  const playQueue = usePlayerStore(s => s.playQueue);
+  const enqueueNext = usePlayerStore(s => s.enqueueNext);
 
   useEffect(() => {
     setLoading(true);
@@ -412,6 +417,7 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
         setData({ artist: res.artist, albums: res.albums, top_tracks: res.top_tracks, missing_albums: res.missing_albums || [] });
         setDismissedCount(res.dismissed_count ?? 0);
         setMissingGroups(res.missing_groups ?? []);
+        setArtistImageUrl(res.artist.image_url ?? null);
       })
       .catch(err => setError(err instanceof Error ? err.message : 'Failed to load artist'))
       .finally(() => setLoading(false));
@@ -445,6 +451,69 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
     });
   }, []);
 
+  const fetchAllArtistTracks = useCallback(async (artistObj: LibArtist): Promise<PlayerTrack[]> => {
+    const res = await libraryBrowseApi.getTracks({ artist_id: artistObj.id, per_page: 500 });
+    return res.tracks.map(t => ({
+      id: t.id,
+      title: t.title,
+      artist: artistObj.name,
+      album: t.album_title ?? '',
+      duration: t.duration,
+      thumb_url: null,
+      source_platform: artistObj.source_platform ?? 'navidrome',
+      codec: t.codec,
+      bitrate: t.bitrate,
+      bit_depth: t.bit_depth,
+      sample_rate: t.sample_rate,
+    }));
+  }, []);
+
+  const handlePlayArtist = useCallback(async () => {
+    if (!data) return;
+    const tracks = await fetchAllArtistTracks(data.artist);
+    if (tracks.length) playQueue(tracks);
+  }, [data, fetchAllArtistTracks, playQueue]);
+
+  const handleShuffleArtist = useCallback(async () => {
+    if (!data) return;
+    const tracks = await fetchAllArtistTracks(data.artist);
+    if (!tracks.length) return;
+    const shuffled = [...tracks].sort(() => Math.random() - 0.5);
+    playQueue(shuffled);
+  }, [data, fetchAllArtistTracks, playQueue]);
+
+  const handlePlaySimilar = useCallback(async (similarArtist: SimilarArtist) => {
+    if (!similarArtist.library_id) return;
+    const res = await libraryBrowseApi.getTracks({ artist_id: similarArtist.library_id, per_page: 500 });
+    const tracks: PlayerTrack[] = res.tracks.map(t => ({
+      id: t.id,
+      title: t.title,
+      artist: similarArtist.name,
+      album: t.album_title ?? '',
+      duration: t.duration,
+      thumb_url: null,
+      source_platform: 'navidrome',
+      codec: t.codec,
+      bitrate: t.bitrate,
+      bit_depth: t.bit_depth,
+      sample_rate: t.sample_rate,
+    }));
+    if (tracks.length) enqueueNext(tracks);
+  }, [enqueueNext]);
+
+  const handleSaveCover = useCallback(async () => {
+    if (!coverInput.trim() || !data) return;
+    setCoverSaving(true);
+    try {
+      await libraryBrowseApi.setArtistCover(data.artist.id, coverInput.trim());
+      setArtistImageUrl(coverInput.trim());
+      setCoverEditing(false);
+      setCoverInput('');
+    } finally {
+      setCoverSaving(false);
+    }
+  }, [coverInput, data]);
+
   if (loading) {
     return <div className="flex-1 flex items-center justify-center"><Loader2 size={20} className="animate-spin text-text-muted" /></div>;
   }
@@ -474,9 +543,20 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
 
       {/* Hero */}
       <div className="px-8 pb-6 flex gap-8">
-        <div className="w-48 h-48 flex-shrink-0 bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center border border-[#222]">
-          <ArtistImage name={artist.name} size={56} imageUrl={artist.image_url} />
+        {/* Artist image with cover edit overlay */}
+        <div className="relative w-48 h-48 flex-shrink-0 group/cover">
+          <div className="w-full h-full bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center border border-[#222]">
+            <ArtistImage name={artist.name} size={56} imageUrl={artistImageUrl ?? artist.image_url} />
+          </div>
+          <button
+            onClick={() => { setCoverEditing(v => !v); setCoverInput(''); }}
+            className="absolute bottom-1.5 right-1.5 bg-black/70 hover:bg-black/90 text-text-muted hover:text-white rounded p-1 opacity-0 group-hover/cover:opacity-100 transition-all"
+            aria-label="Edit cover photo"
+          >
+            <Camera size={13} />
+          </button>
         </div>
+
         <div className="flex flex-col justify-center min-w-0 flex-1">
           <h1 className="text-3xl font-bold tracking-tighter text-text-primary mb-1">{artist.name}</h1>
 
@@ -519,6 +599,54 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
             <SourceChip backend={artist.source_platform} />
             <span className="font-mono text-[10px] text-text-muted">{artist.album_count} albums</span>
           </div>
+
+          {/* Play / Shuffle buttons */}
+          <div className="flex items-center gap-2 mt-3">
+            <button
+              onClick={handlePlayArtist}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-accent hover:bg-accent/80 rounded text-black text-xs font-semibold transition-colors"
+              aria-label="Play artist"
+            >
+              <Play size={12} className="fill-current" /> Play
+            </button>
+            <button
+              onClick={handleShuffleArtist}
+              className="flex items-center gap-1.5 px-3 py-1.5 border border-[#333] hover:border-[#555] rounded text-text-secondary text-xs font-mono transition-colors"
+              aria-label="Shuffle artist"
+            >
+              <Shuffle size={12} /> Shuffle
+            </button>
+          </div>
+
+          {/* Cover URL editor */}
+          {coverEditing && (
+            <div className="flex items-center gap-2 mt-2">
+              <input
+                type="url"
+                value={coverInput}
+                onChange={e => setCoverInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleSaveCover(); if (e.key === 'Escape') { setCoverEditing(false); setCoverInput(''); } }}
+                placeholder="Paste image URL…"
+                className="flex-1 bg-[#111] border border-[#333] rounded px-2 py-1 text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent font-mono"
+                autoFocus
+              />
+              <button
+                onClick={handleSaveCover}
+                disabled={coverSaving || !coverInput.trim()}
+                className="flex items-center gap-1 px-2 py-1 bg-accent hover:bg-accent/80 disabled:opacity-40 rounded text-black text-xs font-semibold transition-colors"
+                aria-label="Save cover"
+              >
+                {coverSaving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+              </button>
+              <button
+                onClick={() => { setCoverEditing(false); setCoverInput(''); }}
+                className="p-1 text-text-muted hover:text-text-primary transition-colors"
+                aria-label="Cancel"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -554,14 +682,23 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
                 <p className="text-[10px] font-mono text-text-muted uppercase tracking-wider mb-1.5">In Your Library</p>
                 <div className="flex flex-wrap gap-1.5">
                   {similarInLib.map(s => (
-                    <Link
-                      key={s.name}
-                      to="/library/artist/$id"
-                      params={{ id: s.library_id! }}
-                      className="font-mono text-xs px-2 py-1 rounded bg-accent/10 border border-accent/20 text-accent hover:bg-accent/20 transition-colors"
-                    >
-                      {s.name}
-                    </Link>
+                    <div key={s.name} className="flex items-center gap-1">
+                      <Link
+                        to="/library/artist/$id"
+                        params={{ id: s.library_id! }}
+                        className="font-mono text-xs px-2 py-1 rounded bg-accent/10 border border-accent/20 text-accent hover:bg-accent/20 transition-colors"
+                      >
+                        {s.name}
+                      </Link>
+                      <button
+                        onClick={() => handlePlaySimilar(s)}
+                        className="p-1 text-text-muted hover:text-accent transition-colors"
+                        aria-label={`Play ${s.name} radio`}
+                        title="Add to queue"
+                      >
+                        <ListPlus size={13} />
+                      </button>
+                    </div>
                   ))}
                 </div>
               </div>
@@ -600,7 +737,17 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
                 <span className="font-mono text-xs text-text-muted truncate">{t.album_title}</span>
                 <span className="font-mono text-xs text-text-muted tabular-nums text-right">{formatDuration(t.duration)}</span>
                 <button
-                  onClick={() => showPlayer()}
+                  onClick={() => playQueue(top_tracks.map((tr, idx) => ({
+                    id: tr.id,
+                    title: tr.title,
+                    artist: data.artist.name,
+                    album: tr.album_title ?? '',
+                    duration: tr.duration,
+                    thumb_url: null,
+                    source_platform: data.artist.source_platform ?? 'navidrome',
+                    codec: tr.codec, bitrate: tr.bitrate,
+                    bit_depth: tr.bit_depth, sample_rate: tr.sample_rate,
+                  })).slice(i))}
                   className="text-text-muted opacity-0 group-hover:opacity-100 hover:text-accent transition-all"
                   aria-label="Play"
                 >
@@ -693,7 +840,24 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
   const [error, setError] = useState<string | null>(null);
   const [ratings, setRatings] = useState<Record<string, number>>({});
   const router = useRouter();
-  const showPlayer = usePlayerStore(s => s.show);
+  const playQueue = usePlayerStore(s => s.playQueue);
+  const enqueueNext = usePlayerStore(s => s.enqueueNext);
+
+  function tracksToQueue(tList: typeof tracks, albumObj: typeof album): PlayerTrack[] {
+    return tList.map(t => ({
+      id: t.id,
+      title: t.title,
+      artist: albumObj?.artist_name ?? '',
+      album: albumObj?.title ?? '',
+      duration: t.duration,
+      thumb_url: albumObj?.thumb_url ?? null,
+      source_platform: albumObj?.source_platform ?? 'navidrome',
+      codec: t.codec,
+      bitrate: t.bitrate,
+      bit_depth: t.bit_depth,
+      sample_rate: t.sample_rate,
+    }));
+  }
 
   useEffect(() => {
     setLoading(true);
@@ -760,6 +924,22 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
             {totalMin > 0 && <><span className="text-[#333]">|</span><span>{totalMin} min</span></>}
           </div>
           <div className="flex items-center gap-2 mt-3">
+            <button
+              onClick={() => playQueue(tracksToQueue(tracks, album))}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-accent hover:bg-accent/80 rounded text-black text-xs font-semibold transition-colors"
+              aria-label="Play album"
+            >
+              <Play size={12} className="fill-current" /> Play
+            </button>
+            <button
+              onClick={() => enqueueNext(tracksToQueue(tracks, album))}
+              className="flex items-center gap-1.5 px-3 py-1.5 border border-[#333] hover:border-[#555] rounded text-text-secondary text-xs font-mono transition-colors"
+              aria-label="Add to queue"
+            >
+              <ListPlus size={12} /> Queue
+            </button>
+          </div>
+          <div className="flex items-center gap-2 mt-2">
             <ConfidenceBadge value={album.match_confidence} />
             <SourceChip backend={album.source_platform} />
             {album.needs_verification === 1 && (
@@ -783,21 +963,30 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
           <span />
         </div>
         {tracks.map(t => (
-          <div key={t.id} className="group grid grid-cols-[2rem_1fr_6rem_3.5rem_auto_auto_auto] gap-3 items-center px-2 py-2 hover:bg-[#111] rounded-sm transition-colors">
+          <div key={t.id} className="group grid grid-cols-[2rem_1fr_6rem_3.5rem_auto_auto_auto_auto] gap-3 items-center px-2 py-2 hover:bg-[#111] rounded-sm transition-colors">
             <span className="font-mono text-xs text-text-muted tabular-nums text-right">
               {String(t.track_number ?? 0).padStart(2, '0')}
             </span>
             <span className="text-sm text-text-primary truncate">{t.title}</span>
             <StarRating value={ratings[t.id] ?? 0} onChange={v => handleRate(t.id, v)} size={12} />
             <span className="font-mono text-xs text-text-muted tabular-nums text-right">{formatDuration(t.duration)}</span>
+            <AudioQualityBadge bit_depth={t.bit_depth} sample_rate={t.sample_rate} codec={t.codec} bitrate={t.bitrate} />
             <button
-              onClick={() => showPlayer()}
+              onClick={() => {
+                const q = tracksToQueue(tracks, album);
+                const idx = q.findIndex(p => p.id === t.id);
+                if (idx >= 0) { playQueue(q); usePlayerStore.getState().playAt(idx); }
+              }}
               className="text-text-muted opacity-0 group-hover:opacity-100 hover:text-accent transition-all"
               aria-label="Play"
             >
               <Play size={14} />
             </button>
-            <button className="text-text-muted opacity-0 group-hover:opacity-100 hover:text-accent transition-all" title="Add to playlist">
+            <button
+              onClick={() => enqueueNext([tracksToQueue(tracks, album).find(p => p.id === t.id)!])}
+              className="text-text-muted opacity-0 group-hover:opacity-100 hover:text-accent transition-all"
+              title="Add to queue"
+            >
               <ListPlus size={14} />
             </button>
             <button className="text-text-muted opacity-0 group-hover:opacity-100 hover:text-text-secondary transition-all" title="More">

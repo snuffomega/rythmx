@@ -282,6 +282,13 @@ export interface LibTrack {
   rating: number;
   play_count: number;
   tempo: number | null;
+  sample_rate?: number | null;
+  bit_depth?: number | null;
+  channel_count?: number | null;
+  replay_gain_track?: number | null;
+  bitrate?: number | null;
+  codec?: string | null;
+  container?: string | null;
   album_title?: string;
   artist_name?: string;
 }
@@ -548,4 +555,29 @@ export interface PipelineRun {
   summary_json: string | null;
   error_message: string | null;
   triggered_by: 'manual' | 'schedule';
+}
+
+// ---------------------------------------------------------------------------
+// Library Playlists — lib_playlists + lib_playlist_tracks
+// ---------------------------------------------------------------------------
+
+export interface LibPlaylist {
+  id: string;
+  name: string;
+  source_platform: string;
+  cover_url: string | null;
+  track_count: number;
+  duration_ms: number;
+  updated_at: string | null;
+  synced_at: string | null;
+}
+
+export interface LibPlaylistTrack {
+  position: number;
+  track_id: string;
+  title: string;
+  artist_name: string | null;
+  album_title: string | null;
+  duration: number | null;
+  file_path: string | null;
 }

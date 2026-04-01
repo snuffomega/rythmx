@@ -39,6 +39,8 @@ import type {
   SimilarArtist,
   NewMusicConfig,
   DiscoveredRelease,
+  LibPlaylist,
+  LibPlaylistTrack,
 } from '../types';
 
 const BASE_URL = '/api/v1';
@@ -369,12 +371,17 @@ export const libraryBrowseApi = {
   },
   getAlbum: (id: string) =>
     request<{ status: string } & LibAlbumDetail>(`/library/albums/${encodeURIComponent(id)}`),
-  getTracks: (p: { q?: string; page?: number; per_page?: number } = {}) => {
+  getTracks: (p: { q?: string; page?: number; per_page?: number; artist_id?: string } = {}) => {
     const qs = new URLSearchParams(
       Object.entries({ per_page: '100', ...p }).filter(([, v]) => v != null) as [string, string][]
     ).toString();
     return request<{ status: string; tracks: LibTrack[]; total: number; page: number }>(`/library/tracks?${qs}`);
   },
+  setArtistCover: (artistId: string, coverUrl: string) =>
+    request<{ status: string }>(`/library/artists/${encodeURIComponent(artistId)}/cover`, {
+      method: 'POST',
+      body: JSON.stringify({ cover_url: coverUrl }),
+    }),
   rateTrack: (id: string, rating: number) =>
     request<{ status: string; track_id: string; rating: number }>(`/library/tracks/${encodeURIComponent(id)}/rating`, {
       method: 'PATCH',
@@ -447,4 +454,29 @@ export const forgeNewMusicApi = {
   getResults: () =>
     request<{ status: string; releases: DiscoveredRelease[] }>('/forge/new-music/results')
       .then(r => r.releases),
+};
+
+export const libraryPlaylistsApi = {
+  list: () =>
+    request<{ status: string; playlists: LibPlaylist[] }>('/library/playlists')
+      .then(r => r.playlists),
+  getTracks: (id: string) =>
+    request<{ status: string; tracks: LibPlaylistTrack[] }>(
+      `/library/playlists/${encodeURIComponent(id)}/tracks`
+    ).then(r => r.tracks),
+  sync: () =>
+    request<{ status: string; playlists_synced: number; tracks_synced: number }>(
+      '/library/playlists/sync',
+      { method: 'POST' }
+    ),
+  rename: (id: string, name: string) =>
+    request<{ status: string; id: string; name: string }>(
+      `/library/playlists/${encodeURIComponent(id)}`,
+      { method: 'PATCH', body: JSON.stringify({ name }) }
+    ),
+  delete: (id: string) =>
+    request<{ status: string; id: string }>(
+      `/library/playlists/${encodeURIComponent(id)}`,
+      { method: 'DELETE' }
+    ),
 };
