@@ -179,6 +179,7 @@ function RootLayout() {
             isPlaying={isPlaying}
             onPlayPause={togglePlayPause}
             onMinimize={minimizePlayer}
+            onSeek={seek}
           />
         ) : playerState === 'fullpage' ? (
           <FullPagePlayer
