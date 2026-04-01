@@ -14,12 +14,46 @@ safe empty values, and enrichment falls through to Stage 2 normally.
 """
 import json
 import logging
+import re
 import sqlite3
 import time
+import unicodedata
 
 from app import config
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_name(name: str) -> str:
+    """Normalize artist/album name for consistent matching across platforms.
+
+    Handles Unicode punctuation differences between Navidrome (which preserves
+    curly apostrophes, smart quotes, trailing punctuation) and Plex (which
+    strips/normalizes them). Applied only to the *_lower matching fields —
+    display names (name, title) are left unchanged.
+
+    Steps:
+    1. NFKD decomposition — splits combined Unicode characters into base + diacritic.
+    2. ASCII encode/decode — drops non-ASCII bytes (curly quotes, smart quotes,
+       accented chars that survive as bare letters after NFKD become ASCII;
+       pure punctuation code-points are dropped).
+    3. Strip trailing punctuation Plex ignores (!, ., ,, ;).
+    4. Collapse internal whitespace left by dropped characters.
+    5. Lowercase.
+    """
+    if not name:
+        return name
+    # Step 1+2: NFKD → ASCII-only (drops curly apostrophes, smart quotes, etc.)
+    name = unicodedata.normalize("NFKD", name)
+    name = name.encode("ascii", "ignore").decode("ascii")
+    # Step 3: normalize & ↔ and (Plex may spell out or abbreviate)
+    name = re.sub(r"\s*&\s*", " and ", name)
+    # Step 4: strip trailing punctuation Plex silently drops
+    name = re.sub(r"[!.,;]+$", "", name.strip())
+    # Step 5: collapse runs of whitespace that may result from dropped chars
+    name = re.sub(r"\s+", " ", name).strip()
+    # Step 6: lowercase
+    return name.lower()
 
 
 def _connect():
@@ -90,7 +124,7 @@ def sync_library() -> dict:
                 "INSERT OR IGNORE INTO lib_artists "
                 "(id, name, name_lower, source_platform, updated_at) "
                 "VALUES (?, ?, ?, 'navidrome', CURRENT_TIMESTAMP)",
-                (artist_id, artist_name, artist_name.lower()),
+                (artist_id, artist_name, _normalize_name(artist_name)),
             )
             conn.execute(
                 "UPDATE lib_artists SET name = ?, name_lower = ?, "
@@ -100,7 +134,7 @@ def sync_library() -> dict:
                 "musicbrainz_id = COALESCE(?, musicbrainz_id), "
                 "genres_json_navidrome = COALESCE(?, genres_json_navidrome) "
                 "WHERE id = ?",
-                (artist_name, artist_name.lower(),
+                (artist_name, _normalize_name(artist_name),
                  cover_art, mbid, genres_json,
                  artist_id),
             )
@@ -135,7 +169,7 @@ def sync_library() -> dict:
                     "source_platform, updated_at) "
                     "VALUES (?, ?, ?, ?, ?, ?, 'navidrome', CURRENT_TIMESTAMP)",
                     (album_id, artist_id, album_title, album_title,
-                     album_title.lower(), album_year),
+                     _normalize_name(album_title), album_year),
                 )
                 conn.execute(
                     "UPDATE lib_albums SET title = ?, local_title = ?, title_lower = ?, "
@@ -145,7 +179,7 @@ def sync_library() -> dict:
                     "musicbrainz_id = COALESCE(?, musicbrainz_id), "
                     "genres_json_navidrome = COALESCE(?, genres_json_navidrome) "
                     "WHERE id = ?",
-                    (album_title, album_title, album_title.lower(), album_year,
+                    (album_title, album_title, _normalize_name(album_title), album_year,
                      album_cover, album_mbid, album_genres_json,
                      album_id),
                 )
