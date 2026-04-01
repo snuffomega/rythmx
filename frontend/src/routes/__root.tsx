@@ -10,6 +10,7 @@ import { initApiKey, libraryApi, enrichmentApi } from '../services/api';
 import { wsConnect, wsDisconnect } from '../services/wsService';
 import { useEnrichmentStore } from '../stores/useEnrichmentStore';
 import { usePlayerStore } from '../stores/usePlayerStore';
+import { useAudioEngine } from '../hooks/useAudioEngine';
 import type { LibraryStatus } from '../types';
 
 const NAV_ITEMS = [
@@ -34,6 +35,8 @@ function RootLayout() {
 
   const { playerState, isPlaying, show: showPlayer, hide: hidePlayer,
           expand: expandPlayer, minimize: minimizePlayer, togglePlayPause } = usePlayerStore();
+
+  const { seek, setVolume } = useAudioEngine();
 
   const globalEnrichRunning = useEnrichmentStore(s => s.running);
 
@@ -175,6 +178,8 @@ function RootLayout() {
             isPlaying={isPlaying}
             onPlayPause={togglePlayPause}
             onMinimize={minimizePlayer}
+            onSeek={seek}
+            onVolumeChange={setVolume}
           />
         ) : (
           <div className={`flex-1 min-h-0 overflow-auto${playerState === 'mini' ? ' pb-20' : ''}`}>
@@ -190,6 +195,8 @@ function RootLayout() {
             onPlayPause={togglePlayPause}
             onExpand={expandPlayer}
             onMinimize={hidePlayer}
+            onSeek={seek}
+            onVolumeChange={setVolume}
           />
         )}
       </main>
