@@ -10,6 +10,8 @@ import {
 } from 'lucide-react';
 import { useRef } from 'react';
 import { usePlayerStore } from '../stores/usePlayerStore';
+// isPlaying is still a prop here (owned by __root → useAudioEngine) but
+// repeat / shuffle / showVinyl are pure store actions, read directly.
 import { AudioQualityBadge } from './common';
 import { useImage } from '../hooks/useImage';
 
@@ -43,10 +45,13 @@ export function FullPagePlayer({ isPlaying, onPlayPause, onMinimize, onSeek, onV
     duration,
     volume,
     shuffle,
+    repeat,
     nextTrack,
     prevTrack,
     playAt,
     toggleShuffle,
+    toggleRepeat,
+    showVinyl,
   } = usePlayerStore();
 
   const progressRef = useRef<HTMLDivElement>(null);
@@ -76,13 +81,24 @@ export function FullPagePlayer({ isPlaying, onPlayPause, onMinimize, onSeek, onV
 
         <div className="flex items-center justify-between mb-8 flex-shrink-0">
           <h2 className="text-[13px] font-mono text-text-muted uppercase tracking-widest">Now Playing</h2>
-          <button
-            onClick={onMinimize}
-            className="text-text-muted hover:text-text-secondary transition-colors"
-            aria-label="Minimize player"
-          >
-            <Minimize2 size={16} />
-          </button>
+          <div className="flex items-center gap-3">
+            {/* Temporary: switch to VinylPlayerScreen for testing */}
+            <button
+              onClick={showVinyl}
+              className="text-text-muted hover:text-text-secondary transition-colors"
+              aria-label="Vinyl view"
+              title="Vinyl view (test)"
+            >
+              <Disc size={15} />
+            </button>
+            <button
+              onClick={onMinimize}
+              className="text-text-muted hover:text-text-secondary transition-colors"
+              aria-label="Minimize player"
+            >
+              <Minimize2 size={16} />
+            </button>
+          </div>
         </div>
 
         {/* Album art */}
@@ -174,7 +190,11 @@ export function FullPagePlayer({ isPlaying, onPlayPause, onMinimize, onSeek, onV
           >
             <SkipForward size={22} />
           </button>
-          <button className="text-text-muted hover:text-text-secondary transition-colors" aria-label="Repeat">
+          <button
+            onClick={toggleRepeat}
+            className={`transition-colors ${repeat ? 'text-accent' : 'text-text-muted hover:text-text-secondary'}`}
+            aria-label={repeat ? 'Repeat on' : 'Repeat off'}
+          >
             <Repeat size={18} />
           </button>
         </div>

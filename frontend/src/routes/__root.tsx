@@ -4,6 +4,7 @@ import { Compass, Zap, Activity, BarChart2, Settings, ChevronRight, Menu, Librar
 import { ToastContainer } from '../components/ToastContainer';
 import { PlayerBar } from '../components/PlayerBar';
 import { FullPagePlayer } from '../components/FullPagePlayer';
+import { VinylPlayerScreen } from '../components/VinylPlayerScreen';
 import ProcessingSignal from '../components/ProcessingSignal';
 import { useToastStore } from '../stores/useToastStore';
 import { initApiKey, libraryApi, enrichmentApi } from '../services/api';
@@ -173,7 +174,13 @@ function RootLayout() {
       </aside>
 
       <main className="flex-1 min-w-0 pl-16 flex flex-col min-h-screen">
-        {playerState === 'fullpage' ? (
+        {playerState === 'vinyl' ? (
+          <VinylPlayerScreen
+            isPlaying={isPlaying}
+            onPlayPause={togglePlayPause}
+            onMinimize={minimizePlayer}
+          />
+        ) : playerState === 'fullpage' ? (
           <FullPagePlayer
             isPlaying={isPlaying}
             onPlayPause={togglePlayPause}
