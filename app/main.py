@@ -195,13 +195,16 @@ from app.routes.images import router as images_router
 from app.routes.personal_discovery import router as personal_discovery_router
 from app.routes.library_browse import router as library_browse_router
 from app.routes.library_enrich import router as enrich_router
+from app.routes.library_stream import router as library_stream_router
 from app.routes.forge import router as forge_router
+from app.routes.library_playlists import router as library_playlists_router
 from app.routes.ws import router as ws_router
 
 for _router in (
     auth_router, dash_router, acquisition_router, playlists_router,
     stats_router, settings_router, images_router, personal_discovery_router,
-    library_browse_router, enrich_router, forge_router,
+    library_browse_router, enrich_router, library_stream_router, forge_router,
+    library_playlists_router,
 ):
     app.include_router(_router, prefix="/api/v1")
 

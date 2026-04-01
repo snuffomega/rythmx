@@ -144,3 +144,43 @@ class NavidromeClient:
         """Return all playlists for the current user."""
         data = self._get("getPlaylists")
         return data.get("playlists", {}).get("playlist", [])
+
+    def get_playlist_songs(self, playlist_id: str) -> list[dict]:
+        """Return the song list for a playlist by ID.
+
+        Calls /rest/getPlaylist and returns the list of song dicts under
+        playlist.entry. Returns an empty list if the playlist has no tracks.
+        """
+        data = self._get("getPlaylist", id=playlist_id)
+        return data.get("playlist", {}).get("entry", [])
+
+    def delete_playlist(self, playlist_id: str) -> None:
+        """Delete a playlist on Navidrome by ID."""
+        self._get("deletePlaylist", id=playlist_id)
+
+    def rename_playlist(self, playlist_id: str, new_name: str) -> None:
+        """Rename an existing playlist on Navidrome."""
+        self._get("updatePlaylist", playlistId=playlist_id, name=new_name)
+
+    def get_stream_url(self, song_id: str) -> str:
+        """Return a fully-authenticated stream URL for the given song ID.
+
+        The URL is safe to pass to an HTTP client's GET request — auth params
+        are included as query string values. Never log or expose this URL to
+        the browser directly; always proxy through the backend stream endpoint.
+        """
+        import urllib.parse
+        params = {"id": song_id, **self._auth_params()}
+        return f"{self._base_url}/rest/stream?" + urllib.parse.urlencode(params)
+
+    def stream_response(self, song_id: str) -> "requests.Response":
+        """Return a streaming requests.Response for the given song ID.
+
+        The caller is responsible for closing the response. Use as a context
+        manager or call .close() explicitly.
+        """
+        url = f"{self._base_url}/rest/stream"
+        params = {"id": song_id, **self._auth_params()}
+        resp = self._session.get(url, params=params, stream=True, timeout=30)
+        resp.raise_for_status()
+        return resp
