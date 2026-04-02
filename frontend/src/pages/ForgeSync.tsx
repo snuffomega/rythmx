@@ -16,7 +16,7 @@ export function ForgeSync() {
     if (!trimmed) return;
     setLoading(true);
     try {
-      // Backend wiring: POST /api/v1/forge/sync/load — Phase 27d
+      // Backend wiring: POST /api/v1/forge/sync/load - Phase 27d
       toast.info('URL sync backend coming in Phase 27d');
     } finally {
       setLoading(false);
@@ -28,7 +28,7 @@ export function ForgeSync() {
       <div>
         <h2 className="text-lg font-semibold text-text-primary">Sync from URL</h2>
         <p className="text-text-muted text-sm mt-1">
-          Paste a playlist URL to import and resolve its tracks against your library, then queue it in Builder.
+          Paste a source playlist URL to resolve tracks against your library, then queue a build in Builder.
         </p>
       </div>
 
@@ -55,7 +55,7 @@ export function ForgeSync() {
           </button>
         </div>
         <p className="text-[#444] text-xs">
-          Supported: Spotify, YouTube Music playlist URLs · File import (M3U, CSV) coming later
+          Supported: Spotify and YouTube Music playlist URLs | File import (M3U, CSV) coming later
         </p>
       </div>
     </div>

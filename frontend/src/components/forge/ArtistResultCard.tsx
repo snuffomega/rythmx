@@ -1,8 +1,8 @@
 import { Users } from 'lucide-react';
 import { getImageUrl } from '../../utils/imageUrl';
-import type { PersonalDiscoveryResult } from '../../types';
+import type { ForgeDiscoveryResult } from '../../types';
 
-export function ArtistResultCard({ result }: { result: PersonalDiscoveryResult }) {
+export function ArtistResultCard({ result }: { result: ForgeDiscoveryResult }) {
   const hue = result.artist.charCodeAt(0) % 360;
   return (
     <div className="group flex items-center gap-3 px-4 py-3 bg-[#0d0d0d] border border-[#1a1a1a] hover:border-[#2a2a2a] transition-colors cursor-pointer">

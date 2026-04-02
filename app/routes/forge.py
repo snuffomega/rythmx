@@ -1,7 +1,7 @@
 """
-forge.py — The Forge pipeline-history endpoint.
+forge.py - Forge API endpoints.
 
-All SQL uses ? placeholders. Router registered at /api/v1 in main.py.
+Router is registered at /api/v1 in main.py.
 """
 import logging
 import threading
@@ -189,3 +189,4 @@ def discovery_run(data: Optional[dict[str, Any]] = Body(default=None)):
 def discovery_get_results():
     """Return the latest Forge Discovery result set."""
     return {"status": "ok", "artists": discovery_runner.get_results()}
+

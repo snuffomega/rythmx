@@ -3,11 +3,10 @@ import { Circle } from 'lucide-react';
 const PD_PIPELINE_STEPS = [
   { label: 'Poll History' },
   { label: 'Resolve Artists' },
-  { label: 'Find Tracks' },
-  { label: 'Check Library' },
-  { label: 'Build', cruiseOnly: true },
-  { label: 'Queue Tracks', cruiseOnly: true },
-  { label: 'Create & Publish' },
+  { label: 'Rank Candidates' },
+  { label: 'Queue Build', cruiseOnly: true },
+  { label: 'Fetch Missing', cruiseOnly: true },
+  { label: 'Publish Playlist', cruiseOnly: true },
 ];
 
 interface DiscoveryPipelineVizProps {
@@ -29,10 +28,10 @@ export function DiscoveryPipelineViz({ runMode }: DiscoveryPipelineVizProps) {
               <span className="font-medium">
                 <span className="mr-1 opacity-40">{i + 1}</span>
                 {step.label}
-                {step.cruiseOnly && <span className="ml-1 opacity-30 text-[10px]">fetch</span>}
+                {step.cruiseOnly && <span className="ml-1 opacity-30 text-[10px]">future</span>}
               </span>
             </div>
-            {i < steps.length - 1 && <span className="text-[#222] text-xs px-0.5">›</span>}
+            {i < steps.length - 1 && <span className="text-[#222] text-xs px-0.5">{'>'}</span>}
           </div>
         ))}
       </div>
@@ -43,7 +42,7 @@ export function DiscoveryPipelineViz({ runMode }: DiscoveryPipelineVizProps) {
               <Circle size={12} className="flex-shrink-0" />
               <span className="text-[9px] font-medium leading-tight text-center truncate w-full">{step.label}</span>
             </div>
-            {i < steps.length - 1 && <span className="text-[#1e1e1e] text-xs flex-shrink-0 mb-3">›</span>}
+            {i < steps.length - 1 && <span className="text-[#1e1e1e] text-xs flex-shrink-0 mb-3">{'>'}</span>}
           </div>
         ))}
       </div>

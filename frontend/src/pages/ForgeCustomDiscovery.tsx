@@ -157,7 +157,7 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
               <input type="number" className="input" min={1} value={config.min_scrobbles} onChange={e => update('min_scrobbles', Number(e.target.value))} />
             </div>
             <div>
-              <label className="label">Max Playlist Size</label>
+              <label className="label">Max Build Size</label>
               <input type="number" className="input" min={5} max={200} value={config.max_tracks} onChange={e => update('max_tracks', Number(e.target.value))} />
             </div>
           </div>
@@ -173,7 +173,7 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
             <Toggle on={config.auto_publish} onChange={v => update('auto_publish', v)} />
             <div>
               <p className="text-text-primary text-sm font-medium">Auto Publish</p>
-              <p className="text-[#444] text-xs">Push to Plex after each run</p>
+              <p className="text-[#444] text-xs">Publish automatically after build approval (Phase 27d)</p>
             </div>
           </div>
           <div className="w-px h-8 bg-[#1a1a1a] self-center" />
@@ -203,17 +203,17 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
             <div>
               <label className="label">Ignore Keywords</label>
               <input className="input" placeholder="christmas, tribute, karaoke" />
-              <p className="text-[#444] text-xs mt-1">Comma-separated — artists matching any keyword will be skipped</p>
+              <p className="text-[#444] text-xs mt-1">Comma-separated - artists matching any keyword will be skipped</p>
             </div>
             <div>
               <label className="label">Ignore Artists</label>
               <input className="input" placeholder="Artist One, Artist Two" />
-              <p className="text-[#444] text-xs mt-1">Comma-separated — these artists will never surface in results</p>
+              <p className="text-[#444] text-xs mt-1">Comma-separated - these artists will never surface in results</p>
             </div>
             <div>
-              <label className="label">Custom Playlist Name</label>
+              <label className="label">Custom Build Name</label>
               <input className="input" placeholder="My Discovery" />
-              <p className="text-[#444] text-xs mt-1">Override the default playlist name used when publishing</p>
+              <p className="text-[#444] text-xs mt-1">Override the default build name shown in Builder</p>
             </div>
             <div className="border-t border-[#1a1a1a] pt-5 flex items-center gap-3">
               <Toggle on={config.dry_run} onChange={v => update('dry_run', v)} />
@@ -229,7 +229,7 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
       <div className="flex gap-3 pt-2 border-t border-[#1a1a1a]">
         <button onClick={handleRun} disabled={running || saving || loadingConfig} className="btn-primary flex items-center gap-2 text-sm">
           {running ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
-          {running ? 'Discovering…' : 'Run Discovery'}
+          {running ? 'Discovering...' : 'Run Discovery'}
         </button>
         <button onClick={handleSave} disabled={saving || running || loadingConfig} className="btn-secondary flex items-center gap-2 text-sm">
           {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
@@ -271,9 +271,10 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
         <div className="py-12 text-center border border-dashed border-[#1e1e1e] space-y-2">
           <Sparkles size={22} className="text-[#2a2a2a] mx-auto" />
           <p className="text-[#444] text-sm">Configure and run to discover new artists</p>
-          {/* GAP-03: backend stub — results will be empty until Custom Discovery engine is implemented */}
+          {/* GAP-03: backend stub - results will be empty until Custom Discovery engine is implemented */}
         </div>
       )}
     </div>
   );
 }
+
