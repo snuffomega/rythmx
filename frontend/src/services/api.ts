@@ -144,10 +144,17 @@ export const acquisitionApi = {
     album: string;
     release_date?: string;
     kind: ReleaseKind;
+    source?: string;
   }) =>
     request<{ status: string }>('/acquisition/queue', {
       method: 'POST',
-      body: JSON.stringify(item),
+      body: JSON.stringify({
+        artist_name: item.artist,
+        album_title: item.album,
+        release_date: item.release_date,
+        kind: item.kind,
+        source: item.source,
+      }),
     }),
   getStats: () =>
     request<{ status: string } & AcquisitionStats>('/acquisition/stats')

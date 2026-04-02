@@ -37,11 +37,16 @@ def acquisition_queue_get(
 @router.post("/acquisition/queue")
 def acquisition_queue_add(data: Optional[dict[str, Any]] = Body(default=None)):
     data = data or {}
-    artist = data.get("artist_name", "").strip()
-    album = data.get("album_title", "").strip()
+    # Backward-compatible contract: accept both canonical backend keys
+    # (artist_name/album_title) and older frontend keys (artist/album).
+    artist = str(data.get("artist_name") or data.get("artist") or "").strip()
+    album = str(data.get("album_title") or data.get("album") or "").strip()
     if not artist or not album:
         return JSONResponse(
-            {"status": "error", "message": "artist_name and album_title required"},
+            {
+                "status": "error",
+                "message": "artist_name/album_title (or artist/album) required",
+            },
             status_code=400,
         )
     queue_id = rythmx_store.add_to_queue(
