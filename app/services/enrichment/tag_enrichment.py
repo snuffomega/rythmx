@@ -133,6 +133,7 @@ def enrich_tags(batch_size: int = 50, stop_event=None, on_progress=None) -> dict
     processed = 0
     skipped = 0
     errors = 0
+    missing_by_dir: dict[str, int] = {}
 
     try:
         with _connect() as conn:
@@ -170,9 +171,12 @@ def enrich_tags(batch_size: int = 50, stop_event=None, on_progress=None) -> dict
         abs_path = os.path.join(music_dir, rel_path)
 
         if not os.path.isfile(abs_path):
-            logger.warning(
-                "tag_enrichment: file not found for track %s: %s", track_id, abs_path
-            )
+            missing_dir = os.path.dirname(abs_path) or music_dir
+            missing_by_dir[missing_dir] = missing_by_dir.get(missing_dir, 0) + 1
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(
+                    "tag_enrichment: file not found for track %s: %s", track_id, abs_path
+                )
             skipped += 1
             if on_progress:
                 on_progress(processed, skipped, errors, len(rows))
@@ -206,6 +210,25 @@ def enrich_tags(batch_size: int = 50, stop_event=None, on_progress=None) -> dict
         processed += len(batch)
         if on_progress:
             on_progress(processed, skipped, errors, len(rows))
+
+    if missing_by_dir:
+        total_missing = sum(missing_by_dir.values())
+        sorted_dirs = sorted(
+            missing_by_dir.items(),
+            key=lambda kv: (-kv[1], kv[0]),
+        )
+        top_dirs = sorted_dirs[:5]
+        dir_summary = ", ".join(f"{path} ({count})" for path, count in top_dirs)
+        extra = ""
+        if len(sorted_dirs) > len(top_dirs):
+            extra = f" (+{len(sorted_dirs) - len(top_dirs)} more folders)"
+        logger.warning(
+            "tag_enrichment: %d files missing across %d folders: %s%s (enable DEBUG for per-file paths)",
+            total_missing,
+            len(missing_by_dir),
+            dir_summary,
+            extra,
+        )
 
     logger.info(
         "tag_enrichment: processed=%d skipped=%d errors=%d",
