@@ -126,3 +126,21 @@ def delete_forge_build(
         cur = conn.execute("DELETE FROM forge_builds WHERE id = ?", (build_id,))
         return (cur.rowcount or 0) > 0
 
+
+def update_forge_build_status(
+    connect: Callable[[], sqlite3.Connection],
+    build_id: str,
+    status: str,
+) -> bool:
+    safe_status = _normalize_status(status)
+    now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+    with connect() as conn:
+        cur = conn.execute(
+            """
+            UPDATE forge_builds
+            SET status = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (safe_status, now, build_id),
+        )
+        return (cur.rowcount or 0) > 0

@@ -443,6 +443,17 @@ export const forgeBuildsApi = {
     request<{ status: string; deleted: boolean }>(`/forge/builds/${encodeURIComponent(id)}`, {
       method: 'DELETE',
     }).then(r => r.deleted),
+  publish: (id: string, name?: string) =>
+    request<{
+      status: string;
+      build_id: string;
+      platform: string;
+      platform_playlist_id: string;
+      playlist: { id: string; name: string; track_count: number };
+    }>(`/forge/builds/${encodeURIComponent(id)}/publish`, {
+      method: 'POST',
+      body: JSON.stringify(name ? { name } : {}),
+    }),
 };
 
 export const libraryPlaylistsApi = {

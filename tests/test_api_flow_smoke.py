@@ -416,3 +416,78 @@ def test_forge_build_get_and_delete_contract(monkeypatch):
     assert missing_delete.status_code == 404
     del_body = json.loads(missing_delete.body.decode("utf-8"))
     assert del_body["code"] == "FORGE_BUILD_NOT_FOUND"
+
+
+def test_forge_build_publish_contract(monkeypatch):
+    fake_build = {
+        "id": "build-1",
+        "name": "Build 1",
+        "source": "manual",
+        "status": "ready",
+        "run_mode": "build",
+        "track_list": [{"track_id": "trk-1"}, {"track_id": "trk-2"}, {"track_id": "trk-1"}],
+        "summary": {},
+        "item_count": 3,
+        "created_at": "2026-04-02T20:00:00",
+        "updated_at": "2026-04-02T20:00:00",
+    }
+    calls = {"upsert": None, "status": None}
+
+    class _FakePusher:
+        @staticmethod
+        def push_playlist(_name, _track_ids):
+            return "platform-123"
+
+    monkeypatch.setattr(forge.rythmx_store, "get_forge_build", lambda build_id: fake_build)
+    monkeypatch.setattr(forge, "_get_library_platform", lambda: "navidrome")
+    monkeypatch.setattr(forge, "get_playlist_pusher", lambda: _FakePusher())
+    monkeypatch.setattr(
+        forge.rythmx_store,
+        "upsert_forge_playlist",
+        lambda playlist_id, name, track_ids, pushed_at=None: calls.__setitem__(
+            "upsert",
+            {"playlist_id": playlist_id, "name": name, "track_ids": track_ids},
+        )
+        or {"id": playlist_id, "name": name, "track_count": len(track_ids)},
+    )
+    monkeypatch.setattr(
+        forge.rythmx_store,
+        "update_forge_build_status",
+        lambda build_id, status: calls.__setitem__("status", {"build_id": build_id, "status": status}) or True,
+    )
+
+    result = forge.forge_builds_publish("build-1", {"name": "Published Build 1"})
+    assert result["status"] == "ok"
+    assert result["platform"] == "navidrome"
+    assert result["platform_playlist_id"] == "platform-123"
+    assert result["playlist"]["id"] == "build-1"
+    assert calls["upsert"] == {
+        "playlist_id": "build-1",
+        "name": "Published Build 1",
+        "track_ids": ["trk-1", "trk-2"],
+    }
+    assert calls["status"] == {"build_id": "build-1", "status": "published"}
+
+
+def test_forge_build_publish_jellyfin_stub(monkeypatch):
+    fake_build = {
+        "id": "build-1",
+        "name": "Build 1",
+        "source": "manual",
+        "status": "ready",
+        "run_mode": "build",
+        "track_list": [{"track_id": "trk-1"}],
+        "summary": {},
+        "item_count": 1,
+        "created_at": "2026-04-02T20:00:00",
+        "updated_at": "2026-04-02T20:00:00",
+    }
+    monkeypatch.setattr(forge.rythmx_store, "get_forge_build", lambda build_id: fake_build)
+    monkeypatch.setattr(forge, "_get_library_platform", lambda: "jellyfin")
+
+    result = forge.forge_builds_publish("build-1", None)
+    assert isinstance(result, JSONResponse)
+    assert result.status_code == 501
+    body = json.loads(result.body.decode("utf-8"))
+    assert body["status"] == "error"
+    assert body["code"] == "FORGE_PUBLISH_NOT_IMPLEMENTED"

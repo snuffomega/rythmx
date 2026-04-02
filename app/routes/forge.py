@@ -11,6 +11,8 @@ from typing import Any, Optional
 from fastapi import APIRouter, Body, Depends, Query
 from fastapi.responses import JSONResponse
 
+from app import config
+from app.db import get_playlist_pusher
 from app.db import rythmx_store
 from app.dependencies import verify_api_key
 from app.services.forge import discovery_runner, new_music_runner
@@ -47,6 +49,44 @@ def _validate_build_payload(data: dict[str, Any]) -> str | None:
     if summary is not None and not isinstance(summary, dict):
         return "summary must be an object"
 
+    return None
+
+
+def _get_library_platform() -> str:
+    platform = str(config.LIBRARY_PLATFORM or "plex").strip().lower()
+    try:
+        saved = rythmx_store.get_setting("library_platform")
+        if saved:
+            platform = str(saved).strip().lower()
+    except Exception:
+        pass
+    return platform
+
+
+def _extract_publish_track_ids(track_list: list[Any]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for item in track_list:
+        if not isinstance(item, dict):
+            continue
+        candidate = (
+            item.get("track_id")
+            or item.get("plex_rating_key")
+            or item.get("navidrome_track_id")
+        )
+        tid = str(candidate or "").strip()
+        if not tid or tid in seen:
+            continue
+        seen.add(tid)
+        ordered.append(tid)
+    return ordered
+
+
+def _push_playlist(pusher: Any, playlist_name: str, track_ids: list[str]) -> str | None:
+    if hasattr(pusher, "push_playlist"):
+        return pusher.push_playlist(playlist_name, track_ids)
+    if hasattr(pusher, "create_or_update_playlist"):
+        return pusher.create_or_update_playlist(playlist_name, track_ids)
     return None
 
 
@@ -277,4 +317,63 @@ def forge_builds_delete(build_id: str):
     if not deleted:
         return _error("Build not found", status_code=404, code="FORGE_BUILD_NOT_FOUND")
     return {"status": "ok", "deleted": True}
+
+
+@router.post("/forge/builds/{build_id}/publish")
+def forge_builds_publish(build_id: str, data: Optional[dict[str, Any]] = Body(default=None)):
+    build = rythmx_store.get_forge_build(build_id)
+    if not build:
+        return _error("Build not found", status_code=404, code="FORGE_BUILD_NOT_FOUND")
+
+    platform = _get_library_platform()
+    if platform == "jellyfin":
+        return _error(
+            "Jellyfin publish is planned but not implemented yet.",
+            status_code=501,
+            code="FORGE_PUBLISH_NOT_IMPLEMENTED",
+        )
+
+    request_data = data or {}
+    playlist_name = str(request_data.get("name") or build.get("name") or "").strip()
+    if not playlist_name:
+        playlist_name = f"Build {build_id}"
+
+    track_ids = _extract_publish_track_ids(build.get("track_list") or [])
+    if not track_ids:
+        return _error(
+            "Build has no publishable library track IDs (track_id / plex_rating_key / navidrome_track_id).",
+            status_code=400,
+            code="FORGE_PUBLISH_EMPTY",
+        )
+
+    pusher = get_playlist_pusher()
+    try:
+        platform_playlist_id = _push_playlist(pusher, playlist_name, track_ids)
+    except Exception as exc:
+        logger.error("forge/builds/%s/publish: pusher error: %s", build_id, exc, exc_info=True)
+        return _error(str(exc), status_code=500, code="FORGE_PUBLISH_FAILED")
+
+    if not platform_playlist_id:
+        return _error(
+            "Platform publish failed; check platform credentials/logs.",
+            status_code=502,
+            code="FORGE_PUBLISH_FAILED",
+        )
+
+    pushed_at = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+    playlist = rythmx_store.upsert_forge_playlist(
+        playlist_id=build_id,
+        name=playlist_name,
+        track_ids=track_ids,
+        pushed_at=pushed_at,
+    )
+    rythmx_store.update_forge_build_status(build_id, "published")
+
+    return {
+        "status": "ok",
+        "build_id": build_id,
+        "playlist": playlist,
+        "platform": platform,
+        "platform_playlist_id": str(platform_playlist_id),
+    }
 

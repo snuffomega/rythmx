@@ -1,5 +1,5 @@
 ﻿import { useMemo, useState } from 'react';
-import { Layers, Loader2, RefreshCw, Trash2 } from 'lucide-react';
+import { Layers, Loader2, RefreshCw, Send, Trash2 } from 'lucide-react';
 import { useApi } from '../hooks/useApi';
 import { forgeBuildsApi } from '../services/api';
 import { useToastStore } from '../stores/useToastStore';
@@ -75,6 +75,7 @@ export function ForgeBuilder() {
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [publishingId, setPublishingId] = useState<string | null>(null);
 
   const { data: builds, loading, error, refetch } = useApi(() => forgeBuildsApi.list(undefined, 200));
 
@@ -97,6 +98,22 @@ export function ForgeBuilder() {
       toastError('Failed to delete build');
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const handlePublish = async (build: ForgeBuild) => {
+    setPublishingId(build.id);
+    try {
+      const result = await forgeBuildsApi.publish(build.id, build.name);
+      toastSuccess(
+        `Published "${result.playlist.name}" (${result.playlist.track_count} tracks) to ${result.platform}`
+      );
+      refetch();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to publish build';
+      toastError(message);
+    } finally {
+      setPublishingId(null);
     }
   };
 
@@ -165,6 +182,19 @@ export function ForgeBuilder() {
                     ID: {selectedBuild.id} | {selectedBuild.source} | {selectedBuild.status}
                   </p>
                 </div>
+
+                <button
+                  onClick={() => handlePublish(selectedBuild)}
+                  disabled={publishingId === selectedBuild.id}
+                  className="btn-primary inline-flex items-center gap-2 text-xs w-fit"
+                >
+                  {publishingId === selectedBuild.id ? (
+                    <Loader2 size={12} className="animate-spin" />
+                  ) : (
+                    <Send size={12} />
+                  )}
+                  Publish
+                </button>
 
                 <div>
                   <p className="text-text-muted text-xs uppercase tracking-wide mb-2">Summary</p>

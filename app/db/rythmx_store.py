@@ -10,6 +10,7 @@ from app import config
 from app.db.store import api_keys as _api_keys_store
 from app.db.store import download_queue as _download_queue_store
 from app.db.store import forge_builds as _forge_builds_store
+from app.db.store import forge_playlists as _forge_playlists_store
 from app.db.store import history as _history_store
 from app.db.store import image_cache as _image_cache_store
 from app.db.store import playlist as _playlist_store
@@ -399,4 +400,23 @@ def get_forge_build(build_id: str) -> dict | None:
 
 def delete_forge_build(build_id: str) -> bool:
     return _forge_builds_store.delete_forge_build(_connect, build_id)
+
+
+def update_forge_build_status(build_id: str, status: str) -> bool:
+    return _forge_builds_store.update_forge_build_status(_connect, build_id, status)
+
+
+def upsert_forge_playlist(
+    playlist_id: str,
+    name: str,
+    track_ids: list[str],
+    pushed_at: str | None = None,
+) -> dict:
+    return _forge_playlists_store.upsert_forge_playlist(
+        _connect,
+        playlist_id=playlist_id,
+        name=name,
+        track_ids=track_ids,
+        pushed_at=pushed_at,
+    )
 
