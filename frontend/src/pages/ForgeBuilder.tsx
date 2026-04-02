@@ -1,4 +1,4 @@
-﻿import { useMemo, useState } from 'react';
+﻿import { useEffect, useMemo, useState } from 'react';
 import { Download, Layers, Loader2, RefreshCw, Send, Trash2 } from 'lucide-react';
 import { useApi } from '../hooks/useApi';
 import { forgeBuildsApi } from '../services/api';
@@ -77,6 +77,11 @@ export function ForgeBuilder() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [publishingId, setPublishingId] = useState<string | null>(null);
   const [fetchingId, setFetchingId] = useState<string | null>(null);
+  const [savingId, setSavingId] = useState<string | null>(null);
+
+  const [editName, setEditName] = useState('');
+  const [editStatus, setEditStatus] = useState<ForgeBuild['status']>('ready');
+  const [editSummary, setEditSummary] = useState('{}');
 
   const { data: builds, loading, error, refetch } = useApi(() => forgeBuildsApi.list(undefined, 200));
 
@@ -85,6 +90,32 @@ export function ForgeBuilder() {
     () => orderedBuilds.find(b => b.id === selectedId) ?? orderedBuilds[0] ?? null,
     [orderedBuilds, selectedId]
   );
+
+  useEffect(() => {
+    if (!selectedBuild) {
+      setEditName('');
+      setEditStatus('ready');
+      setEditSummary('{}');
+      return;
+    }
+    setEditName(selectedBuild.name || '');
+    setEditStatus(selectedBuild.status);
+    setEditSummary(JSON.stringify(selectedBuild.summary ?? {}, null, 2));
+  }, [selectedBuild?.id, selectedBuild?.updated_at]);
+
+  const extractErrorMessage = (err: unknown, fallback: string) => {
+    if (!(err instanceof Error)) return fallback;
+    const raw = err.message || '';
+    if (raw.trim().startsWith('{')) {
+      try {
+        const parsed = JSON.parse(raw) as { message?: string; error?: string };
+        return parsed.message || parsed.error || fallback;
+      } catch {
+        return raw || fallback;
+      }
+    }
+    return raw || fallback;
+  };
 
   const handleDelete = async (build: ForgeBuild) => {
     setDeletingId(build.id);
@@ -111,25 +142,10 @@ export function ForgeBuilder() {
       );
       refetch();
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to publish build';
-      toastError(message);
+      toastError(extractErrorMessage(err, 'Failed to publish build'));
     } finally {
       setPublishingId(null);
     }
-  };
-
-  const extractErrorMessage = (err: unknown, fallback: string) => {
-    if (!(err instanceof Error)) return fallback;
-    const raw = err.message || '';
-    if (raw.trim().startsWith('{')) {
-      try {
-        const parsed = JSON.parse(raw) as { message?: string; error?: string };
-        return parsed.message || parsed.error || fallback;
-      } catch {
-        return raw || fallback;
-      }
-    }
-    return raw || fallback;
   };
 
   const handleFetch = async (build: ForgeBuild) => {
@@ -141,6 +157,47 @@ export function ForgeBuilder() {
       toastError(extractErrorMessage(err, 'Failed to start fetch'));
     } finally {
       setFetchingId(null);
+    }
+  };
+
+  const originalSummaryText = selectedBuild
+    ? JSON.stringify(selectedBuild.summary ?? {}, null, 2)
+    : '{}';
+  const normalizedName = editName.trim();
+  const isDirty = !!selectedBuild && (
+    normalizedName !== (selectedBuild.name || '').trim() ||
+    editStatus !== selectedBuild.status ||
+    editSummary.trim() !== originalSummaryText.trim()
+  );
+
+  const handleSave = async (build: ForgeBuild) => {
+    let parsedSummary: Record<string, unknown>;
+    try {
+      parsedSummary = JSON.parse(editSummary || '{}') as Record<string, unknown>;
+      if (!parsedSummary || Array.isArray(parsedSummary) || typeof parsedSummary !== 'object') {
+        throw new Error('Summary must be a JSON object');
+      }
+    } catch {
+      toastError('Summary must be valid JSON object syntax');
+      return;
+    }
+
+    setSavingId(build.id);
+    try {
+      const updated = await forgeBuildsApi.update(build.id, {
+        name: normalizedName || build.name,
+        status: editStatus,
+        summary: parsedSummary,
+      });
+      toastSuccess(`Saved "${updated.name}"`);
+      setEditName(updated.name || '');
+      setEditStatus(updated.status);
+      setEditSummary(JSON.stringify(updated.summary ?? {}, null, 2));
+      refetch();
+    } catch (err) {
+      toastError(extractErrorMessage(err, 'Failed to save build'));
+    } finally {
+      setSavingId(null);
     }
   };
 
@@ -210,6 +267,54 @@ export function ForgeBuilder() {
                   </p>
                 </div>
 
+                <div className="space-y-3 bg-[#0b0b0b] border border-[#1a1a1a] p-3">
+                  <div>
+                    <p className="text-text-muted text-xs uppercase tracking-wide mb-1.5">Build Name</p>
+                    <input
+                      value={editName}
+                      onChange={e => setEditName(e.target.value)}
+                      className="w-full bg-[#111] border border-[#2a2a2a] text-text-primary text-sm px-3 py-1.5 focus:outline-none focus:border-accent"
+                    />
+                  </div>
+
+                  <div>
+                    <p className="text-text-muted text-xs uppercase tracking-wide mb-1.5">Status</p>
+                    <select
+                      value={editStatus}
+                      onChange={e => setEditStatus(e.target.value as ForgeBuild['status'])}
+                      className="bg-[#111] border border-[#2a2a2a] text-text-primary text-sm px-3 py-1.5 focus:outline-none focus:border-accent"
+                    >
+                      <option value="queued">queued</option>
+                      <option value="building">building</option>
+                      <option value="ready">ready</option>
+                      <option value="published">published</option>
+                      <option value="failed">failed</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <p className="text-text-muted text-xs uppercase tracking-wide mb-1.5">Summary (JSON Object)</p>
+                    <textarea
+                      value={editSummary}
+                      onChange={e => setEditSummary(e.target.value)}
+                      rows={8}
+                      className="w-full bg-[#111] border border-[#2a2a2a] text-text-primary text-xs font-mono px-3 py-2 focus:outline-none focus:border-accent"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleSave(selectedBuild)}
+                      disabled={!isDirty || savingId === selectedBuild.id}
+                      className="btn-secondary inline-flex items-center gap-2 text-xs w-fit disabled:opacity-40"
+                    >
+                      {savingId === selectedBuild.id ? <Loader2 size={12} className="animate-spin" /> : null}
+                      Save
+                    </button>
+                    {!isDirty && <span className="text-[#444] text-[11px]">No unsaved changes</span>}
+                  </div>
+                </div>
+
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => handleFetch(selectedBuild)}
@@ -238,7 +343,7 @@ export function ForgeBuilder() {
                 </div>
 
                 <div>
-                  <p className="text-text-muted text-xs uppercase tracking-wide mb-2">Summary</p>
+                  <p className="text-text-muted text-xs uppercase tracking-wide mb-2">Saved Summary</p>
                   <pre className="text-[11px] text-[#666] bg-[#0b0b0b] border border-[#1a1a1a] p-3 overflow-auto max-h-40">
 {JSON.stringify(selectedBuild.summary ?? {}, null, 2)}
                   </pre>
