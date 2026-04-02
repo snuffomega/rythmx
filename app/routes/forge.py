@@ -5,6 +5,7 @@ Router is registered at /api/v1 in main.py.
 """
 import logging
 import threading
+from urllib.parse import urlparse
 from datetime import datetime
 from typing import Any, Optional
 
@@ -15,6 +16,7 @@ from app import config
 from app.db import get_playlist_pusher
 from app.db import rythmx_store
 from app.dependencies import verify_api_key
+from app.services import playlist_importer
 from app.services.forge import discovery_runner, new_music_runner
 
 logger = logging.getLogger(__name__)
@@ -88,6 +90,39 @@ def _push_playlist(pusher: Any, playlist_name: str, track_ids: list[str]) -> str
     if hasattr(pusher, "create_or_update_playlist"):
         return pusher.create_or_update_playlist(playlist_name, track_ids)
     return None
+
+
+def _detect_sync_source(source_url: str) -> str | None:
+    parsed = urlparse(source_url)
+    host = parsed.netloc.lower()
+    if "spotify.com" in host or source_url.strip().startswith("spotify:"):
+        return "spotify"
+    if "last.fm" in host:
+        return "lastfm"
+    if "deezer.com" in host:
+        return "deezer"
+    return None
+
+
+def _import_sync_source(source: str, source_url: str) -> dict:
+    if source == "spotify":
+        return playlist_importer.import_from_spotify(source_url)
+    if source == "lastfm":
+        return playlist_importer.import_from_lastfm(source_url)
+    if source == "deezer":
+        return playlist_importer.import_from_deezer(source_url)
+    return {"status": "error", "message": f"Unsupported source '{source}'"}
+
+
+def _shape_sync_track(track: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "track_id": track.get("plex_rating_key"),
+        "spotify_track_id": track.get("spotify_track_id", ""),
+        "track_name": track.get("track_name", ""),
+        "artist_name": track.get("artist_name", ""),
+        "album_name": track.get("album_name", ""),
+        "is_owned": bool(track.get("is_owned", False)),
+    }
 
 
 @router.get("/forge/pipeline-history")
@@ -253,6 +288,77 @@ def discovery_run(data: Optional[dict[str, Any]] = Body(default=None)):
 def discovery_get_results():
     """Return the latest Forge Discovery result set."""
     return {"status": "ok", "artists": discovery_runner.get_results()}
+
+
+# ---------------------------------------------------------------------------
+# Sync endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.post("/forge/sync/load")
+def forge_sync_load(data: Optional[dict[str, Any]] = Body(default=None)):
+    payload = data or {}
+    source_url = str(payload.get("source_url") or "").strip()
+    if not source_url:
+        return _error(
+            "source_url is required",
+            status_code=400,
+            code="FORGE_VALIDATION_ERROR",
+        )
+
+    source = str(payload.get("source") or "").strip().lower() or _detect_sync_source(source_url)
+    if source not in {"spotify", "lastfm", "deezer"}:
+        return _error(
+            "Unable to detect source. Supported URLs: Spotify, Last.fm, Deezer.",
+            status_code=400,
+            code="FORGE_SYNC_UNSUPPORTED_SOURCE",
+        )
+
+    result = _import_sync_source(source, source_url)
+    if result.get("status") != "ok":
+        return _error(
+            str(result.get("message") or "Sync load failed"),
+            status_code=400,
+            code="FORGE_SYNC_LOAD_FAILED",
+        )
+
+    shaped_tracks = [_shape_sync_track(t) for t in (result.get("tracks") or [])]
+    total = int(result.get("track_count") or len(shaped_tracks))
+    owned = int(result.get("owned_count") or sum(1 for t in shaped_tracks if t.get("is_owned")))
+    missing = max(0, total - owned)
+    queue_build = bool(payload.get("queue_build", True))
+
+    build = None
+    if queue_build:
+        explicit_name = str(payload.get("name") or "").strip()
+        default_name = str(result.get("name") or f"Sync {source.title()}").strip()
+        build_name = explicit_name or default_name
+        build = rythmx_store.create_forge_build(
+            name=build_name,
+            source="sync",
+            status="ready",
+            run_mode="build",
+            track_list=shaped_tracks,
+            summary={
+                "source": source,
+                "source_url": source_url,
+                "track_count": total,
+                "owned_count": owned,
+                "missing_count": missing,
+            },
+        )
+
+    return {
+        "status": "ok",
+        "source": source,
+        "name": result.get("name"),
+        "track_count": total,
+        "owned_count": owned,
+        "missing_count": missing,
+        "queue_build": queue_build,
+        "build": build,
+        "tracks": shaped_tracks,
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -456,6 +456,31 @@ export const forgeBuildsApi = {
     }),
 };
 
+export const forgeSyncApi = {
+  load: (data: { source_url: string; source?: 'spotify' | 'lastfm' | 'deezer'; queue_build?: boolean; name?: string }) =>
+    request<{
+      status: string;
+      source: string;
+      name?: string;
+      track_count: number;
+      owned_count: number;
+      missing_count: number;
+      queue_build: boolean;
+      build?: ForgeBuild | null;
+      tracks: Array<{
+        track_id?: string;
+        spotify_track_id?: string;
+        track_name: string;
+        artist_name: string;
+        album_name: string;
+        is_owned: boolean;
+      }>;
+    }>('/forge/sync/load', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+};
+
 export const libraryPlaylistsApi = {
   list: () =>
     request<{ status: string; playlists: LibPlaylist[] }>('/library/playlists')

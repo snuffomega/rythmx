@@ -1,10 +1,13 @@
 import { useState } from 'react';
 import { Link2, Loader2 } from 'lucide-react';
+import { useNavigate } from '@tanstack/react-router';
 import { useToastStore } from '../stores/useToastStore';
+import { forgeSyncApi } from '../services/api';
 
 export function ForgeSync() {
+  const navigate = useNavigate();
   const toast = {
-    info: useToastStore(s => s.info),
+    success: useToastStore(s => s.success),
     error: useToastStore(s => s.error),
   };
 
@@ -16,8 +19,17 @@ export function ForgeSync() {
     if (!trimmed) return;
     setLoading(true);
     try {
-      // Backend wiring: POST /api/v1/forge/sync/load - Phase 27d
-      toast.info('URL sync backend coming in Phase 27d');
+      const result = await forgeSyncApi.load({
+        source_url: trimmed,
+        queue_build: true,
+      });
+      toast.success(
+        `Loaded ${result.track_count} tracks (${result.owned_count} owned) and queued build in Builder`
+      );
+      setTimeout(() => navigate({ to: '/forge/builder' }), 400);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to load source URL';
+      toast.error(message);
     } finally {
       setLoading(false);
     }
@@ -55,7 +67,7 @@ export function ForgeSync() {
           </button>
         </div>
         <p className="text-[#444] text-xs">
-          Supported: Spotify and YouTube Music playlist URLs | File import (M3U, CSV) coming later
+          Supported: Spotify, Last.fm, and Deezer playlist URLs | File import (M3U, CSV) coming later
         </p>
       </div>
     </div>

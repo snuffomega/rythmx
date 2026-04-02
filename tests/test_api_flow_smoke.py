@@ -491,3 +491,107 @@ def test_forge_build_publish_jellyfin_stub(monkeypatch):
     body = json.loads(result.body.decode("utf-8"))
     assert body["status"] == "error"
     assert body["code"] == "FORGE_PUBLISH_NOT_IMPLEMENTED"
+
+
+def test_forge_sync_load_validation_requires_source_url():
+    result = forge.forge_sync_load({})
+    assert isinstance(result, JSONResponse)
+    assert result.status_code == 400
+    body = json.loads(result.body.decode("utf-8"))
+    assert body["status"] == "error"
+    assert body["code"] == "FORGE_VALIDATION_ERROR"
+
+
+def test_forge_sync_load_rejects_unknown_source():
+    result = forge.forge_sync_load({"source_url": "https://example.com/playlist/123"})
+    assert isinstance(result, JSONResponse)
+    assert result.status_code == 400
+    body = json.loads(result.body.decode("utf-8"))
+    assert body["status"] == "error"
+    assert body["code"] == "FORGE_SYNC_UNSUPPORTED_SOURCE"
+
+
+def test_forge_sync_load_create_build_contract(monkeypatch):
+    fake_import = {
+        "status": "ok",
+        "name": "Imported Playlist",
+        "track_count": 2,
+        "owned_count": 1,
+        "tracks": [
+            {
+                "track_name": "Track A",
+                "artist_name": "Artist A",
+                "album_name": "Album A",
+                "spotify_track_id": "sp-a",
+                "is_owned": True,
+                "plex_rating_key": "trk-a",
+            },
+            {
+                "track_name": "Track B",
+                "artist_name": "Artist B",
+                "album_name": "Album B",
+                "spotify_track_id": "",
+                "is_owned": False,
+                "plex_rating_key": None,
+            },
+        ],
+    }
+    calls = {"create": None}
+    fake_build = {"id": "sync-build-1", "source": "sync", "status": "ready"}
+
+    monkeypatch.setattr(forge, "_import_sync_source", lambda source, source_url: fake_import)
+    monkeypatch.setattr(
+        forge.rythmx_store,
+        "create_forge_build",
+        lambda **kwargs: calls.__setitem__("create", kwargs) or fake_build,
+    )
+
+    result = forge.forge_sync_load({"source_url": "https://open.spotify.com/playlist/abc"})
+    assert result["status"] == "ok"
+    assert result["source"] == "spotify"
+    assert result["track_count"] == 2
+    assert result["owned_count"] == 1
+    assert result["missing_count"] == 1
+    assert result["queue_build"] is True
+    assert result["build"] == fake_build
+    assert len(result["tracks"]) == 2
+    assert result["tracks"][0]["track_id"] == "trk-a"
+    assert calls["create"] is not None
+    assert calls["create"]["source"] == "sync"
+    assert calls["create"]["run_mode"] == "build"
+
+
+def test_forge_sync_load_no_queue_build(monkeypatch):
+    fake_import = {
+        "status": "ok",
+        "name": "Imported Playlist",
+        "track_count": 1,
+        "owned_count": 0,
+        "tracks": [
+            {
+                "track_name": "Track A",
+                "artist_name": "Artist A",
+                "album_name": "Album A",
+                "spotify_track_id": "sp-a",
+                "is_owned": False,
+                "plex_rating_key": None,
+            },
+        ],
+    }
+    calls = {"create_called": False}
+
+    monkeypatch.setattr(forge, "_import_sync_source", lambda source, source_url: fake_import)
+    monkeypatch.setattr(
+        forge.rythmx_store,
+        "create_forge_build",
+        lambda **kwargs: calls.__setitem__("create_called", True) or {"id": "unused"},
+    )
+
+    result = forge.forge_sync_load(
+        {"source_url": "https://www.last.fm/user/test/playlists/123", "queue_build": False}
+    )
+    assert result["status"] == "ok"
+    assert result["source"] == "lastfm"
+    assert result["queue_build"] is False
+    assert result["build"] is None
+    assert calls["create_called"] is False
