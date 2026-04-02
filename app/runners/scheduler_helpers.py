@@ -4,11 +4,23 @@ Helper logic extracted from scheduler.py to reduce monolith size.
 from __future__ import annotations
 
 import re
+import sqlite3
 import threading
 from datetime import datetime
 from datetime import date as _date
 
 from app import config
+
+NON_FATAL_SCHEDULER_ERRORS = (
+    ImportError,
+    AttributeError,
+    RuntimeError,
+    OSError,
+    ValueError,
+    TypeError,
+    KeyError,
+    sqlite3.Error,
+)
 
 
 def parse_cycle_settings(settings: dict) -> dict:
@@ -129,7 +141,7 @@ def run_scheduler_tick(settings: dict, run_cycle_fn, store, logger) -> bool:
                 name="lib-pipeline",
             ).start()
             logger.info("Library auto-pipeline triggered by scheduler")
-        except Exception as e:
+        except NON_FATAL_SCHEDULER_ERRORS as e:
             logger.warning("Library auto-pipeline launch failed: %s", e)
     return ran_cc
 
@@ -140,7 +152,7 @@ def run_acquisition_worker(logger) -> None:
         from app.services import acquisition
 
         acquisition.check_queue()
-    except Exception as e:
+    except NON_FATAL_SCHEDULER_ERRORS as e:
         logger.warning("Acquisition worker error (non-fatal): %s", e)
 
 
@@ -150,7 +162,7 @@ def warm_image_cache(logger) -> None:
         from app.services import image_service as img_service
 
         img_service.warm_image_cache()
-    except Exception as e:
+    except NON_FATAL_SCHEDULER_ERRORS as e:
         logger.debug("Image warmer error (non-fatal): %s", e)
 
 
@@ -256,7 +268,7 @@ def auto_sync_playlist(
         else:
             logger.debug("Stage 8: no auto-sync handler for source='%s' (playlist='%s')", source, name)
 
-    except Exception as e:
+    except NON_FATAL_SCHEDULER_ERRORS as e:
         logger.warning("Stage 8: auto-sync failed for playlist '%s': %s", name, e)
 
 
@@ -384,7 +396,7 @@ def build_named_playlist(
                 if plex_playlist_id:
                     store.update_playlist_plex_id(playlist_name_date, plex_playlist_id)
 
-    except Exception as e:
+    except NON_FATAL_SCHEDULER_ERRORS as e:
         logger.warning("Stage 7 playlist build failed (non-fatal): %s", e)
 
     return playlist_tracks, plex_playlist_id
@@ -446,7 +458,7 @@ def write_cycle_history(
                 status=entry_status,
                 reason=entry_reason,
             )
-    except Exception as e:
+    except NON_FATAL_SCHEDULER_ERRORS as e:
         logger.warning("History write failed (non-fatal): %s", e)
 
 
