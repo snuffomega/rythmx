@@ -4,7 +4,8 @@ scripts/test_identity.py — standalone test for the identity resolution engine.
 
 Runs a handful of known artists through identity_resolver.resolve_artist() against
 the live Last.fm and iTunes APIs. Prints resolution results so you can visually
-verify confidence scores and track overlap before enabling the feature in the CC pipeline.
+verify confidence scores and track overlap before wiring the feature into
+new-music/discovery flows.
 
 Usage (from project root):
     python scripts/test_identity.py

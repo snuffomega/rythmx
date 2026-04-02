@@ -2,8 +2,8 @@
 soulsync_reader.py — SoulSync enrichment API reader.
 
 SoulSync is an enrichment API source, not a library platform. It does not
-populate lib_* tables. The CC pipeline uses these functions for identity
-resolution (artist IDs), ownership checks, and taste-graph queries.
+populate lib_* tables. Discovery and identity workflows use these functions
+for artist-ID lookup, ownership checks, and taste-graph queries.
 
 To select a library platform (Plex/Navidrome/Jellyfin), see app/db/__init__.py
 and the LIBRARY_PLATFORM env var.

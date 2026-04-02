@@ -1,5 +1,5 @@
 """
-tests/test_scheduler.py — CC pipeline stage boundary tests.
+tests/test_scheduler.py — scheduler new-music pipeline stage boundary tests.
 
 Mocks all external I/O so tests run without any database, network, or
 filesystem access. Tests verify stage behaviour at each boundary, not

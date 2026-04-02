@@ -48,7 +48,7 @@ def sync_library() -> dict:
     are updated on existing rows.
 
     Items removed from Plex are soft-deleted (removed_at timestamp) rather than
-    hard-deleted, so CC pipeline owned-checks don't false-positive on stale data.
+    hard-deleted, so ownership checks don't false-positive on stale data.
 
     Micro-batched: commits every 50 artists to keep WAL size manageable.
     Returns a dict with track_count, album_count, artist_count, sync_duration_s.

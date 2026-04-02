@@ -116,7 +116,7 @@ def create_playlist_meta(
     mode: str = "library_only",
     max_tracks: int = 50,
 ) -> None:
-    """Create a playlist metadata entry. Updates source/mode if source='new_music'."""
+    """Create playlist metadata; updates source/mode for Forge new-music sourced rows."""
     with connect() as conn:
         conn.execute(
             """INSERT OR IGNORE INTO playlists (name, source, source_url, auto_sync, mode, max_tracks)
