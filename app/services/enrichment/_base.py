@@ -88,39 +88,61 @@ def run_enrichment_loop(
         return {"enriched": 0, "skipped": 0, "failed": 0, "remaining": 0}
 
     # ---- 2. Per-item processing ----
-    for row in rows:
-        if stop_event and stop_event.is_set():
-            break
+    try:
+        conn = _connect()
+    except Exception as e:
+        logger.error("%s: could not open worker DB connection: %s", worker_name, e)
+        return {
+            "enriched": 0,
+            "skipped": 0,
+            "failed": len(rows),
+            "remaining": -1,
+            "error": str(e),
+        }
 
-        entity_id = row[entity_id_col]
+    try:
+        for row in rows:
+            if stop_event and stop_event.is_set():
+                break
 
-        try:
-            conn = _connect()
-        except Exception:
-            failed += 1
-            continue
+            entity_id = row[entity_id_col]
 
-        try:
-            result = process_item(conn, row)
-            if result == "found":
-                enriched += 1
-            else:
-                skipped += 1
-            if on_progress:
-                on_progress(enriched, skipped, failed, len(rows))
-        except Exception as e:
-            logger.warning("%s: failed for '%s': %s", worker_name, entity_id, e)
-            write_enrichment_meta(conn, source, entity_type, str(entity_id),
-                                  "error", error_msg=str(e)[:200])
-            failed += 1
-            if on_progress:
-                on_progress(enriched, skipped, failed, len(rows))
-        finally:
             try:
+                result = process_item(conn, row)
+                if result == "found":
+                    enriched += 1
+                else:
+                    skipped += 1
                 conn.commit()
-                conn.close()
-            except Exception:
-                pass
+                if on_progress:
+                    on_progress(enriched, skipped, failed, len(rows))
+            except Exception as e:
+                # Ensure partial writes from process_item do not leak into the next item.
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                logger.warning("%s: failed for '%s': %s", worker_name, entity_id, e)
+                write_enrichment_meta(
+                    conn,
+                    source,
+                    entity_type,
+                    str(entity_id),
+                    "error",
+                    error_msg=str(e)[:200],
+                )
+                try:
+                    conn.commit()
+                except Exception:
+                    pass
+                failed += 1
+                if on_progress:
+                    on_progress(enriched, skipped, failed, len(rows))
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
     # ---- 3. Count remaining ----
     try:

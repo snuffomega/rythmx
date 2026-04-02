@@ -21,6 +21,7 @@ Production deployment note (SHRTA Section 4):
     Nginx: proxy_read_timeout 3600s; proxy_send_timeout 3600s.
 """
 import asyncio
+import concurrent.futures
 import json
 import logging
 import threading
@@ -93,16 +94,33 @@ def broadcast(event: str, payload: dict) -> None:
     with _clients_lock:
         clients_snapshot = list(_clients)
 
+    futures: dict[concurrent.futures.Future, WebSocket] = {}
     dead: set[WebSocket] = set()
     for ws in clients_snapshot:
         try:
             fut = asyncio.run_coroutine_threadsafe(ws.send_text(message), _event_loop)
-            fut.result(timeout=5)
-        except TimeoutError:
-            # Event loop busy — do NOT prune. Client is likely still alive.
-            logger.debug("ws.broadcast: send to client timed out (kept alive)")
+            futures[fut] = ws
         except Exception:
+            # Could not schedule send for this socket.
             dead.add(ws)
+
+    if futures:
+        done, pending = concurrent.futures.wait(
+            futures.keys(),
+            timeout=5,
+            return_when=concurrent.futures.ALL_COMPLETED,
+        )
+
+        for fut in done:
+            ws = futures[fut]
+            try:
+                _ = fut.result()
+            except Exception:
+                dead.add(ws)
+
+        if pending:
+            # Event loop busy / slow client(s) — do NOT prune on timeout.
+            logger.debug("ws.broadcast: %d send(s) timed out (kept alive)", len(pending))
 
     if dead:
         with _clients_lock:
