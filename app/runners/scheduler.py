@@ -13,7 +13,6 @@ Cruise Control pipeline (7 stages):
   6. Queue downloads — acquisition worker (stub)
   7. Save history — rythmx.db; playlist from owned candidates
 """
-import re
 import threading
 import logging
 from datetime import datetime
@@ -119,23 +118,16 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
     # Load settings from rythmx.db (user overrides via UI take precedence over config defaults)
     settings = rythmx_store.get_all_settings()
 
-    min_listens = int(settings.get("min_listens", config.MIN_LISTENS))
-    lookback_days = int(settings.get("lookback_days", config.LOOKBACK_DAYS))
-    max_per_cycle = int(settings.get("max_per_cycle", config.MAX_PER_CYCLE))
-    period = settings.get("period", "1month")
-    auto_push = settings.get("auto_push_playlist", "false") == "true"
-    ignore_kw_raw = settings.get("nr_ignore_keywords", "") or config.IGNORE_KEYWORDS
-    ignore_keywords = [k.strip() for k in ignore_kw_raw.split(",") if k.strip()]
-    # Normalize: lowercase + strip punctuation so "Ballyhoo!" matches "ballyhoo"
-    _strip_punct = lambda s: re.sub(r"[^\w\s]", "", s).strip()
-    ignore_artists = {_strip_punct(a.strip().lower()) for a in settings.get("nr_ignore_artists", "").split(",") if a.strip()}
-    release_kinds_raw = settings.get("release_kinds") or config.RELEASE_KINDS
-    allowed_kinds = {k.strip().lower() for k in release_kinds_raw.split(",") if k.strip()}
-    include_features_raw = settings.get("include_features")
-    include_features = (
-        True if include_features_raw is None
-        else str(include_features_raw).lower() not in ("false", "0", "no")
-    )
+    parsed = _scheduler_helpers.parse_cycle_settings(settings)
+    min_listens = parsed["min_listens"]
+    lookback_days = parsed["lookback_days"]
+    max_per_cycle = parsed["max_per_cycle"]
+    period = parsed["period"]
+    auto_push = parsed["auto_push"]
+    ignore_keywords = parsed["ignore_keywords"]
+    ignore_artists = parsed["ignore_artists"]
+    allowed_kinds = parsed["allowed_kinds"]
+    include_features = parsed["include_features"]
 
     # -------------------------------------------------------------------------
     # Stage 1 — Last.fm top artists filtered by min_listens
@@ -288,42 +280,23 @@ def _should_library_sync(settings: dict) -> bool:
 
 
 def _loop():
-    """Background loop — checks every hour whether a CC cycle should run."""
+    """Background loop - checks every hour whether a CC cycle should run."""
     while not _stop_event.is_set():
         ran_cc = False
         if config.SCHEDULER_ENABLED:
             settings = rythmx_store.get_all_settings()
-            if _should_run_cc(settings):
-                mode = settings.get("run_mode", "fetch")
-                run_cycle(run_mode=mode, force_refresh=False, triggered_by="schedule")
-                rythmx_store.set_setting("last_run", datetime.now().isoformat())
-                ran_cc = True
-            # Library auto-pipeline — runs independently of CC cycle
-            if _should_library_sync(settings):
-                try:
-                    from app.services.enrichment.runner import PipelineRunner
-                    threading.Thread(
-                        target=PipelineRunner().run,
-                        kwargs={"on_progress": None},
-                        daemon=True,
-                        name="lib-pipeline",
-                    ).start()
-                    logger.info("Library auto-pipeline triggered by scheduler")
-                except Exception as e:
-                    logger.warning("Library auto-pipeline launch failed: %s", e)
-        # Run acquisition worker every loop regardless of whether CC ran
-        try:
-            from app.services import acquisition
-            acquisition.check_queue()
-        except Exception as e:
-            logger.warning("Acquisition worker error (non-fatal): %s", e)
-        # Warm image cache during idle hours — no-op if everything is already cached
+            ran_cc = _scheduler_helpers.run_scheduler_tick(
+                settings=settings,
+                run_cycle_fn=run_cycle,
+                store=rythmx_store,
+                logger=logger,
+            )
+
+        _scheduler_helpers.run_acquisition_worker(logger)
+
+        # Warm image cache during idle hours - no-op if everything is already cached.
         if not ran_cc:
-            try:
-                from app.services import image_service as _img_svc
-                _img_svc.warm_image_cache()
-            except Exception as e:
-                logger.debug("Image warmer error (non-fatal): %s", e)
+            _scheduler_helpers.warm_image_cache(logger)
         _stop_event.wait(timeout=3600)  # Check every hour
 
 
@@ -342,6 +315,7 @@ def stop():
     """Signal the background thread to stop."""
     _stop_event.set()
     logger.info("Cruise control scheduler stop requested")
+
 
 
 

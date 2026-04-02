@@ -4,10 +4,52 @@ Helper logic extracted from scheduler.py to reduce monolith size.
 from __future__ import annotations
 
 import re
+import threading
 from datetime import datetime
 from datetime import date as _date
 
 from app import config
+
+
+def parse_cycle_settings(settings: dict) -> dict:
+    """
+    Parse and normalize CC cycle settings from app_settings/config defaults.
+    """
+    min_listens = int(settings.get("min_listens", config.MIN_LISTENS))
+    lookback_days = int(settings.get("lookback_days", config.LOOKBACK_DAYS))
+    max_per_cycle = int(settings.get("max_per_cycle", config.MAX_PER_CYCLE))
+    period = settings.get("period", "1month")
+    auto_push = settings.get("auto_push_playlist", "false") == "true"
+
+    ignore_kw_raw = settings.get("nr_ignore_keywords", "") or config.IGNORE_KEYWORDS
+    ignore_keywords = [k.strip() for k in ignore_kw_raw.split(",") if k.strip()]
+
+    strip_punct = lambda s: re.sub(r"[^\w\s]", "", s).strip()
+    ignore_artists = {
+        strip_punct(a.strip().lower())
+        for a in settings.get("nr_ignore_artists", "").split(",")
+        if a.strip()
+    }
+
+    release_kinds_raw = settings.get("release_kinds") or config.RELEASE_KINDS
+    allowed_kinds = {k.strip().lower() for k in release_kinds_raw.split(",") if k.strip()}
+
+    include_features_raw = settings.get("include_features")
+    include_features = (
+        True if include_features_raw is None else str(include_features_raw).lower() not in ("false", "0", "no")
+    )
+
+    return {
+        "min_listens": min_listens,
+        "lookback_days": lookback_days,
+        "max_per_cycle": max_per_cycle,
+        "period": period,
+        "auto_push": auto_push,
+        "ignore_keywords": ignore_keywords,
+        "ignore_artists": ignore_artists,
+        "allowed_kinds": allowed_kinds,
+        "include_features": include_features,
+    }
 
 
 def should_run_cc(settings: dict) -> bool:
@@ -60,6 +102,56 @@ def should_library_sync(settings: dict) -> bool:
         return (datetime.utcnow() - last).total_seconds() >= interval_hours * 3600
     except (TypeError, ValueError):
         return True
+
+
+def run_scheduler_tick(settings: dict, run_cycle_fn, store, logger) -> bool:
+    """
+    Execute one scheduler tick decision:
+    - run CC if due
+    - trigger library auto-pipeline if due
+    Returns whether a CC cycle was run.
+    """
+    ran_cc = False
+    if should_run_cc(settings):
+        mode = settings.get("run_mode", "fetch")
+        run_cycle_fn(run_mode=mode, force_refresh=False, triggered_by="schedule")
+        store.set_setting("last_run", datetime.now().isoformat())
+        ran_cc = True
+
+    if should_library_sync(settings):
+        try:
+            from app.services.enrichment.runner import PipelineRunner
+
+            threading.Thread(
+                target=PipelineRunner().run,
+                kwargs={"on_progress": None},
+                daemon=True,
+                name="lib-pipeline",
+            ).start()
+            logger.info("Library auto-pipeline triggered by scheduler")
+        except Exception as e:
+            logger.warning("Library auto-pipeline launch failed: %s", e)
+    return ran_cc
+
+
+def run_acquisition_worker(logger) -> None:
+    """Run acquisition queue worker once; non-fatal on errors."""
+    try:
+        from app.services import acquisition
+
+        acquisition.check_queue()
+    except Exception as e:
+        logger.warning("Acquisition worker error (non-fatal): %s", e)
+
+
+def warm_image_cache(logger) -> None:
+    """Warm image cache once; non-fatal on errors."""
+    try:
+        from app.services import image_service as img_service
+
+        img_service.warm_image_cache()
+    except Exception as e:
+        logger.debug("Image warmer error (non-fatal): %s", e)
 
 
 def auto_sync_playlist(
