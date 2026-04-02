@@ -8,6 +8,8 @@ import sqlite3
 import logging
 from app import config
 from app.db.store import api_keys as _api_keys_store
+from app.db.store import download_queue as _download_queue_store
+from app.db.store import history as _history_store
 from app.db.store import image_cache as _image_cache_store
 from app.db.store import settings as _settings_store
 from app.db.store import pipeline_history as _pipeline_history_store
@@ -110,65 +112,21 @@ def get_all_settings() -> dict:
 # --- History ---
 
 def add_history_entry(track: dict, status: str, reason: str = ""):
-    with _connect() as conn:
-        conn.execute(
-            """INSERT INTO history
-               (track_name, artist_name, album_name, source, score, acquisition_status, reason)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (
-                track.get("track_name"),
-                track.get("artist_name"),
-                track.get("album_name"),
-                track.get("source"),
-                track.get("score"),
-                status,
-                reason,
-            )
-        )
+    _history_store.add_history_entry(_connect, track, status, reason)
 
 
 def get_history(limit: int = 100) -> list[dict]:
-    with _connect() as conn:
-        rows = conn.execute(
-            "SELECT * FROM history ORDER BY cycle_date DESC LIMIT ?", (limit,)
-        ).fetchall()
-        return [dict(r) for r in rows]
+    return _history_store.get_history(_connect, limit)
 
 
 def is_release_in_history(artist_name: str, album_name: str) -> bool:
-    """
-    Return True if this artist+album was already identified or queued in a previous cycle.
-    Used to prevent re-adding the same unowned release every run.
-    """
-    with _connect() as conn:
-        row = conn.execute(
-            """SELECT 1 FROM history
-               WHERE lower(artist_name) = lower(?)
-               AND lower(album_name) = lower(?)
-               AND acquisition_status IN ('identified', 'queued', 'success')
-               LIMIT 1""",
-            (artist_name, album_name)
-        ).fetchone()
-        return row is not None
+    return _history_store.is_release_in_history(_connect, artist_name, album_name)
 
 
 # --- Download queue ---
 
 def is_in_queue(artist_name: str, album_title: str) -> bool:
-    """
-    Return True if this release has a pending or submitted acquisition request.
-    Does NOT block 'found', 'failed', or 'skipped' â€” those can be re-evaluated.
-    """
-    with _connect() as conn:
-        row = conn.execute(
-            """SELECT 1 FROM download_queue
-               WHERE lower(artist_name) = lower(?)
-               AND lower(album_title) = lower(?)
-               AND status IN ('pending', 'submitted')
-               LIMIT 1""",
-            (artist_name, album_title)
-        ).fetchone()
-        return row is not None
+    return _download_queue_store.is_in_queue(_connect, artist_name, album_title)
 
 
 def add_to_queue(artist_name: str, album_title: str, release_date: str = None,
@@ -176,98 +134,39 @@ def add_to_queue(artist_name: str, album_title: str, release_date: str = None,
                  itunes_album_id: str = None, deezer_album_id: str = None,
                  spotify_album_id: str = None,
                  requested_by: str = "cc", playlist_name: str = None) -> int:
-    """
-    Insert a release into the download queue. UNIQUE(artist_name, album_title) â€”
-    if an entry already exists (any status), the existing row is left unchanged and
-    its id is returned.
-    """
-    with _connect() as conn:
-        conn.execute(
-            """INSERT OR IGNORE INTO download_queue
-               (artist_name, album_title, release_date, kind, source,
-                itunes_album_id, deezer_album_id, spotify_album_id,
-                requested_by, playlist_name)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (artist_name, album_title, release_date, kind, source,
-             itunes_album_id or None, deezer_album_id or None, spotify_album_id or None,
-             requested_by, playlist_name)
-        )
-        row = conn.execute(
-            "SELECT id FROM download_queue WHERE lower(artist_name)=lower(?) AND lower(album_title)=lower(?)",
-            (artist_name, album_title)
-        ).fetchone()
-        return row["id"] if row else -1
+    return _download_queue_store.add_to_queue(
+        _connect,
+        artist_name,
+        album_title,
+        release_date,
+        kind,
+        source,
+        itunes_album_id,
+        deezer_album_id,
+        spotify_album_id,
+        requested_by,
+        playlist_name,
+    )
 
 
 def get_queue(status: str = None, playlist_name: str = None) -> list[dict]:
-    """Return queue rows, optionally filtered by status and/or playlist_name."""
-    with _connect() as conn:
-        query = "SELECT * FROM download_queue WHERE 1=1"
-        params = []
-        if status:
-            query += " AND status = ?"
-            params.append(status)
-        if playlist_name:
-            query += " AND playlist_name = ?"
-            params.append(playlist_name)
-        query += " ORDER BY created_at DESC"
-        rows = conn.execute(query, params).fetchall()
-        return [dict(r) for r in rows]
+    return _download_queue_store.get_queue(_connect, status, playlist_name)
 
 
 def update_queue_status(queue_id: int, status: str, provider_response: str = None):
-    """Update status and updated_at for a queue row."""
-    with _connect() as conn:
-        conn.execute(
-            """UPDATE download_queue
-               SET status = ?, provider_response = COALESCE(?, provider_response),
-                   updated_at = CURRENT_TIMESTAMP
-               WHERE id = ?""",
-            (status, provider_response, queue_id)
-        )
+    _download_queue_store.update_queue_status(_connect, queue_id, status, provider_response)
 
 
 def get_queue_stats() -> dict:
-    """Return counts by status."""
-    with _connect() as conn:
-        rows = conn.execute(
-            "SELECT status, COUNT(*) AS cnt FROM download_queue GROUP BY status"
-        ).fetchall()
-        stats = {r["status"]: r["cnt"] for r in rows}
-        return {
-            "pending":   stats.get("pending", 0),
-            "submitted": stats.get("submitted", 0),
-            "found":     stats.get("found", 0),
-            "failed":    stats.get("failed", 0),
-            "skipped":   stats.get("skipped", 0),
-            "total":     sum(stats.values()),
-        }
+    return _download_queue_store.get_queue_stats(_connect)
 
 
 def get_queue_status(artist_name: str, album_title: str) -> str | None:
-    """Return the most recent download_queue status for artist+album, or None if not queued."""
-    with _connect() as conn:
-        row = conn.execute(
-            """SELECT status FROM download_queue
-               WHERE lower(artist_name) = lower(?) AND lower(album_title) = lower(?)
-               ORDER BY created_at DESC LIMIT 1""",
-            (artist_name, album_title)
-        ).fetchone()
-        return row["status"] if row else None
+    return _download_queue_store.get_queue_status(_connect, artist_name, album_title)
 
 
 def get_history_summary() -> dict:
-    with _connect() as conn:
-        row = conn.execute("""
-            SELECT
-                COUNT(*) as total,
-                SUM(CASE WHEN acquisition_status = 'queued' THEN 1 ELSE 0 END) as queued,
-                SUM(CASE WHEN acquisition_status = 'success' THEN 1 ELSE 0 END) as success,
-                SUM(CASE WHEN acquisition_status = 'failed' THEN 1 ELSE 0 END) as failed,
-                SUM(CASE WHEN acquisition_status = 'skipped' THEN 1 ELSE 0 END) as skipped
-            FROM history
-        """).fetchone()
-        return dict(row) if row else {}
+    return _history_store.get_history_summary(_connect)
 
 
 # --- Playlist ---
@@ -457,9 +356,7 @@ def get_taste_cache() -> dict:
 # --- Maintenance ---
 
 def clear_history():
-    """Delete all rows from history."""
-    with _connect() as conn:
-        conn.execute("DELETE FROM history")
+    _history_store.clear_history(_connect)
 
 
 def reset_db():
