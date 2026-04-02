@@ -4,6 +4,8 @@ Never hardcode secrets. Raise clearly if required vars are missing.
 """
 import os
 import logging
+import re
+from urllib.parse import urlsplit
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -71,7 +73,30 @@ def _server_var(new_key: str, old_key: str, default: str) -> str:
 RYTHMX_HOST = _server_var("RYTHMX_HOST", "FLASK_HOST", "0.0.0.0")
 RYTHMX_PORT = int(_server_var("RYTHMX_PORT", "FLASK_PORT", "8009"))
 RYTHMX_DEBUG = _server_var("RYTHMX_DEBUG", "FLASK_DEBUG", "false").lower() == "true"
-LOG_LEVEL = _optional("LOG_LEVEL", "DEBUG" if RYTHMX_DEBUG else "INFO").upper()
+
+
+def _log_level() -> str:
+    """
+    Read log level from canonical env var, with backward-compat fallback.
+
+    Canonical: RYTHMX_LOG_LEVEL
+    Deprecated fallback: LOG_LEVEL
+    """
+    val = os.environ.get("RYTHMX_LOG_LEVEL", "").strip()
+    if val:
+        return val.upper()
+
+    old_val = os.environ.get("LOG_LEVEL", "").strip()
+    if old_val:
+        logger.warning(
+            "LOG_LEVEL env var is deprecated — rename to RYTHMX_LOG_LEVEL in your .env"
+        )
+        return old_val.upper()
+
+    return "DEBUG" if RYTHMX_DEBUG else "INFO"
+
+
+LOG_LEVEL = _log_level()
 
 # --- Cruise Control / app defaults ---
 SCHEDULER_ENABLED = _optional("SCHEDULER_ENABLED", "false").lower() == "true"
@@ -238,22 +263,68 @@ def validate_plex():
 
 def log_config_summary():
     """Log a redacted config summary on startup (never log secret values)."""
+
+    def _mask_url(value: str) -> str:
+        if not value:
+            return "(not set)"
+        try:
+            parsed = urlsplit(value)
+            host = parsed.hostname or ""
+            if not host:
+                return "***"
+
+            if re.match(r"^\d+\.\d+\.\d+\.\d+$", host):
+                parts = host.split(".")
+                host_masked = ".".join(parts[:3] + ["***"])
+            else:
+                chunks = host.split(".")
+                if len(chunks) >= 2:
+                    first = chunks[0]
+                    chunks[0] = (first[:2] + "***") if first else "***"
+                    host_masked = ".".join(chunks)
+                else:
+                    host_masked = host[:2] + "***"
+
+            netloc = host_masked
+            if parsed.port:
+                netloc = f"{netloc}:{parsed.port}"
+            return f"{parsed.scheme or 'http'}://{netloc}"
+        except Exception:
+            return "***"
+
+    def _mask(field: str, value) -> str:
+        text = "" if value is None else str(value)
+        upper_field = field.upper()
+
+        if any(token in upper_field for token in ("TOKEN", "KEY")):
+            return "***" if text else "(not set)"
+        if "URL" in upper_field:
+            return _mask_url(text)
+        return text if text else "(not set)"
+
     logger.info("Rythmx config loaded:")
-    logger.info("  RYTHMX_DB: %s", RYTHMX_DB)
-    logger.info("  LIBRARY_PLATFORM: %s", LIBRARY_PLATFORM)
-    if LIBRARY_PLATFORM == "plex":
-        logger.info("  PLEX_URL: %s", PLEX_URL or "(not set)")
-        logger.info("  PLEX_TOKEN: %s", "set" if PLEX_TOKEN else "NOT SET")
-    if LIBRARY_PLATFORM == "navidrome":
-        logger.info("  NAVIDROME_URL: %s", NAVIDROME_URL or "(not set)")
-        logger.info("  NAVIDROME_USER: %s", NAVIDROME_USER or "(not set)")
-        logger.info("  NAVIDROME_PASS: %s", "set" if NAVIDROME_PASS else "NOT SET")
-    logger.info("  SOULSYNC_DB: %s", SOULSYNC_DB)
-    logger.info("  SOULSYNC_URL: %s", SOULSYNC_URL)
-    logger.info("  LASTFM_USERNAME: %s", LASTFM_USERNAME or "(not set)")
-    logger.info("  LASTFM_API_KEY: %s", "set" if LASTFM_API_KEY else "NOT SET")
-    logger.info("  SPOTIFY_CLIENT_ID: %s", "set" if SPOTIFY_CLIENT_ID else "NOT SET")
-    logger.info("  FANART_API_KEY: %s", "set" if FANART_API_KEY else "NOT SET (artist images fall back to iTunes)")
-    logger.info("  MUSIC_DIR: %s", MUSIC_DIR or "NOT SET (file-aware features disabled)")
-    logger.info("  SCHEDULER_ENABLED: %s", SCHEDULER_ENABLED)
-    logger.info("  CATALOG_PRIMARY: %s", CATALOG_PRIMARY)
+    pairs = [
+        ("RYTHMX_DB", RYTHMX_DB),
+        ("LIBRARY_PLATFORM", LIBRARY_PLATFORM),
+        ("PLEX_URL", PLEX_URL if LIBRARY_PLATFORM == "plex" else ""),
+        ("PLEX_TOKEN", PLEX_TOKEN if LIBRARY_PLATFORM == "plex" else ""),
+        ("NAVIDROME_URL", NAVIDROME_URL if LIBRARY_PLATFORM == "navidrome" else ""),
+        ("NAVIDROME_USER", NAVIDROME_USER if LIBRARY_PLATFORM == "navidrome" else ""),
+        ("NAVIDROME_PASS", "***" if (LIBRARY_PLATFORM == "navidrome" and NAVIDROME_PASS) else ""),
+        ("SOULSYNC_DB", SOULSYNC_DB),
+        ("SOULSYNC_URL", SOULSYNC_URL),
+        ("LASTFM_USERNAME", LASTFM_USERNAME),
+        ("LASTFM_API_KEY", LASTFM_API_KEY),
+        ("SPOTIFY_CLIENT_ID", SPOTIFY_CLIENT_ID),
+        ("FANART_API_KEY", FANART_API_KEY),
+        ("MUSIC_DIR", MUSIC_DIR or "NOT SET (file-aware features disabled)"),
+        ("SCHEDULER_ENABLED", SCHEDULER_ENABLED),
+        ("CATALOG_PRIMARY", CATALOG_PRIMARY),
+    ]
+
+    for key, value in pairs:
+        if key.startswith("NAVIDROME_") and LIBRARY_PLATFORM != "navidrome":
+            continue
+        if key.startswith("PLEX_") and LIBRARY_PLATFORM != "plex":
+            continue
+        logger.info("  %s: %s", key, _mask(key, value))

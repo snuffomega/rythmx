@@ -5,6 +5,75 @@ import { getApiKey } from '../services/api';
 // Module-level JS cache — survives page/tab switches without re-fetching.
 // Keys: "type:name:artist" (lowercased). Values: resolved image URL.
 const _resolved = new Map<string, string>();
+const _pendingBatch = new Map<string, {
+  id: string;
+  type: ImageType;
+  name: string;
+  artist: string;
+  resolvers: Array<(result: ImageResolveResponse) => void>;
+}>();
+let _batchTimer: ReturnType<typeof setTimeout> | null = null;
+
+function _queueImageResolveBatch(
+  id: string,
+  type: ImageType,
+  name: string,
+  artist: string
+): Promise<ImageResolveResponse> {
+  return new Promise((resolve) => {
+    const existing = _pendingBatch.get(id);
+    if (existing) {
+      existing.resolvers.push(resolve);
+    } else {
+      _pendingBatch.set(id, {
+        id,
+        type,
+        name,
+        artist,
+        resolvers: [resolve],
+      });
+    }
+
+    if (_batchTimer) return;
+    _batchTimer = setTimeout(() => {
+      _batchTimer = null;
+      const entries = Array.from(_pendingBatch.values());
+      _pendingBatch.clear();
+      if (entries.length === 0) return;
+
+      fetch('/api/v1/images/resolve-batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Api-Key': getApiKey() },
+        body: JSON.stringify({
+          items: entries.map((e) => ({
+            id: e.id,
+            type: e.type,
+            name: e.name,
+            artist: e.artist,
+          })),
+        }),
+      })
+        .then(r => r.json() as Promise<{ items?: Array<ImageResolveResponse & { id?: string }> }>)
+        .then((data) => {
+          const byId = new Map<string, ImageResolveResponse>();
+          for (const item of (data.items ?? [])) {
+            const itemId = String(item.id ?? '');
+            byId.set(itemId, { image_url: item.image_url, pending: item.pending });
+          }
+
+          for (const entry of entries) {
+            const result = byId.get(entry.id) ?? { image_url: '', pending: false };
+            for (const resolver of entry.resolvers) resolver(result);
+          }
+        })
+        .catch(() => {
+          for (const entry of entries) {
+            for (const resolver of entry.resolvers) resolver({ image_url: '', pending: false });
+          }
+        });
+    }, 25);
+  });
+}
 
 export function useImage(
   type: ImageType,
@@ -32,12 +101,7 @@ export function useImage(
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
     const fetchImage = (attempt = 0) => {
-      fetch('/api/v1/images/resolve', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Api-Key': getApiKey() },
-        body: JSON.stringify({ type, name: safeName, artist: safeArtist }),
-      })
-        .then(r => r.json() as Promise<ImageResolveResponse>)
+      _queueImageResolveBatch(cacheKey, type, safeName, safeArtist)
         .then(data => {
           if (cancelled) return;
           if (data.image_url) {

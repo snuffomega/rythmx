@@ -7,6 +7,7 @@ Never log secret values.
 """
 import asyncio
 import logging
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -61,23 +62,65 @@ class _SecretRedactionFilter(logging.Filter):
         return True
 
 
-logging.basicConfig(
-    level=getattr(logging, config.LOG_LEVEL, logging.INFO),
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-)
-logging.getLogger().addFilter(_SecretRedactionFilter())
-logging.getLogger("spotipy").setLevel(logging.WARNING)
+_LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+_LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
-class _HealthCheckFilter(logging.Filter):
-    """Suppress access-log lines for /health — ~2 880 lines/day of noise."""
+class _AccessNoiseFilter(logging.Filter):
+    """
+    Suppress high-churn uvicorn access-log entries that add noise.
+
+    Drops:
+      - /health
+      - /assets/*
+      - /static/*
+      - *.svg, *.ico, *.png
+    """
+
+    _REQ_RE = re.compile(r'"[A-Z]+ ([^ ]+) HTTP/[^"]+"')
+    _SUFFIXES = (".svg", ".ico", ".png")
 
     def filter(self, record: logging.LogRecord) -> bool:
-        return '"GET /health' not in record.getMessage()
+        msg = record.getMessage()
+        m = self._REQ_RE.search(msg)
+        if not m:
+            return True
+
+        path = m.group(1).split("?", 1)[0].lower()
+        if path == "/health":
+            return False
+        if path.startswith("/assets/") or path.startswith("/static/"):
+            return False
+        if path.endswith(self._SUFFIXES):
+            return False
+        return True
 
 
-logging.getLogger("uvicorn.access").addFilter(_HealthCheckFilter())
-logging.getLogger("spotipy.client").setLevel(logging.WARNING)
+def _configure_logging() -> None:
+    level = getattr(logging, config.LOG_LEVEL, logging.INFO)
+    logging.basicConfig(level=level, format=_LOG_FORMAT, datefmt=_LOG_DATE_FORMAT)
+
+    formatter = logging.Formatter(_LOG_FORMAT, datefmt=_LOG_DATE_FORMAT)
+    root_logger = logging.getLogger()
+    root_logger.setLevel(level)
+    root_logger.addFilter(_SecretRedactionFilter())
+
+    for handler in root_logger.handlers:
+        handler.setFormatter(formatter)
+
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        uv_logger = logging.getLogger(name)
+        uv_logger.setLevel(level)
+        for handler in uv_logger.handlers:
+            handler.setFormatter(formatter)
+            if name == "uvicorn.access":
+                handler.addFilter(_AccessNoiseFilter())
+
+    logging.getLogger("spotipy").setLevel(logging.WARNING)
+    logging.getLogger("spotipy.client").setLevel(logging.WARNING)
+
+
+_configure_logging()
 logger = logging.getLogger(__name__)
 
 
