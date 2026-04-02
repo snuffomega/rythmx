@@ -1,7 +1,7 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
 import { Download, Layers, Loader2, RefreshCw, Send, Trash2 } from 'lucide-react';
 import { useApi } from '../hooks/useApi';
-import { forgeBuildsApi } from '../services/api';
+import { forgeBuildsApi, settingsApi } from '../services/api';
 import { useToastStore } from '../stores/useToastStore';
 import type { ForgeBuild } from '../types';
 
@@ -84,6 +84,8 @@ export function ForgeBuilder() {
   const [editSummary, setEditSummary] = useState('{}');
 
   const { data: builds, loading, error, refetch } = useApi(() => forgeBuildsApi.list(undefined, 200));
+  const { data: appSettings } = useApi(() => settingsApi.get());
+  const fetchEnabled = !!appSettings?.fetch_enabled;
 
   const orderedBuilds = (builds ?? []) as ForgeBuild[];
   const selectedBuild = useMemo(
@@ -316,18 +318,20 @@ export function ForgeBuilder() {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => handleFetch(selectedBuild)}
-                    disabled={fetchingId === selectedBuild.id}
-                    className="btn-secondary inline-flex items-center gap-2 text-xs w-fit"
-                  >
-                    {fetchingId === selectedBuild.id ? (
-                      <Loader2 size={12} className="animate-spin" />
-                    ) : (
-                      <Download size={12} />
-                    )}
-                    Fetch
-                  </button>
+                  {fetchEnabled && (
+                    <button
+                      onClick={() => handleFetch(selectedBuild)}
+                      disabled={fetchingId === selectedBuild.id}
+                      className="btn-secondary inline-flex items-center gap-2 text-xs w-fit"
+                    >
+                      {fetchingId === selectedBuild.id ? (
+                        <Loader2 size={12} className="animate-spin" />
+                      ) : (
+                        <Download size={12} />
+                      )}
+                      Fetch
+                    </button>
+                  )}
                   <button
                     onClick={() => handlePublish(selectedBuild)}
                     disabled={publishingId === selectedBuild.id}
