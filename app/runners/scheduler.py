@@ -308,7 +308,15 @@ def start():
     _stop_event.clear()
     _thread = threading.Thread(target=_loop, daemon=True, name="cc-scheduler")
     _thread.start()
-    logger.info("Cruise control scheduler started (interval=%dh)", config.CYCLE_HOURS)
+    if config.SCHEDULER_ENABLED:
+        logger.info(
+            "Background scheduler started (cruise enabled, interval=%dh)",
+            config.CYCLE_HOURS,
+        )
+    else:
+        logger.info(
+            "Background maintenance thread started (cruise disabled; acquisition/image warmer still active)"
+        )
 
 
 def stop():
