@@ -8,6 +8,12 @@ from typing import Callable
 
 import sqlite3
 
+FORGE_PLAYLIST_SOURCES = {"new_music", "forge_new_music"}
+
+
+def is_forge_playlist_source(source: str | None) -> bool:
+    return (source or "").strip().lower() in FORGE_PLAYLIST_SOURCES
+
 
 def save_playlist(
     connect: Callable[[], sqlite3.Connection],
@@ -116,14 +122,14 @@ def create_playlist_meta(
     mode: str = "library_only",
     max_tracks: int = 50,
 ) -> None:
-    """Create playlist metadata; updates source/mode for Forge new-music sourced rows."""
+    """Create playlist metadata; updates source/mode for Forge-sourced rows."""
     with connect() as conn:
         conn.execute(
             """INSERT OR IGNORE INTO playlists (name, source, source_url, auto_sync, mode, max_tracks)
                VALUES (?, ?, ?, ?, ?, ?)""",
             (name, source, source_url, 1 if auto_sync else 0, mode, max_tracks),
         )
-        if source == "new_music":
+        if is_forge_playlist_source(source):
             conn.execute(
                 "UPDATE playlists SET source=?, mode=? WHERE name=?",
                 (source, mode, name),

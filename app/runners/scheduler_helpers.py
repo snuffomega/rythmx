@@ -23,6 +23,11 @@ NON_FATAL_SCHEDULER_ERRORS = (
 )
 
 
+def _is_forge_new_music_source(source: str | None) -> bool:
+    normalized = (source or "").strip().lower()
+    return normalized in ("new_music", "forge_new_music")
+
+
 def parse_cycle_settings(settings: dict) -> dict:
     """
     Parse and normalize CC cycle settings from app_settings/config defaults.
@@ -190,7 +195,7 @@ def auto_sync_playlist(
     source = pl.get("source", "")
 
     try:
-        if source == "new_music":
+        if _is_forge_new_music_source(source):
             playlist_tracks = []
             for r in owned_releases:
                 cached_r = store.get_cached_artist(r.artist) or {}
@@ -210,7 +215,7 @@ def auto_sync_playlist(
                         )
             store.save_playlist(playlist_tracks, playlist_name=name)
             store.mark_playlist_synced(name)
-            logger.info("Stage 8: auto-synced new_music playlist '%s' (%d tracks)", name, len(playlist_tracks))
+            logger.info("Stage 8: auto-synced Forge playlist '%s' (%d tracks)", name, len(playlist_tracks))
 
         elif source == "taste":
             meta = store.get_playlist_meta(name) or {}

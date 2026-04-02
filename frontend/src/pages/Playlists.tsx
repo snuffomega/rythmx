@@ -17,6 +17,7 @@ const SOURCE_LABELS: Record<PlaylistSource, string> = {
   deezer: 'deezer',
   empty: 'empty',
   new_music: 'The Forge',
+  forge_new_music: 'The Forge',
 };
 
 const SOURCE_COLORS: Record<PlaylistSource, string> = {
@@ -26,6 +27,7 @@ const SOURCE_COLORS: Record<PlaylistSource, string> = {
   deezer: 'text-purple-400',
   empty: 'text-text-muted',
   new_music: 'text-accent',
+  forge_new_music: 'text-accent',
 };
 
 const MODE_LABELS: Record<string, string> = {
@@ -191,7 +193,7 @@ function PlaylistCard({
                   {SOURCE_LABELS[source as PlaylistSource] ?? source}
                 </span>
               )}
-              {source === 'new_music' && playlist.mode && MODE_LABELS[playlist.mode] && (
+              {(source === 'new_music' || source === 'forge_new_music') && playlist.mode && MODE_LABELS[playlist.mode] && (
                 <span className="text-[10px] font-medium border border-current/30 px-1.5 py-0.5 text-white">
                   {MODE_LABELS[playlist.mode]}
                 </span>

@@ -68,7 +68,7 @@ export interface CollageItem {
   playcount?: number;
 }
 
-export type PlaylistSource = 'taste' | 'lastfm' | 'spotify' | 'deezer' | 'empty' | 'new_music';
+export type PlaylistSource = 'taste' | 'lastfm' | 'spotify' | 'deezer' | 'empty' | 'new_music' | 'forge_new_music';
 
 export interface PlaylistItem {
   name: string;
