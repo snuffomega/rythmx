@@ -296,10 +296,16 @@ def log_config_summary():
         text = "" if value is None else str(value)
         upper_field = field.upper()
 
-        if any(token in upper_field for token in ("TOKEN", "KEY")):
+        if any(token in upper_field for token in ("TOKEN", "KEY", "SECRET", "PASS")):
             return "***" if text else "(not set)"
         if "URL" in upper_field:
             return _mask_url(text)
+        if "USER" in upper_field:
+            if not text:
+                return "(not set)"
+            if len(text) <= 2:
+                return "*" * len(text)
+            return f"{text[:2]}***"
         return text if text else "(not set)"
 
     logger.info("Rythmx config loaded:")

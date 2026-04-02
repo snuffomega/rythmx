@@ -96,6 +96,33 @@ class _AccessNoiseFilter(logging.Filter):
         return True
 
 
+class _ClientAddressRedactionFilter(logging.Filter):
+    """
+    Redact client IP/port in uvicorn connection/access messages at non-DEBUG levels.
+
+    Example:
+      10.10.1.231:62088 - "GET /api/v1/..." 200
+    becomes:
+      client:*** - "GET /api/v1/..." 200
+    """
+
+    _CLIENT_PREFIX_RE = re.compile(r'^([0-9a-fA-F:.]+:\d+)(?=\s+-\s+")')
+
+    def __init__(self):
+        super().__init__()
+        self._enabled = config.LOG_LEVEL.upper() != "DEBUG"
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not self._enabled:
+            return True
+        msg = record.getMessage()
+        redacted = self._CLIENT_PREFIX_RE.sub("client:***", msg, count=1)
+        if redacted != msg:
+            record.msg = redacted
+            record.args = ()
+        return True
+
+
 def _configure_logging() -> None:
     level = getattr(logging, config.LOG_LEVEL, logging.INFO)
     logging.basicConfig(level=level, format=_LOG_FORMAT, datefmt=_LOG_DATE_FORMAT)
@@ -113,6 +140,8 @@ def _configure_logging() -> None:
         uv_logger.setLevel(level)
         for handler in uv_logger.handlers:
             handler.setFormatter(formatter)
+            if name in ("uvicorn.error", "uvicorn.access"):
+                handler.addFilter(_ClientAddressRedactionFilter())
             if name == "uvicorn.access":
                 handler.addFilter(_AccessNoiseFilter())
 
