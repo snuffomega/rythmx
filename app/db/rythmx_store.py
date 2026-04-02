@@ -12,6 +12,8 @@ from app.db.store import download_queue as _download_queue_store
 from app.db.store import history as _history_store
 from app.db.store import image_cache as _image_cache_store
 from app.db.store import playlist as _playlist_store
+from app.db.store import artist_identity as _artist_identity_store
+from app.db.store import release_maintenance as _release_maintenance_store
 from app.db.store import settings as _settings_store
 from app.db.store import taste_cache as _taste_cache_store
 from app.db.store import pipeline_history as _pipeline_history_store
@@ -196,83 +198,32 @@ def update_playlist_plex_id(playlist_name: str, plex_playlist_id: str):
 # --- Artist identity cache ---
 
 def get_lib_artist_ids(artist_name: str) -> dict | None:
-    """
-    CC-1 DB-first lookup: return stored provider IDs from lib_artists for an artist name.
-    Returns {itunes_artist_id, deezer_artist_id, spotify_artist_id, lastfm_mbid,
-             match_confidence} or None if artist not found in lib_artists.
-    Used by identity_resolver.resolve_artist() before any API call.
-    """
-    try:
-        with _connect() as conn:
-            row = conn.execute(
-                """
-                SELECT itunes_artist_id, deezer_artist_id, spotify_artist_id,
-                       lastfm_mbid, match_confidence
-                FROM lib_artists
-                WHERE name_lower = lower(?)
-                  AND removed_at IS NULL
-                LIMIT 1
-                """,
-                (artist_name,),
-            ).fetchone()
-            return dict(row) if row else None
-    except Exception:
-        return None
+    return _artist_identity_store.get_lib_artist_ids(_connect, artist_name)
 
 
 def get_cached_artist(lastfm_name: str) -> dict | None:
-    """Return cached provider IDs for a Last.fm artist name, or None if not cached."""
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT * FROM artist_identity_cache WHERE lastfm_name = ?", (lastfm_name,)
-        ).fetchone()
-        return dict(row) if row else None
+    return _artist_identity_store.get_cached_artist(_connect, lastfm_name)
 
 
 def cache_artist(lastfm_name: str, deezer_artist_id: str = None,
                  spotify_artist_id: str = None, itunes_artist_id: str = None,
                  mb_artist_id: str = None, soulsync_artist_id: str = None,
                  confidence: int = 80, resolution_method: str = None):
-    """Upsert provider IDs for a Last.fm artist name.
-
-    Uses COALESCE so a new None value never overwrites an existing good ID.
-    soulsync_artist_id is the SoulSync internal artists.id â€” enables exact PK
-    joins for owned-check instead of fuzzy text matching.
-    resolution_method: how identity was confirmed (name_only / track_overlap_N / cache_hit).
-    """
-    import time
-    with _connect() as conn:
-        conn.execute(
-            """INSERT INTO artist_identity_cache
-               (lastfm_name, deezer_artist_id, spotify_artist_id, itunes_artist_id,
-                mb_artist_id, soulsync_artist_id, confidence, resolution_method, last_resolved_ts)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(lastfm_name) DO UPDATE SET
-                   deezer_artist_id = COALESCE(excluded.deezer_artist_id, deezer_artist_id),
-                   spotify_artist_id = COALESCE(excluded.spotify_artist_id, spotify_artist_id),
-                   itunes_artist_id = COALESCE(excluded.itunes_artist_id, itunes_artist_id),
-                   mb_artist_id = COALESCE(excluded.mb_artist_id, mb_artist_id),
-                   soulsync_artist_id = COALESCE(excluded.soulsync_artist_id, soulsync_artist_id),
-                   confidence = excluded.confidence,
-                   resolution_method = COALESCE(excluded.resolution_method, resolution_method),
-                   last_resolved_ts = excluded.last_resolved_ts""",
-            (lastfm_name, deezer_artist_id, spotify_artist_id, itunes_artist_id,
-             mb_artist_id, soulsync_artist_id, confidence, resolution_method, int(time.time()))
-        )
+    _artist_identity_store.cache_artist(
+        _connect,
+        lastfm_name,
+        deezer_artist_id,
+        spotify_artist_id,
+        itunes_artist_id,
+        mb_artist_id,
+        soulsync_artist_id,
+        confidence,
+        resolution_method,
+    )
 
 
 def get_artist_navidrome_cover(artist_name: str) -> str | None:
-    """Return the Navidrome coverArt ID for an artist (used by image_service)."""
-    try:
-        with _connect() as conn:
-            row = conn.execute(
-                "SELECT thumb_url_navidrome FROM lib_artists "
-                "WHERE name_lower = lower(?) LIMIT 1",
-                (artist_name,),
-            ).fetchone()
-            return row[0] if row else None
-    except Exception:
-        return None
+    return _artist_identity_store.get_artist_navidrome_cover(_connect, artist_name)
 
 
 # --- Taste cache ---
@@ -355,246 +306,30 @@ def get_missing_image_entities(limit: int = 40) -> list[tuple[str, str, str]]:
     return _image_cache_store.get_missing_image_entities(_connect, limit)
 
 def backfill_normalized_titles() -> int:
-    """Populate normalized_title and version_type for all lib_releases rows missing them."""
-    from app.services.enrichment._helpers import detect_version_type
-    from app.clients.music_client import norm
-
-    updated = 0
-    with _connect() as conn:
-        rows = conn.execute(
-            "SELECT id, title FROM lib_releases WHERE normalized_title IS NULL"
-        ).fetchall()
-        for row in rows:
-            cleaned_title, version_type = detect_version_type(row["title"])
-            normalized_title = norm(cleaned_title)
-            conn.execute(
-                "UPDATE lib_releases SET normalized_title = ?, version_type = ? WHERE id = ?",
-                (normalized_title, version_type, row["id"]),
-            )
-            updated += 1
-    logger.info("Backfilled normalized_title for %d lib_releases rows", updated)
-    return updated
+    return _release_maintenance_store.backfill_normalized_titles(_connect, logger)
 
 
 def recompute_normalized_titles(artist_ids: list[str] | None = None) -> int:
-    """Recompute normalized_title and version_type for lib_releases rows.
-
-    Unlike backfill_normalized_titles() which skips rows where normalized_title
-    is already set, this overwrites all rows. Use after updating the title
-    normalization regex so existing rows pick up the new logic.
-
-    Args:
-        artist_ids: If provided, only recompute for these artists. Otherwise all.
-
-    Returns count of rows updated.
-    """
-    from app.services.enrichment._helpers import detect_version_type
-    from app.clients.music_client import norm
-
-    updated = 0
-    with _connect() as conn:
-        if artist_ids:
-            placeholders = ",".join("?" * len(artist_ids))
-            rows = conn.execute(
-                f"SELECT id, title FROM lib_releases WHERE artist_id IN ({placeholders})",
-                artist_ids,
-            ).fetchall()
-        else:
-            rows = conn.execute("SELECT id, title FROM lib_releases").fetchall()
-        for row in rows:
-            cleaned_title, version_type = detect_version_type(row["title"])
-            normalized_title = norm(cleaned_title)
-            conn.execute(
-                "UPDATE lib_releases SET normalized_title = ?, version_type = ? WHERE id = ?",
-                (normalized_title, version_type, row["id"]),
-            )
-            updated += 1
-    logger.info("recompute_normalized_titles: reprocessed %d lib_releases rows%s",
-                updated, f" (scoped to {len(artist_ids)} artists)" if artist_ids else "")
-    return updated
+    return _release_maintenance_store.recompute_normalized_titles(_connect, logger, artist_ids)
 
 
 def refresh_missing_counts(artist_id: str | None = None,
                            artist_ids: list[str] | None = None) -> int:
-    """Recompute lib_artists.missing_count from lib_releases with full dedup logic.
-
-    Mirrors the ROW_NUMBER dedup used by the artist detail route query.
-      - resolved_kind via COALESCE(kind_deezer, kind_itunes, track_count heuristic)
-      - source priority: deezer > itunes
-      - singles suppressed when album/ep exists with same normalized_title
-
-    Args:
-        artist_id: If provided, refresh only this artist.
-        artist_ids: If provided, refresh only these artists (takes precedence over artist_id).
-        If neither provided, refresh all.
-
-    Returns number of artists updated.
-    """
-    if artist_ids:
-        placeholders = ",".join("?" * len(artist_ids))
-        scope_clause = f"WHERE lib_artists.id IN ({placeholders})"
-        params: tuple = tuple(artist_ids)
-    elif artist_id:
-        scope_clause = "WHERE lib_artists.id = ?"
-        params = (artist_id,)
-    else:
-        scope_clause = ""
-        params = ()
-
-    with _connect() as conn:
-        # Step 1: Compute deduplicated missing count per artist
-        conn.execute(f"""
-            UPDATE lib_artists SET missing_count = COALESCE((
-                SELECT COUNT(*) FROM (
-                    SELECT id,
-                           artist_id,
-                           artist_name_lower,
-                           normalized_title,
-                           COALESCE(
-                               kind_deezer, kind_itunes,
-                               CASE
-                                   WHEN track_count IS NOT NULL AND track_count <= 3 THEN 'single'
-                                   WHEN track_count IS NOT NULL AND track_count <= 6 THEN 'ep'
-                                   ELSE 'album'
-                               END
-                           ) AS resolved_kind,
-                           ROW_NUMBER() OVER (
-                               PARTITION BY artist_name_lower, normalized_title,
-                                            COALESCE(
-                                                kind_deezer, kind_itunes,
-                                                CASE
-                                                    WHEN track_count IS NOT NULL AND track_count <= 3 THEN 'single'
-                                                    WHEN track_count IS NOT NULL AND track_count <= 6 THEN 'ep'
-                                                    ELSE 'album'
-                                                END
-                                            )
-                               ORDER BY
-                                   CASE catalog_source WHEN 'deezer' THEN 1 WHEN 'itunes' THEN 2 ELSE 3 END,
-                                   COALESCE(thumb_url_deezer, thumb_url_itunes) IS NOT NULL DESC,
-                                   COALESCE(release_date_itunes, release_date_deezer) IS NOT NULL DESC
-                           ) AS rn
-                    FROM lib_releases
-                    WHERE artist_id = lib_artists.id
-                      AND is_owned = 0
-                      AND user_dismissed = 0
-                ) deduped
-                WHERE rn = 1
-                  AND NOT (
-                      resolved_kind = 'single'
-                      AND EXISTS (
-                          SELECT 1 FROM lib_releases lr2
-                          WHERE lr2.artist_id = deduped.artist_id
-                            AND lr2.normalized_title = deduped.normalized_title
-                            AND COALESCE(lr2.kind_deezer, lr2.kind_itunes, 'album') IN ('album', 'ep')
-                            AND lr2.id != deduped.id
-                      )
-                  )
-            ), 0)
-            {scope_clause}
-        """, params)
-        updated = conn.execute(
-            "SELECT changes()"
-        ).fetchone()[0]
-
-    scope_msg = ""
-    if artist_ids:
-        scope_msg = f" (scoped to {len(artist_ids)} artists)"
-    elif artist_id:
-        scope_msg = f" (artist_id={artist_id})"
-    logger.info("refresh_missing_counts: updated %d artists%s", updated, scope_msg)
-    return updated
+    return _release_maintenance_store.refresh_missing_counts(
+        _connect, logger, artist_id, artist_ids
+    )
 
 
 def populate_canonical_release_ids(artist_id: str | None = None,
                                    artist_ids: list[str] | None = None) -> int:
-    """Assign canonical_release_id to lib_releases rows.
-
-    Groups by (artist_id, normalized_title). The "primary" release per group is
-    chosen by: is_owned DESC, version_type='original' first, release_date ASC,
-    deezer source preferred. All group members share the primary's id.
-
-    Args:
-        artist_id: If provided, only refresh rows for this artist.
-        artist_ids: If provided, only refresh rows for these artists (takes precedence).
-        If neither provided, refresh all rows.
-
-    Returns count of rows updated.
-    """
-    where = "WHERE normalized_title IS NOT NULL AND artist_id IS NOT NULL"
-    params: tuple = ()
-    if artist_ids:
-        placeholders = ",".join("?" * len(artist_ids))
-        where += f" AND artist_id IN ({placeholders})"
-        params = tuple(artist_ids)
-    elif artist_id:
-        where += " AND artist_id = ?"
-        params = (artist_id,)
-
-    sub_where = where  # same filter for the correlated subquery
-
-    with _connect() as conn:
-        cursor = conn.execute(
-            f"""
-            UPDATE lib_releases SET canonical_release_id = (
-                SELECT sub.id FROM lib_releases sub
-                WHERE sub.artist_id = lib_releases.artist_id
-                  AND sub.normalized_title = lib_releases.normalized_title
-                  AND sub.normalized_title IS NOT NULL
-                ORDER BY
-                    sub.is_owned DESC,
-                    CASE sub.version_type WHEN 'original' THEN 0 ELSE 1 END,
-                    COALESCE(sub.release_date_itunes, sub.release_date_deezer) ASC,
-                    CASE sub.catalog_source WHEN 'deezer' THEN 1 ELSE 2 END
-                LIMIT 1
-            )
-            {where}
-            """,
-            params,
-        )
-        updated = cursor.rowcount
-
-    scope_label = f"{len(artist_ids)} artists" if artist_ids else (artist_id or "all")
-    logger.info("populate_canonical_release_ids: updated %d rows (scope=%s)", updated, scope_label)
-    return updated
+    return _release_maintenance_store.populate_canonical_release_ids(
+        _connect, logger, artist_id, artist_ids
+    )
 
 
 def ensure_single_catalog_cleanup():
-    """One-time cleanup: remove secondary-source rows from lib_releases.
-
-    Reads CATALOG_PRIMARY from config, deletes rows from the other source,
-    and resets derived columns so they are recalculated on the next pipeline run.
-    Idempotent: gated by app_settings flag. Re-runs if CATALOG_PRIMARY changes.
-    """
-    primary = config.CATALOG_PRIMARY
-    secondary = "itunes" if primary == "deezer" else "deezer"
-
-    with _connect() as conn:
-        done = conn.execute(
-            "SELECT value FROM app_settings WHERE key = 'single_catalog_done'"
-        ).fetchone()
-        if done and done[0] == primary:
-            return  # already cleaned for this primary source
-
-        deleted = conn.execute(
-            "DELETE FROM lib_releases WHERE catalog_source = ?",
-            (secondary,),
-        ).rowcount
-
-        # Reset derived columns â€” forces recalculation by next pipeline run
-        conn.execute(
-            "UPDATE lib_releases SET canonical_release_id = NULL, "
-            "is_owned = 0, owned_checked_at = NULL"
-        )
-
-        conn.execute(
-            "INSERT INTO app_settings (key, value) VALUES (?, ?) "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            ("single_catalog_done", primary),
-        )
-
-    logger.info(
-        "ensure_single_catalog_cleanup: deleted %d %s rows, primary=%s",
-        deleted, secondary, primary,
+    _release_maintenance_store.ensure_single_catalog_cleanup(
+        _connect, logger, config.CATALOG_PRIMARY
     )
 
 
