@@ -19,6 +19,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter(dependencies=[Depends(verify_api_key)])
 
 
+def _error(message: str, status_code: int = 400, code: str | None = None) -> JSONResponse:
+    payload: dict[str, str] = {"status": "error", "message": message}
+    if code:
+        payload["code"] = code
+    return JSONResponse(payload, status_code=status_code)
+
+
 @router.get("/forge/pipeline-history")
 def get_pipeline_history(
     pipeline_type: str | None = Query(default=None),
@@ -47,7 +54,7 @@ def nm_save_config(data: Optional[dict[str, Any]] = Body(default=None)):
     data = data or {}
     error = new_music_runner.validate_config_updates(data)
     if error:
-        return JSONResponse({"status": "error", "message": error}, status_code=400)
+        return _error(error, status_code=400, code="FORGE_VALIDATION_ERROR")
     new_music_runner.save_config(data)
     return {"status": "ok"}
 
@@ -62,7 +69,7 @@ def nm_run(data: Optional[dict[str, Any]] = Body(default=None)):
     config_override = data or {}
     error = new_music_runner.validate_config_updates(config_override)
     if error:
-        return JSONResponse({"status": "error", "message": error}, status_code=400)
+        return _error(error, status_code=400, code="FORGE_VALIDATION_ERROR")
 
     result_container: dict = {}
     error_container: dict = {}
@@ -78,8 +85,11 @@ def nm_run(data: Optional[dict[str, Any]] = Body(default=None)):
     t.start()
     t.join(timeout=120)  # wait up to 2 min
 
+    if t.is_alive():
+        return _error("New Music pipeline timed out", status_code=504, code="FORGE_TIMEOUT")
+
     if error_container:
-        return JSONResponse({"status": "error", "message": error_container["error"]}, status_code=500)
+        return _error(error_container["error"], status_code=500, code="FORGE_RUN_FAILED")
 
     summary = result_container.get("result", {})
 
@@ -147,7 +157,7 @@ def discovery_save_config(data: Optional[dict[str, Any]] = Body(default=None)):
     data = data or {}
     error = discovery_runner.validate_config_updates(data)
     if error:
-        return JSONResponse({"status": "error", "message": error}, status_code=400)
+        return _error(error, status_code=400, code="FORGE_VALIDATION_ERROR")
     discovery_runner.save_config(data)
     return {"status": "ok"}
 
@@ -161,12 +171,12 @@ def discovery_run(data: Optional[dict[str, Any]] = Body(default=None)):
     data = data or {}
     error = discovery_runner.validate_config_updates(data)
     if error:
-        return JSONResponse({"status": "error", "message": error}, status_code=400)
+        return _error(error, status_code=400, code="FORGE_VALIDATION_ERROR")
     try:
         summary = discovery_runner.run_discovery_pipeline(data or None)
     except Exception as exc:
         logger.error("forge/discovery/run: pipeline error: %s", exc, exc_info=True)
-        return JSONResponse({"status": "error", "message": str(exc)}, status_code=500)
+        return _error(str(exc), status_code=500, code="FORGE_DISCOVERY_FAILED")
 
     return {
         "status": "ok",

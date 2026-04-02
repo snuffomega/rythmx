@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from fastapi.responses import JSONResponse
 
 from app.routes import acquisition
@@ -204,6 +206,10 @@ def test_forge_discovery_config_validation_rejects_invalid_values():
     result = forge.discovery_save_config({"closeness": 0})
     assert isinstance(result, JSONResponse)
     assert result.status_code == 400
+    body = json.loads(result.body.decode("utf-8"))
+    assert body["status"] == "error"
+    assert isinstance(body["message"], str)
+    assert body["code"] == "FORGE_VALIDATION_ERROR"
 
 
 def test_forge_discovery_run_and_results_contract(monkeypatch):
@@ -240,10 +246,18 @@ def test_forge_new_music_validation_rejects_invalid_values():
     config_result = forge.nm_save_config({"nm_period": "2weeks"})
     assert isinstance(config_result, JSONResponse)
     assert config_result.status_code == 400
+    config_body = json.loads(config_result.body.decode("utf-8"))
+    assert config_body["status"] == "error"
+    assert isinstance(config_body["message"], str)
+    assert config_body["code"] == "FORGE_VALIDATION_ERROR"
 
     run_result = forge.nm_run({"nm_lookback_days": 0})
     assert isinstance(run_result, JSONResponse)
     assert run_result.status_code == 400
+    run_body = json.loads(run_result.body.decode("utf-8"))
+    assert run_body["status"] == "error"
+    assert isinstance(run_body["message"], str)
+    assert run_body["code"] == "FORGE_VALIDATION_ERROR"
 
 
 def test_forge_new_music_run_contract(monkeypatch):
@@ -272,3 +286,33 @@ def test_forge_new_music_run_contract(monkeypatch):
     assert result["neighbors_found"] == 8
     assert result["releases_found"] == 1
     assert result["releases"] == expected_releases
+
+
+def test_forge_discovery_runtime_error_contract(monkeypatch):
+    def _raise(_override=None):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("app.services.forge.discovery_runner.run_discovery_pipeline", _raise)
+
+    result = forge.discovery_run({"run_mode": "build"})
+    assert isinstance(result, JSONResponse)
+    assert result.status_code == 500
+    body = json.loads(result.body.decode("utf-8"))
+    assert body["status"] == "error"
+    assert body["message"] == "boom"
+    assert body["code"] == "FORGE_DISCOVERY_FAILED"
+
+
+def test_forge_new_music_runtime_error_contract(monkeypatch):
+    def _raise(_override=None):
+        raise RuntimeError("nm failed")
+
+    monkeypatch.setattr("app.services.forge.new_music_runner.run_new_music_pipeline", _raise)
+
+    result = forge.nm_run({"nm_period": "1month"})
+    assert isinstance(result, JSONResponse)
+    assert result.status_code == 500
+    body = json.loads(result.body.decode("utf-8"))
+    assert body["status"] == "error"
+    assert body["message"] == "nm failed"
+    assert body["code"] == "FORGE_RUN_FAILED"
