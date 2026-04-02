@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Play, Loader2, Users, Sparkles, ChevronDown, ChevronUp, Save, Circle } from 'lucide-react';
-import { personalDiscoveryApi } from '../services/api';
+import { forgeDiscoveryApi } from '../services/api';
 import { getImageUrl } from '../utils/imageUrl';
 import type { PersonalDiscoveryConfig, PersonalDiscoveryResult } from '../types';
 
@@ -109,7 +109,7 @@ function ArtistResultCard({ result }: { result: PersonalDiscoveryResult }) {
           </div>
         )}
       </div>
-      {result.similarity !== undefined && (
+      {result.similarity != null && (
         <div className="flex-shrink-0 text-right">
           <div className="text-accent text-sm font-bold tabular-nums">{Math.round(result.similarity * 100)}%</div>
           <div className="text-[#444] text-[10px] uppercase tracking-wide">match</div>
@@ -168,8 +168,8 @@ export function PersonalDiscovery({ toast }: PersonalDiscoveryProps) {
   const handleRun = async () => {
     setRunning(true);
     try {
-      const data = await personalDiscoveryApi.run(config);
-      setResults(data);
+      const data = await forgeDiscoveryApi.run(config);
+      setResults(data.artists);
       toast.success('Personal Discovery complete');
     } catch {
       toast.error('Failed to run Personal Discovery');

@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi.responses import JSONResponse
 
 from app.routes import acquisition
+from app.routes import forge
 from app.routes import library_enrich
 from app.routes.library import albums, artists, audit, releases, tracks
 
@@ -198,3 +199,38 @@ def test_album_detail_returns_404_for_missing_album(monkeypatch):
     assert isinstance(result, JSONResponse)
     assert result.status_code == 404
 
+
+def test_forge_discovery_config_validation_rejects_invalid_values():
+    result = forge.discovery_save_config({"closeness": 0})
+    assert isinstance(result, JSONResponse)
+    assert result.status_code == 400
+
+
+def test_forge_discovery_run_and_results_contract(monkeypatch):
+    expected = [
+        {
+            "artist": "Example Artist",
+            "image": None,
+            "reason": "From Forge neighborhood cache",
+            "similarity": None,
+            "tags": [],
+        }
+    ]
+
+    monkeypatch.setattr(
+        "app.services.forge.discovery_runner.run_discovery_pipeline",
+        lambda _override=None: {"artists_found": 1, "artists": expected},
+    )
+    monkeypatch.setattr(
+        "app.services.forge.discovery_runner.get_results",
+        lambda: expected,
+    )
+
+    run_result = forge.discovery_run({"run_mode": "build", "max_tracks": 25})
+    assert run_result["status"] == "ok"
+    assert run_result["artists_found"] == 1
+    assert run_result["artists"] == expected
+
+    results_result = forge.discovery_get_results()
+    assert results_result["status"] == "ok"
+    assert results_result["artists"] == expected

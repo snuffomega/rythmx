@@ -102,20 +102,32 @@ export interface HistoryItem {
   date: string;
 }
 
-export interface PersonalDiscoveryConfig {
+export type ForgeDiscoveryRunMode = 'build' | 'fetch';
+
+export interface ForgeDiscoveryConfig {
   closeness: number;
   seed_period: '7day' | '1month' | '3month' | '6month' | '12month' | 'overall';
   min_scrobbles: number;
   max_tracks: number;
+  run_mode?: ForgeDiscoveryRunMode;
+  auto_publish?: boolean;
+  schedule_enabled?: boolean;
+  schedule_weekday?: number;
+  schedule_hour?: number;
+  dry_run?: boolean;
 }
 
-export interface PersonalDiscoveryResult {
+export interface ForgeDiscoveryResult {
   artist: string;
   image?: string;
   reason?: string;
-  similarity?: number;
+  similarity?: number | null;
   tags?: string[];
 }
+
+// Backward-compatible aliases while old UI modules are being renamed.
+export type PersonalDiscoveryConfig = ForgeDiscoveryConfig;
+export type PersonalDiscoveryResult = ForgeDiscoveryResult;
 
 export interface LibraryStatus {
   platform: LibraryPlatform;

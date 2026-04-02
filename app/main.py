@@ -264,7 +264,6 @@ from app.routes.playlists import router as playlists_router
 from app.routes.stats import router as stats_router
 from app.routes.settings import router as settings_router
 from app.routes.images import router as images_router
-from app.routes.personal_discovery import router as personal_discovery_router
 from app.routes.library.artists import router as library_artists_router
 from app.routes.library.releases import router as library_releases_router
 from app.routes.library.albums import router as library_albums_router
@@ -278,7 +277,7 @@ from app.routes.ws import router as ws_router
 
 for _router in (
     auth_router, dash_router, acquisition_router, playlists_router,
-    stats_router, settings_router, images_router, personal_discovery_router,
+    stats_router, settings_router, images_router,
     library_artists_router, library_releases_router, library_albums_router, library_tracks_router,
     library_audit_router, enrich_router, library_stream_router, forge_router,
     library_playlists_router,

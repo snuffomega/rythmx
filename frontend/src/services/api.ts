@@ -12,8 +12,8 @@ import type {
   ConnectionStatus,
   Settings,
   ReleaseKind,
-  PersonalDiscoveryConfig,
-  PersonalDiscoveryResult,
+  ForgeDiscoveryConfig,
+  ForgeDiscoveryResult,
   LibArtist,
   LibAlbum,
   LibTrack,
@@ -283,12 +283,26 @@ export const libraryApi = {
       .then(({ status: _s, ...rest }) => rest as LibraryStatus),
 };
 
-export const personalDiscoveryApi = {
-  run: (config: PersonalDiscoveryConfig) =>
-    request<PersonalDiscoveryResult[]>('/personal-discovery/run', {
+export const forgeDiscoveryApi = {
+  getConfig: () =>
+    request<{ status: string; config: ForgeDiscoveryConfig }>('/forge/discovery/config')
+      .then(r => r.config),
+  saveConfig: (config: Partial<ForgeDiscoveryConfig>) =>
+    request<{ status: string }>('/forge/discovery/config', {
       method: 'POST',
       body: JSON.stringify(config),
     }),
+  run: (config: Partial<ForgeDiscoveryConfig>) =>
+    request<{ status: string; artists: ForgeDiscoveryResult[]; artists_found: number }>(
+      '/forge/discovery/run',
+      {
+        method: 'POST',
+        body: JSON.stringify(config),
+      }
+    ),
+  getResults: () =>
+    request<{ status: string; artists: ForgeDiscoveryResult[] }>('/forge/discovery/results')
+      .then(r => r.artists),
 };
 
 export const libraryBrowseApi = {

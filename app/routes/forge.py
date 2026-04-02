@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 
 from app.db import rythmx_store
 from app.dependencies import verify_api_key
-from app.services.forge import new_music_runner
+from app.services.forge import discovery_runner, new_music_runner
 
 logger = logging.getLogger(__name__)
 
@@ -121,3 +121,55 @@ def _get_discovered_releases() -> list[dict]:
             """
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+# ---------------------------------------------------------------------------
+# Discovery endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.get("/forge/discovery/config")
+def discovery_get_config():
+    """Return current Forge Discovery configuration."""
+    cfg = discovery_runner.get_config()
+    return {"status": "ok", "config": cfg}
+
+
+@router.post("/forge/discovery/config")
+def discovery_save_config(data: Optional[dict[str, Any]] = Body(default=None)):
+    """Save Forge Discovery configuration to app_settings."""
+    data = data or {}
+    error = discovery_runner.validate_config_updates(data)
+    if error:
+        return JSONResponse({"status": "error", "message": error}, status_code=400)
+    discovery_runner.save_config(data)
+    return {"status": "ok"}
+
+
+@router.post("/forge/discovery/run")
+def discovery_run(data: Optional[dict[str, Any]] = Body(default=None)):
+    """
+    Run the Forge Discovery pipeline.
+    Optionally accepts config overrides in the request body.
+    """
+    data = data or {}
+    error = discovery_runner.validate_config_updates(data)
+    if error:
+        return JSONResponse({"status": "error", "message": error}, status_code=400)
+    try:
+        summary = discovery_runner.run_discovery_pipeline(data or None)
+    except Exception as exc:
+        logger.error("forge/discovery/run: pipeline error: %s", exc, exc_info=True)
+        return JSONResponse({"status": "error", "message": str(exc)}, status_code=500)
+
+    return {
+        "status": "ok",
+        "artists_found": summary.get("artists_found", 0),
+        "artists": summary.get("artists", []),
+    }
+
+
+@router.get("/forge/discovery/results")
+def discovery_get_results():
+    """Return the latest Forge Discovery result set."""
+    return {"status": "ok", "artists": discovery_runner.get_results()}

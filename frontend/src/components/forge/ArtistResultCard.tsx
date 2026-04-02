@@ -31,7 +31,7 @@ export function ArtistResultCard({ result }: { result: PersonalDiscoveryResult }
           </div>
         )}
       </div>
-      {result.similarity !== undefined && (
+      {result.similarity != null && (
         <div className="flex-shrink-0 text-right">
           <div className="text-accent text-sm font-bold tabular-nums">{Math.round(result.similarity * 100)}%</div>
           <div className="text-[#444] text-[10px] uppercase tracking-wide">match</div>

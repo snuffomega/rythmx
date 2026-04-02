@@ -1,11 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Play, Loader2, Sparkles, ChevronDown, ChevronUp, Save } from 'lucide-react';
-import { personalDiscoveryApi } from '../services/api';
+import { forgeDiscoveryApi } from '../services/api';
 import { ArtistResultCard, DiscoveryPipelineViz } from '../components/forge';
 import { Toggle } from '../components/common';
-import type { PersonalDiscoveryConfig, PersonalDiscoveryResult } from '../types';
+import type { ForgeDiscoveryConfig, ForgeDiscoveryResult } from '../types';
 
-const SEED_PERIODS: Array<{ value: PersonalDiscoveryConfig['seed_period']; label: string }> = [
+const SEED_PERIODS: Array<{ value: ForgeDiscoveryConfig['seed_period']; label: string }> = [
   { value: '7day', label: 'Last 7 days' },
   { value: '1month', label: 'Last 30 days' },
   { value: '3month', label: 'Last 3 months' },
@@ -21,7 +21,8 @@ const HOURS = Array.from({ length: 24 }, (_, i) => {
   return { value: i, label: `${h}:00 ${ampm}` };
 });
 
-interface PDConfig extends PersonalDiscoveryConfig {
+interface PDConfig extends ForgeDiscoveryConfig {
+  run_mode: 'build' | 'fetch';
   auto_publish: boolean;
   schedule_enabled: boolean;
   schedule_weekday: number;
@@ -39,6 +40,7 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
     seed_period: '1month',
     min_scrobbles: 10,
     max_tracks: 50,
+    run_mode: 'build',
     auto_publish: false,
     schedule_enabled: false,
     schedule_weekday: 1,
@@ -47,8 +49,34 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
   });
   const [advanced, setAdvanced] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [loadingConfig, setLoadingConfig] = useState(true);
   const [running, setRunning] = useState(false);
-  const [results, setResults] = useState<PersonalDiscoveryResult[] | null>(null);
+  const [results, setResults] = useState<ForgeDiscoveryResult[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const server = await forgeDiscoveryApi.getConfig();
+        if (cancelled) return;
+        setConfig(prev => ({
+          ...prev,
+          ...server,
+          run_mode: server.run_mode === 'fetch' ? 'fetch' : 'build',
+        }));
+      } catch {
+        if (!cancelled) {
+          toast.error('Failed to load Custom Discovery config');
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingConfig(false);
+        }
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [toast]);
 
   const update = <K extends keyof PDConfig>(key: K, value: PDConfig[K]) =>
     setConfig(c => ({ ...c, [key]: value }));
@@ -56,7 +84,7 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
   const handleSave = async () => {
     setSaving(true);
     try {
-      await new Promise(r => setTimeout(r, 400));
+      await forgeDiscoveryApi.saveConfig(config);
       toast.success('Custom Discovery config saved');
     } catch {
       toast.error('Failed to save config');
@@ -68,8 +96,8 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
   const handleRun = async () => {
     setRunning(true);
     try {
-      const data = await personalDiscoveryApi.run({ ...config, run_mode: 'build' } as PersonalDiscoveryConfig);
-      setResults(data);
+      const data = await forgeDiscoveryApi.run({ ...config, run_mode: 'build' });
+      setResults(data.artists);
       toast.success('Custom Discovery complete');
     } catch {
       toast.error('Failed to run Custom Discovery');
@@ -120,7 +148,7 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
               <label className="label">Scrobbling Period</label>
-              <select className="select" value={config.seed_period} onChange={e => update('seed_period', e.target.value as PersonalDiscoveryConfig['seed_period'])}>
+              <select className="select" value={config.seed_period} onChange={e => update('seed_period', e.target.value as ForgeDiscoveryConfig['seed_period'])}>
                 {SEED_PERIODS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
               </select>
             </div>
@@ -199,11 +227,11 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
       </section>
 
       <div className="flex gap-3 pt-2 border-t border-[#1a1a1a]">
-        <button onClick={handleRun} disabled={running || saving} className="btn-primary flex items-center gap-2 text-sm">
+        <button onClick={handleRun} disabled={running || saving || loadingConfig} className="btn-primary flex items-center gap-2 text-sm">
           {running ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
           {running ? 'Discovering…' : 'Run Discovery'}
         </button>
-        <button onClick={handleSave} disabled={saving || running} className="btn-secondary flex items-center gap-2 text-sm">
+        <button onClick={handleSave} disabled={saving || running || loadingConfig} className="btn-secondary flex items-center gap-2 text-sm">
           {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
           Save Config
         </button>

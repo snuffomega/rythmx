@@ -21,6 +21,14 @@ def _route_pairs() -> list[tuple[str, str]]:
 def test_core_contract_routes_are_registered() -> None:
     pairs = set(_route_pairs())
     expected = {
+        ("GET", "/api/v1/forge/new-music/config"),
+        ("POST", "/api/v1/forge/new-music/config"),
+        ("POST", "/api/v1/forge/new-music/run"),
+        ("GET", "/api/v1/forge/new-music/results"),
+        ("GET", "/api/v1/forge/discovery/config"),
+        ("POST", "/api/v1/forge/discovery/config"),
+        ("POST", "/api/v1/forge/discovery/run"),
+        ("GET", "/api/v1/forge/discovery/results"),
         ("GET", "/api/v1/library/artists"),
         ("GET", "/api/v1/library/releases"),
         ("GET", "/api/v1/library/albums"),
@@ -37,11 +45,20 @@ def test_core_contract_routes_are_registered() -> None:
     }
     missing = expected - pairs
     assert not missing, f"Missing expected API contract routes: {sorted(missing)}"
+    assert ("POST", "/api/v1/personal-discovery/run") not in pairs
 
 
 def test_core_contract_routes_are_not_duplicated() -> None:
     counts = Counter(_route_pairs())
     keys = [
+        ("GET", "/api/v1/forge/new-music/config"),
+        ("POST", "/api/v1/forge/new-music/config"),
+        ("POST", "/api/v1/forge/new-music/run"),
+        ("GET", "/api/v1/forge/new-music/results"),
+        ("GET", "/api/v1/forge/discovery/config"),
+        ("POST", "/api/v1/forge/discovery/config"),
+        ("POST", "/api/v1/forge/discovery/run"),
+        ("GET", "/api/v1/forge/discovery/results"),
         ("GET", "/api/v1/library/artists"),
         ("GET", "/api/v1/library/releases"),
         ("GET", "/api/v1/library/albums"),
@@ -55,4 +72,3 @@ def test_core_contract_routes_are_not_duplicated() -> None:
     ]
     for key in keys:
         assert counts[key] == 1, f"Expected exactly one route registration for {key}"
-
