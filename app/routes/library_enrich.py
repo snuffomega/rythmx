@@ -24,13 +24,10 @@ def enrich_status():
     """
     Returns unified pipeline status grouped by enrichment_meta source.
 
-    enrich_library writes 4 sub-sources to enrichment_meta:
-      itunes_artist  — artist-level iTunes confidence validation
-      deezer_artist  — artist-level Deezer confidence validation
-      itunes         — album-level iTunes ID enrichment
-      deezer         — album-level Deezer ID enrichment
-    These are aggregated into a single "library" key so the Identity Matching
-    stage card shows one complete number reflecting all enrich_library work.
+    Note: this route returns raw per-source counters from enrichment_meta
+    (e.g. itunes_artist, deezer_artist, itunes, deezer, spotify_id, ...).
+    Any higher-level aggregation (such as a combined "library" view) should be
+    done by the client.
 
     Response:
       {

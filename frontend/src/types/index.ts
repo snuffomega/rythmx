@@ -127,37 +127,6 @@ export interface LibraryStatus {
   enrich_pct?: number;
 }
 
-export interface LibraryEnrichStatus extends LibraryStatus {
-  enrich_running: boolean;
-}
-
-export interface SpotifyEnrichStatus {
-  enrich_running: boolean;
-  enriched_artists: number;
-  total_artists: number;
-  last_run?: string | null;
-  spotify_available: boolean;
-}
-
-export interface LastfmTagsStatus {
-  enrich_running: boolean;
-  enriched_artists: number;
-  total_artists: number;
-  enriched_albums: number;
-  total_albums: number;
-  last_run?: string | null;
-  lastfm_available: boolean;
-}
-
-export interface DeezerBpmStatus {
-  enrich_running: boolean;
-  enriched_albums: number;
-  total_albums: number;
-  enriched_tracks: number;
-  total_tracks: number;
-  last_run?: string | null;
-}
-
 export interface ConnectionStatus {
   connected: boolean;
   message?: string;

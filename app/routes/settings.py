@@ -1,6 +1,4 @@
 import logging
-import threading
-from datetime import datetime
 from typing import Any, Optional
 
 from fastapi import APIRouter, Body, Depends
@@ -14,16 +12,6 @@ from app.dependencies import verify_api_key
 logger = logging.getLogger(__name__)
 
 router = APIRouter(dependencies=[Depends(verify_api_key)])
-
-# Track background thread state
-_enrich_thread: threading.Thread | None = None
-_enrich_lock = threading.Lock()
-_spotify_enrich_thread: threading.Thread | None = None
-_spotify_enrich_lock = threading.Lock()
-_lastfm_tags_thread: threading.Thread | None = None
-_lastfm_tags_lock = threading.Lock()
-_deezer_bpm_thread: threading.Thread | None = None
-_deezer_bpm_lock = threading.Lock()
 
 
 @router.get("/settings")
@@ -150,165 +138,6 @@ def library_status():
     from app.services import library_service
     status = library_service.get_status()
     return {"status": "ok", **status}
-
-
-@router.get("/library/enrich-status")
-def library_enrich_status():
-    from app.services import library_service
-    global _enrich_thread
-    status = library_service.get_status()
-    running = _enrich_thread is not None and _enrich_thread.is_alive()
-    return {"status": "ok", "enrich_running": running, **status}
-
-
-@router.post("/library/enrich")
-def library_enrich(data: Optional[dict[str, Any]] = Body(default=None)):
-    global _enrich_thread
-    with _enrich_lock:
-        if _enrich_thread is not None and _enrich_thread.is_alive():
-            return JSONResponse(
-                {"status": "ok", "message": "Enrich already running"}, status_code=202
-            )
-
-        data = data or {}
-        batch_size = int(data.get("batch_size", 50))
-
-        def _run():
-            from app.services import library_service as _lib_svc
-            try:
-                result = _lib_svc.enrich_library(batch_size=batch_size)
-                logger.info("Library enrich complete: %s", result)
-            except Exception as e:
-                logger.error("Library enrich failed: %s", e)
-
-        _enrich_thread = threading.Thread(target=_run, daemon=True, name="lib-enrich")
-        _enrich_thread.start()
-
-    return JSONResponse({"status": "ok", "message": "Enrich started"}, status_code=202)
-
-
-@router.get("/library/spotify-status")
-def library_spotify_status():
-    from app.services import library_service
-    global _spotify_enrich_thread
-    status = library_service.get_spotify_status()
-    running = _spotify_enrich_thread is not None and _spotify_enrich_thread.is_alive()
-    return {"status": "ok", "enrich_running": running, **status}
-
-
-@router.post("/library/enrich-spotify")
-def library_enrich_spotify(data: Optional[dict[str, Any]] = Body(default=None)):
-    global _spotify_enrich_thread
-    with _spotify_enrich_lock:
-        if _spotify_enrich_thread is not None and _spotify_enrich_thread.is_alive():
-            return JSONResponse(
-                {"status": "ok", "message": "Spotify enrich already running"}, status_code=202
-            )
-
-        data = data or {}
-        batch_size = int(data.get("batch_size", 20))
-
-        def _run():
-            from app.services import library_service as _lib_svc
-            from app.db import rythmx_store as _store
-            try:
-                result = _lib_svc.enrich_spotify(batch_size=batch_size)
-                _store.set_setting("spotify_enrich_last_run", datetime.utcnow().isoformat())
-                logger.info("Spotify enrich complete: %s", result)
-            except Exception as e:
-                logger.error("Spotify enrich failed: %s", e)
-
-        _spotify_enrich_thread = threading.Thread(target=_run, daemon=True, name="spotify-enrich")
-        _spotify_enrich_thread.start()
-
-    return JSONResponse(
-        {"status": "ok", "message": "Spotify enrich started"}, status_code=202
-    )
-
-
-@router.get("/library/lastfm-tags-status")
-def library_lastfm_tags_status():
-    from app.services import library_service
-    global _lastfm_tags_thread
-    status = library_service.get_lastfm_tags_status()
-    running = _lastfm_tags_thread is not None and _lastfm_tags_thread.is_alive()
-    return {"status": "ok", "enrich_running": running, **status}
-
-
-@router.post("/library/enrich-lastfm-tags")
-def library_enrich_lastfm_tags(data: Optional[dict[str, Any]] = Body(default=None)):
-    global _lastfm_tags_thread
-    with _lastfm_tags_lock:
-        if _lastfm_tags_thread is not None and _lastfm_tags_thread.is_alive():
-            return JSONResponse(
-                {"status": "ok", "message": "Last.fm tag enrich already running"}, status_code=202
-            )
-
-        data = data or {}
-        batch_size = int(data.get("batch_size", 50))
-
-        def _run():
-            from app.services import library_service as _lib_svc
-            from app.db import rythmx_store as _store
-            try:
-                result = _lib_svc.enrich_lastfm_tags(batch_size=batch_size)
-                _store.set_setting("lastfm_tags_last_run", datetime.utcnow().isoformat())
-                logger.info("Last.fm tag enrich complete: %s", result)
-            except Exception as e:
-                logger.error("Last.fm tag enrich failed: %s", e)
-
-        _lastfm_tags_thread = threading.Thread(target=_run, daemon=True, name="lastfm-tags-enrich")
-        _lastfm_tags_thread.start()
-
-    return JSONResponse(
-        {"status": "ok", "message": "Last.fm tag enrich started"}, status_code=202
-    )
-
-
-@router.get("/library/deezer-bpm-status")
-def library_deezer_bpm_status():
-    from app.services import library_service
-    global _deezer_bpm_thread
-    status = library_service.get_deezer_bpm_status()
-    running = _deezer_bpm_thread is not None and _deezer_bpm_thread.is_alive()
-    return {"status": "ok", "enrich_running": running, **status}
-
-
-@router.post("/library/enrich-deezer-bpm")
-def library_enrich_deezer_bpm(data: Optional[dict[str, Any]] = Body(default=None)):
-    if not config.DEEZER_BPM_ENABLED:
-        return JSONResponse(
-            {"status": "error",
-             "message": "Deezer BPM enrichment is disabled (DEEZER_BPM_ENABLED=false). "
-                        "See bpm_deezer.py for rate-limit details."},
-            status_code=403,
-        )
-    global _deezer_bpm_thread
-    with _deezer_bpm_lock:
-        if _deezer_bpm_thread is not None and _deezer_bpm_thread.is_alive():
-            return JSONResponse(
-                {"status": "ok", "message": "Deezer BPM enrich already running"}, status_code=202
-            )
-
-        data = data or {}
-        batch_size = int(data.get("batch_size", 30))
-
-        def _run():
-            from app.services import library_service as _lib_svc
-            from app.db import rythmx_store as _store
-            try:
-                result = _lib_svc.enrich_deezer_bpm(batch_size=batch_size)
-                _store.set_setting("deezer_bpm_last_run", datetime.utcnow().isoformat())
-                logger.info("Deezer BPM enrich complete: %s", result)
-            except Exception as e:
-                logger.error("Deezer BPM enrich failed: %s", e)
-
-        _deezer_bpm_thread = threading.Thread(target=_run, daemon=True, name="deezer-bpm-enrich")
-        _deezer_bpm_thread.start()
-
-    return JSONResponse(
-        {"status": "ok", "message": "Deezer BPM enrich started"}, status_code=202
-    )
 
 
 @router.post("/settings/library-platform")

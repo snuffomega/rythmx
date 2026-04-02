@@ -9,10 +9,6 @@ import type {
   Track,
   TopAlbum,
   LibraryStatus,
-  LibraryEnrichStatus,
-  SpotifyEnrichStatus,
-  LastfmTagsStatus,
-  DeezerBpmStatus,
   ConnectionStatus,
   Settings,
   ReleaseKind,
@@ -285,38 +281,6 @@ export const libraryApi = {
   getStatus: () =>
     request<{ status: string } & LibraryStatus>('/library/status')
       .then(({ status: _s, ...rest }) => rest as LibraryStatus),
-  enrichStatus: () =>
-    request<{ status: string; enrich_running: boolean } & LibraryStatus>('/library/enrich-status')
-      .then(({ status: _s, ...rest }) => rest as LibraryEnrichStatus),
-  enrich: (batch_size = 50) =>
-    request<{ status: string }>('/library/enrich', {
-      method: 'POST',
-      body: JSON.stringify({ batch_size }),
-    }),
-  spotifyStatus: () =>
-    request<{ status: string; enrich_running: boolean } & SpotifyEnrichStatus>('/library/spotify-status')
-      .then(({ status: _s, ...rest }) => rest as SpotifyEnrichStatus),
-  enrichSpotify: (batch_size = 20) =>
-    request<{ status: string }>('/library/enrich-spotify', {
-      method: 'POST',
-      body: JSON.stringify({ batch_size }),
-    }),
-  lastfmTagsStatus: () =>
-    request<{ status: string; enrich_running: boolean } & LastfmTagsStatus>('/library/lastfm-tags-status')
-      .then(({ status: _s, ...rest }) => rest as LastfmTagsStatus),
-  enrichLastfmTags: (batch_size = 50) =>
-    request<{ status: string }>('/library/enrich-lastfm-tags', {
-      method: 'POST',
-      body: JSON.stringify({ batch_size }),
-    }),
-  deezerBpmStatus: () =>
-    request<{ status: string; enrich_running: boolean } & DeezerBpmStatus>('/library/deezer-bpm-status')
-      .then(({ status: _s, ...rest }) => rest as DeezerBpmStatus),
-  enrichDeezerBpm: (batch_size = 30) =>
-    request<{ status: string }>('/library/enrich-deezer-bpm', {
-      method: 'POST',
-      body: JSON.stringify({ batch_size }),
-    }),
 };
 
 export const personalDiscoveryApi = {
