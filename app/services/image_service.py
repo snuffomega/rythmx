@@ -387,7 +387,7 @@ def _fetch_and_cache(entity_type: str, name: str, artist: str) -> None:
             # Strip common release-type suffixes so "ICE - Single" searches as "ICE"
             search_name = re.sub(r'\s*[-–]\s*(single|ep|extended play)\s*$', '', name, flags=re.IGNORECASE).strip()
 
-            # Tier 0: Direct iTunes /lookup when itunes_album_id is known in release_cache
+            # Tier 0: Direct iTunes /lookup when itunes_album_id is known in lib_releases
             itunes_album_id = rythmx_store.get_release_itunes_album_id(artist, name)
             if itunes_album_id:
                 data = _itunes_img_get("/lookup", {

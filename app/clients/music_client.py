@@ -13,7 +13,7 @@ MusicBrainz is NOT in the auto chain — it requires 1 req/sec and connection-re
 from Docker networking. Set MUSIC_API_PROVIDER=musicbrainz to use it explicitly.
 
 Used by Cruise Control pipeline for artist resolution and new release discovery.
-No DB access — pure API calls. Caller is responsible for caching via rythmx_store.
+No DB access — pure API calls.
 """
 import unicodedata
 import re
@@ -769,54 +769,31 @@ def get_new_releases_for_artist(
     Discover new releases for a single artist using the configured provider chain:
       Spotify → iTunes → Deezer  (MusicBrainz only when MUSIC_API_PROVIDER=musicbrainz)
 
-    Results are cached in rythmx.db for 7 days (release_cache table). Set force_refresh=True
-    to bypass the cache and re-fetch from the provider.
-
     Returns (releases, resolved_ids) where resolved_ids contains any provider IDs
     discovered during this call — caller should write them to artist_identity_cache.
-    Upcoming (future-dated) releases are stored in the cache but NOT returned to the
-    caller — they're filtered here and available for a future "Upcoming" UI feature.
+    Upcoming (future-dated) releases are NOT returned to the caller — they're filtered
+    here and available for a future "Upcoming" UI feature.
 
     artist_name       — Last.fm artist name
     days_ago          — how far back to look (lookback_days)
     ignore_keywords   — release title substrings to skip (e.g. remix, remaster)
     cached_ids        — dict from rythmx_store.get_cached_artist() with cached provider IDs
     spotify_artist_id — Spotify artist ID from SoulSync DB (skips name-based search)
-    force_refresh     — bypass the 7-day cache and re-fetch from provider
+    force_refresh     — retained for backward compatibility (no release-cache layer)
     """
-    from app.db import rythmx_store
-
     cutoff = datetime.utcnow() - timedelta(days=days_ago)
-    cutoff_str = cutoff.strftime("%Y-%m-%d")
     ignore_kw = [k.strip().lower() for k in (ignore_keywords or [])]
     if allowed_kinds is None:
         allowed_kinds = {k.strip().lower() for k in config.RELEASE_KINDS.split(",") if k.strip()}
     provider = config.MUSIC_API_PROVIDER
-
-    # --- Release cache check (7-day TTL) ---
-    if not force_refresh:
-        cached = rythmx_store.get_cached_releases(artist_name, max_age_days=7)
-        if cached is not None:
-            releases = [
-                r for r in cached
-                if not r.is_upcoming
-                and (r.release_date or "") >= cutoff_str
-                and r.kind in allowed_kinds
-            ]
-            logger.debug("Release cache hit for '%s': %d/%d in window",
-                         artist_name, len(releases), len(cached))
-            return releases, {}
 
     ids = dict(cached_ids or {})
     sp_id = spotify_artist_id or ids.get("spotify_artist_id")
     if sp_id:
         ids["spotify_artist_id"] = sp_id
 
-    def _done(releases_list: list, resolved_ids: dict):
-        """Save all fetched releases (including upcoming) to cache; return non-upcoming.
-        Always saves — even an empty list writes a sentinel so quiet artists are not
-        re-fetched from the API on every run within the cache TTL window."""
-        rythmx_store.save_releases_to_cache(artist_name, releases_list)
+    def _finalize(releases_list: list, resolved_ids: dict):
+        """Filter out future-dated releases for the current pipeline output."""
         return [r for r in releases_list if not r.is_upcoming], resolved_ids
 
     # --- Spotify ---
@@ -825,9 +802,9 @@ def get_new_releases_for_artist(
                                          spotify_artist_id=sp_id)
         if releases:
             logger.info("Spotify: %d releases for '%s'", len(releases), artist_name)
-            return _done(releases, ids)
+            return _finalize(releases, ids)
         if provider == "spotify":
-            return _done([], ids)
+            return _finalize([], ids)
 
     # --- iTunes (primary free provider) ---
     if provider in ("itunes", "auto"):
@@ -839,9 +816,9 @@ def get_new_releases_for_artist(
             releases = _itunes_get_releases(it_id, cutoff, allowed_kinds, ignore_kw)
             if releases:
                 logger.info("iTunes: %d releases for '%s'", len(releases), artist_name)
-                return _done(releases, ids)
+                return _finalize(releases, ids)
         if provider == "itunes":
-            return _done([], ids)
+            return _finalize([], ids)
 
     # --- Deezer (fallback) ---
     if provider in ("deezer", "auto"):
@@ -853,9 +830,9 @@ def get_new_releases_for_artist(
             releases = _deezer_get_releases(deezer_id, cutoff, allowed_kinds, ignore_kw)
             if releases:
                 logger.info("Deezer: %d releases for '%s'", len(releases), artist_name)
-                return _done(releases, ids)
+                return _finalize(releases, ids)
         if provider == "deezer":
-            return _done([], ids)
+            return _finalize([], ids)
 
     # --- MusicBrainz (explicit only — not in auto chain) ---
     # MB is excluded from "auto" because it hits a 1 req/sec rate limit and
@@ -871,10 +848,10 @@ def get_new_releases_for_artist(
             ids["mb_artist_id"] = mb_id
             releases = _mb_get_releases(mb_id, cutoff, allowed_kinds, ignore_kw)
             logger.debug("MusicBrainz: %d releases for '%s'", len(releases), artist_name)
-            return _done(releases, ids)
+            return _finalize(releases, ids)
 
     logger.info("No releases found for '%s' via any provider", artist_name)
-    return _done([], ids)
+    return _finalize([], ids)
 
 
 def get_active_provider() -> str:
