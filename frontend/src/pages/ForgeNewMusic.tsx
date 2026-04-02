@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Settings, Zap, ChevronDown, ChevronUp, Music2 } from 'lucide-react';
 import { useNavigate } from '@tanstack/react-router';
-import { forgeNewMusicApi } from '../services/api';
+import { forgeBuildsApi, forgeNewMusicApi } from '../services/api';
 import { useToastStore } from '../stores/useToastStore';
 import { Toggle } from '../components/common';
 import type { NewMusicConfig, DiscoveredRelease } from '../types';
@@ -150,7 +150,33 @@ export function ForgeNewMusic() {
         nm_period: config.nm_period,
         nm_lookback_days: config.nm_lookback_days,
       });
-      toastSuccess(`${data.releases_found} releases found`);
+
+      let queued = false;
+      try {
+        const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
+        await forgeBuildsApi.create({
+          name: `New Music ${stamp}`,
+          source: 'new_music',
+          status: 'ready',
+          run_mode: 'build',
+          track_list: data.releases as unknown as Array<Record<string, unknown>>,
+          summary: {
+            artists_checked: data.artists_checked,
+            releases_found: data.releases_found,
+            nm_period: config.nm_period,
+            nm_lookback_days: config.nm_lookback_days,
+          },
+        });
+        queued = true;
+      } catch {
+        toastError('Run completed, but build queueing failed');
+      }
+
+      toastSuccess(
+        queued
+          ? `${data.releases_found} releases found and queued in Builder`
+          : `${data.releases_found} releases found`
+      );
 
       // Navigate to Builder after brief done-state
       setTimeout(() => {

@@ -5,6 +5,7 @@ Router is registered at /api/v1 in main.py.
 """
 import logging
 import threading
+from datetime import datetime
 from typing import Any, Optional
 
 from fastapi import APIRouter, Body, Depends, Query
@@ -18,12 +19,35 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(dependencies=[Depends(verify_api_key)])
 
+_BUILD_SOURCES = {"new_music", "custom_discovery", "sync", "manual"}
+_BUILD_STATUSES = {"queued", "building", "ready", "published", "failed"}
+
 
 def _error(message: str, status_code: int = 400, code: str | None = None) -> JSONResponse:
     payload: dict[str, str] = {"status": "error", "message": message}
     if code:
         payload["code"] = code
     return JSONResponse(payload, status_code=status_code)
+
+
+def _validate_build_payload(data: dict[str, Any]) -> str | None:
+    source = str(data.get("source", "manual")).strip().lower()
+    if source not in _BUILD_SOURCES:
+        return f"source must be one of: {', '.join(sorted(_BUILD_SOURCES))}"
+
+    status = str(data.get("status", "ready")).strip().lower()
+    if status not in _BUILD_STATUSES:
+        return f"status must be one of: {', '.join(sorted(_BUILD_STATUSES))}"
+
+    track_list = data.get("track_list")
+    if track_list is not None and not isinstance(track_list, list):
+        return "track_list must be a list"
+
+    summary = data.get("summary")
+    if summary is not None and not isinstance(summary, dict):
+        return "summary must be an object"
+
+    return None
 
 
 @router.get("/forge/pipeline-history")
@@ -189,4 +213,68 @@ def discovery_run(data: Optional[dict[str, Any]] = Body(default=None)):
 def discovery_get_results():
     """Return the latest Forge Discovery result set."""
     return {"status": "ok", "artists": discovery_runner.get_results()}
+
+
+# ---------------------------------------------------------------------------
+# Builder endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.get("/forge/builds")
+def forge_builds_list(
+    source: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+):
+    if source and source not in _BUILD_SOURCES:
+        return _error(
+            f"source must be one of: {', '.join(sorted(_BUILD_SOURCES))}",
+            status_code=400,
+            code="FORGE_VALIDATION_ERROR",
+        )
+    builds = rythmx_store.list_forge_builds(source=source, limit=limit)
+    return {"status": "ok", "builds": builds}
+
+
+@router.get("/forge/builds/{build_id}")
+def forge_builds_get(build_id: str):
+    build = rythmx_store.get_forge_build(build_id)
+    if not build:
+        return _error("Build not found", status_code=404, code="FORGE_BUILD_NOT_FOUND")
+    return {"status": "ok", "build": build}
+
+
+@router.post("/forge/builds")
+def forge_builds_create(data: Optional[dict[str, Any]] = Body(default=None)):
+    data = data or {}
+    validation_error = _validate_build_payload(data)
+    if validation_error:
+        return _error(validation_error, status_code=400, code="FORGE_VALIDATION_ERROR")
+
+    source = str(data.get("source", "manual")).strip().lower()
+    status = str(data.get("status", "ready")).strip().lower()
+    run_mode = str(data.get("run_mode")).strip().lower() if data.get("run_mode") else None
+    track_list = data.get("track_list") or []
+    summary = data.get("summary") or {}
+
+    default_name = f"{source.replace('_', ' ').title()} Build {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+    name = str(data.get("name") or "").strip() or default_name
+
+    build = rythmx_store.create_forge_build(
+        name=name,
+        source=source,
+        status=status,
+        track_list=track_list,
+        summary=summary,
+        run_mode=run_mode,
+        build_id=data.get("id"),
+    )
+    return {"status": "ok", "build": build}
+
+
+@router.delete("/forge/builds/{build_id}")
+def forge_builds_delete(build_id: str):
+    deleted = rythmx_store.delete_forge_build(build_id)
+    if not deleted:
+        return _error("Build not found", status_code=404, code="FORGE_BUILD_NOT_FOUND")
+    return {"status": "ok", "deleted": True}
 

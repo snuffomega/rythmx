@@ -32,6 +32,9 @@ import type {
   SimilarArtist,
   NewMusicConfig,
   DiscoveredRelease,
+  ForgeBuild,
+  ForgeBuildSource,
+  ForgeBuildStatus,
   LibPlaylist,
   LibPlaylistTrack,
 } from '../types';
@@ -409,6 +412,37 @@ export const forgeNewMusicApi = {
   getResults: () =>
     request<{ status: string; releases: DiscoveredRelease[] }>('/forge/new-music/results')
       .then(r => r.releases),
+};
+
+export const forgeBuildsApi = {
+  list: (source?: ForgeBuildSource, limit = 100) => {
+    const params = new URLSearchParams();
+    if (source) params.set('source', source);
+    params.set('limit', String(limit));
+    const qs = params.toString();
+    return request<{ status: string; builds: ForgeBuild[] }>(`/forge/builds?${qs}`)
+      .then(r => r.builds);
+  },
+  get: (id: string) =>
+    request<{ status: string; build: ForgeBuild }>(`/forge/builds/${encodeURIComponent(id)}`)
+      .then(r => r.build),
+  create: (data: {
+    id?: string;
+    name?: string;
+    source: ForgeBuildSource;
+    status?: ForgeBuildStatus;
+    run_mode?: 'build' | 'fetch';
+    track_list?: Array<Record<string, unknown>>;
+    summary?: Record<string, unknown>;
+  }) =>
+    request<{ status: string; build: ForgeBuild }>('/forge/builds', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }).then(r => r.build),
+  delete: (id: string) =>
+    request<{ status: string; deleted: boolean }>(`/forge/builds/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }).then(r => r.deleted),
 };
 
 export const libraryPlaylistsApi = {

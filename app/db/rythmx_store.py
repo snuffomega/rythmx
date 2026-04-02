@@ -9,6 +9,7 @@ import logging
 from app import config
 from app.db.store import api_keys as _api_keys_store
 from app.db.store import download_queue as _download_queue_store
+from app.db.store import forge_builds as _forge_builds_store
 from app.db.store import history as _history_store
 from app.db.store import image_cache as _image_cache_store
 from app.db.store import playlist as _playlist_store
@@ -361,4 +362,41 @@ def get_pipeline_runs(
     limit: int = 50,
 ) -> list[dict]:
     return _pipeline_history_store.get_pipeline_runs(_connect, pipeline_type, limit)
+
+
+# ---------------------------------------------------------------------------
+# Forge builds
+# ---------------------------------------------------------------------------
+
+def create_forge_build(
+    name: str,
+    source: str = "manual",
+    status: str = "ready",
+    track_list: list[dict] | list | None = None,
+    summary: dict | None = None,
+    run_mode: str | None = None,
+    build_id: str | None = None,
+) -> dict:
+    return _forge_builds_store.create_forge_build(
+        _connect,
+        name=name,
+        source=source,
+        status=status,
+        track_list=track_list,
+        summary=summary,
+        run_mode=run_mode,
+        build_id=build_id,
+    )
+
+
+def list_forge_builds(source: str | None = None, limit: int = 100) -> list[dict]:
+    return _forge_builds_store.list_forge_builds(_connect, source=source, limit=limit)
+
+
+def get_forge_build(build_id: str) -> dict | None:
+    return _forge_builds_store.get_forge_build(_connect, build_id)
+
+
+def delete_forge_build(build_id: str) -> bool:
+    return _forge_builds_store.delete_forge_build(_connect, build_id)
 

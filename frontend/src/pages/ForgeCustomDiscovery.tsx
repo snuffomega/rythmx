@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Play, Loader2, Sparkles, ChevronDown, ChevronUp, Save } from 'lucide-react';
-import { forgeDiscoveryApi } from '../services/api';
+import { forgeBuildsApi, forgeDiscoveryApi } from '../services/api';
 import { ArtistResultCard, DiscoveryPipelineViz } from '../components/forge';
 import { Toggle } from '../components/common';
 import type { ForgeDiscoveryConfig, ForgeDiscoveryResult } from '../types';
@@ -98,7 +98,29 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
     try {
       const data = await forgeDiscoveryApi.run({ ...config, run_mode: 'build' });
       setResults(data.artists);
-      toast.success('Custom Discovery complete');
+
+      let queued = false;
+      try {
+        const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
+        await forgeBuildsApi.create({
+          name: `Custom Discovery ${stamp}`,
+          source: 'custom_discovery',
+          status: 'ready',
+          run_mode: 'build',
+          track_list: data.artists as unknown as Array<Record<string, unknown>>,
+          summary: {
+            artists_found: data.artists_found,
+            seed_period: config.seed_period,
+            max_tracks: config.max_tracks,
+            closeness: config.closeness,
+          },
+        });
+        queued = true;
+      } catch {
+        toast.error('Discovery completed, but build queueing failed');
+      }
+
+      toast.success(queued ? 'Custom Discovery complete and queued in Builder' : 'Custom Discovery complete');
     } catch {
       toast.error('Failed to run Custom Discovery');
     } finally {

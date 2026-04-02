@@ -316,3 +316,103 @@ def test_forge_new_music_runtime_error_contract(monkeypatch):
     assert body["status"] == "error"
     assert body["message"] == "nm failed"
     assert body["code"] == "FORGE_RUN_FAILED"
+
+
+def test_forge_builds_validation_rejects_invalid_source():
+    result = forge.forge_builds_create({"source": "bad_source", "track_list": []})
+    assert isinstance(result, JSONResponse)
+    assert result.status_code == 400
+    body = json.loads(result.body.decode("utf-8"))
+    assert body["status"] == "error"
+    assert body["code"] == "FORGE_VALIDATION_ERROR"
+
+
+def test_forge_builds_create_and_list_contract(monkeypatch):
+    fake_build = {
+        "id": "build-1",
+        "name": "New Music Build",
+        "source": "new_music",
+        "status": "ready",
+        "run_mode": "build",
+        "track_list": [{"title": "Track A"}],
+        "summary": {"releases_found": 1},
+        "item_count": 1,
+        "created_at": "2026-04-02T20:00:00",
+        "updated_at": "2026-04-02T20:00:00",
+    }
+
+    monkeypatch.setattr(
+        forge.rythmx_store,
+        "create_forge_build",
+        lambda **kwargs: fake_build,
+    )
+    monkeypatch.setattr(
+        forge.rythmx_store,
+        "list_forge_builds",
+        lambda source=None, limit=100: [fake_build],
+    )
+
+    created = forge.forge_builds_create(
+        {
+            "name": "New Music Build",
+            "source": "new_music",
+            "status": "ready",
+            "run_mode": "build",
+            "track_list": [{"title": "Track A"}],
+            "summary": {"releases_found": 1},
+        }
+    )
+    assert created["status"] == "ok"
+    assert created["build"]["id"] == "build-1"
+    assert created["build"]["item_count"] == 1
+
+    listed = forge.forge_builds_list(source=None, limit=25)
+    assert listed["status"] == "ok"
+    assert len(listed["builds"]) == 1
+    assert listed["builds"][0]["id"] == "build-1"
+
+
+def test_forge_build_get_and_delete_contract(monkeypatch):
+    fake_build = {
+        "id": "build-1",
+        "name": "Build 1",
+        "source": "manual",
+        "status": "ready",
+        "run_mode": None,
+        "track_list": [],
+        "summary": {},
+        "item_count": 0,
+        "created_at": "2026-04-02T20:00:00",
+        "updated_at": "2026-04-02T20:00:00",
+    }
+
+    monkeypatch.setattr(
+        forge.rythmx_store,
+        "get_forge_build",
+        lambda build_id: fake_build if build_id == "build-1" else None,
+    )
+    monkeypatch.setattr(
+        forge.rythmx_store,
+        "delete_forge_build",
+        lambda build_id: build_id == "build-1",
+    )
+
+    found = forge.forge_builds_get("build-1")
+    assert found["status"] == "ok"
+    assert found["build"]["name"] == "Build 1"
+
+    missing_get = forge.forge_builds_get("missing")
+    assert isinstance(missing_get, JSONResponse)
+    assert missing_get.status_code == 404
+    get_body = json.loads(missing_get.body.decode("utf-8"))
+    assert get_body["code"] == "FORGE_BUILD_NOT_FOUND"
+
+    deleted = forge.forge_builds_delete("build-1")
+    assert deleted["status"] == "ok"
+    assert deleted["deleted"] is True
+
+    missing_delete = forge.forge_builds_delete("missing")
+    assert isinstance(missing_delete, JSONResponse)
+    assert missing_delete.status_code == 404
+    del_body = json.loads(missing_delete.body.decode("utf-8"))
+    assert del_body["code"] == "FORGE_BUILD_NOT_FOUND"

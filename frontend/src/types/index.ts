@@ -485,8 +485,24 @@ export interface DiscoveredRelease {
 }
 
 // ---------------------------------------------------------------------------
-// The Forge — Pipeline history
+// The Forge - Builds and pipeline history
 // ---------------------------------------------------------------------------
+
+export type ForgeBuildSource = 'new_music' | 'custom_discovery' | 'sync' | 'manual';
+export type ForgeBuildStatus = 'queued' | 'building' | 'ready' | 'published' | 'failed';
+
+export interface ForgeBuild {
+  id: string;
+  name: string;
+  source: ForgeBuildSource;
+  status: ForgeBuildStatus;
+  run_mode?: 'build' | 'fetch' | null;
+  track_list: Array<Record<string, unknown>>;
+  summary: Record<string, unknown>;
+  item_count: number;
+  created_at: string;
+  updated_at: string;
+}
 
 export interface PipelineRun {
   id: number;
