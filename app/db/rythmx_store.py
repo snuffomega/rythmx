@@ -1,5 +1,5 @@
-"""
-rythmx_store.py — rythmx's own SQLite database (rythmx.db).
+﻿"""
+rythmx_store.py â€” rythmx's own SQLite database (rythmx.db).
 
 All tables owned by rythmx. Never touches SoulSync's DB.
 All queries use parameterized form only.
@@ -7,6 +7,10 @@ All queries use parameterized form only.
 import sqlite3
 import logging
 from app import config
+from app.db.store import api_keys as _api_keys_store
+from app.db.store import image_cache as _image_cache_store
+from app.db.store import settings as _settings_store
+from app.db.store import pipeline_history as _pipeline_history_store
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +56,7 @@ def init_db():
     run_pending_migrations(config.RYTHMX_DB)
 
     with _connect() as conn:
-        # Apply enforcement triggers via executescript() — the migration runner
+        # Apply enforcement triggers via executescript() â€” the migration runner
         # cannot handle multi-statement DDL (splits on semicolons).
         conn.executescript(_TRIGGER_DDL)
         # Prune stale image cache entries (> 30 days since last access)
@@ -67,90 +71,40 @@ def init_db():
 # --- API Key ---
 
 def get_api_key() -> str | None:
-    """Return the active API key, or None if not yet generated."""
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT key FROM api_keys ORDER BY id DESC LIMIT 1"
-        ).fetchone()
-        return row["key"] if row else None
-
+    return _api_keys_store.get_api_key(_connect)
 
 def _set_api_key(key: str) -> None:
-    """Replace the active API key (internal — callers use generate_new_api_key)."""
-    with _connect() as conn:
-        conn.execute("DELETE FROM api_keys")
-        conn.execute("INSERT INTO api_keys (key) VALUES (?)", (key,))
-
+    _api_keys_store.set_api_key(_connect, key)
 
 def generate_new_api_key() -> str:
-    """Generate a cryptographically random 64-char hex API key, persist it, and return it."""
-    import secrets
-    key = secrets.token_hex(32)
-    _set_api_key(key)
-    return key
-
+    return _api_keys_store.generate_new_api_key(_connect)
 
 # --- Image Cache ---
 
 def get_image_cache(entity_type: str, entity_key: str) -> str | None:
-    """Return cached image URL or None if not cached / empty.
-
-    Empty strings are treated as misses so stale 'not found' entries from
-    failed fetches are retried rather than permanently suppressed.
-    """
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT image_url FROM image_cache WHERE entity_type=? AND entity_key=?",
-            (entity_type, entity_key)
-        ).fetchone()
-        if row is None or not row["image_url"]:
-            return None
-        conn.execute(
-            "UPDATE image_cache SET last_accessed=datetime('now') WHERE entity_type=? AND entity_key=?",
-            (entity_type, entity_key)
-        )
-        return row["image_url"]
+    return _image_cache_store.get_image_cache(_connect, entity_type, entity_key)
 
 
 def set_image_cache(entity_type: str, entity_key: str, image_url: str):
-    """Upsert an image URL into the cache."""
-    with _connect() as conn:
-        conn.execute(
-            """INSERT INTO image_cache (entity_type, entity_key, image_url, last_accessed)
-               VALUES (?, ?, ?, datetime('now'))
-               ON CONFLICT(entity_type, entity_key) DO UPDATE SET
-                   image_url=excluded.image_url,
-                   last_accessed=datetime('now')""",
-            (entity_type, entity_key, image_url)
-        )
+    _image_cache_store.set_image_cache(_connect, entity_type, entity_key, image_url)
 
 
 def clear_image_cache():
-    """Delete all rows from image_cache."""
-    with _connect() as conn:
-        conn.execute("DELETE FROM image_cache")
+    _image_cache_store.clear_image_cache(_connect)
 
 
 # --- Settings ---
 
 def get_setting(key: str, default=None):
-    with _connect() as conn:
-        row = conn.execute("SELECT value FROM app_settings WHERE key = ?", (key,)).fetchone()
-        return row["value"] if row else default
+    return _settings_store.get_setting(_connect, key, default)
 
 
 def set_setting(key: str, value: str):
-    with _connect() as conn:
-        conn.execute(
-            "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            (key, value)
-        )
+    _settings_store.set_setting(_connect, key, value)
 
 
 def get_all_settings() -> dict:
-    with _connect() as conn:
-        rows = conn.execute("SELECT key, value FROM app_settings").fetchall()
-        return {r["key"]: r["value"] for r in rows}
+    return _settings_store.get_all_settings(_connect)
 
 
 # --- History ---
@@ -203,7 +157,7 @@ def is_release_in_history(artist_name: str, album_name: str) -> bool:
 def is_in_queue(artist_name: str, album_title: str) -> bool:
     """
     Return True if this release has a pending or submitted acquisition request.
-    Does NOT block 'found', 'failed', or 'skipped' — those can be re-evaluated.
+    Does NOT block 'found', 'failed', or 'skipped' â€” those can be re-evaluated.
     """
     with _connect() as conn:
         row = conn.execute(
@@ -223,7 +177,7 @@ def add_to_queue(artist_name: str, album_title: str, release_date: str = None,
                  spotify_album_id: str = None,
                  requested_by: str = "cc", playlist_name: str = None) -> int:
     """
-    Insert a release into the download queue. UNIQUE(artist_name, album_title) —
+    Insert a release into the download queue. UNIQUE(artist_name, album_title) â€”
     if an entry already exists (any status), the existing row is left unchanged and
     its id is returned.
     """
@@ -440,7 +394,7 @@ def cache_artist(lastfm_name: str, deezer_artist_id: str = None,
     """Upsert provider IDs for a Last.fm artist name.
 
     Uses COALESCE so a new None value never overwrites an existing good ID.
-    soulsync_artist_id is the SoulSync internal artists.id — enables exact PK
+    soulsync_artist_id is the SoulSync internal artists.id â€” enables exact PK
     joins for owned-check instead of fuzzy text matching.
     resolution_method: how identity was confirmed (name_only / track_overlap_N / cache_hit).
     """
@@ -521,7 +475,7 @@ def reset_db():
             DELETE FROM playlists;
             DELETE FROM download_queue;
         """)
-    logger.info("rythmx.db reset — all user data cleared")
+    logger.info("rythmx.db reset â€” all user data cleared")
 
 
 # --- Playlist metadata (multi-playlist management) ---
@@ -657,63 +611,10 @@ def remove_playlist_row(row_id: int):
 
 
 def get_release_itunes_album_id(artist_name: str, album_title: str) -> str | None:
-    """
-    Return itunes_album_id for a known artist+album, or None.
-    Used by image_service as Tier 0 for album art lookups.
-    """
-    with _connect() as conn:
-        row = conn.execute(
-            """SELECT itunes_album_id FROM lib_releases
-               WHERE artist_name_lower = lower(?)
-                 AND title_lower = lower(?)
-                 AND itunes_album_id IS NOT NULL
-               LIMIT 1""",
-            (artist_name, album_title),
-        ).fetchone()
-    return row["itunes_album_id"] if row else None
-
+    return _image_cache_store.get_release_itunes_album_id(_connect, artist_name, album_title)
 
 def get_missing_image_entities(limit: int = 40) -> list[tuple[str, str, str]]:
-    """
-    Return up to `limit` (entity_type, name, artist) tuples for entities that
-    have no resolved image in image_cache. Albums from playlist_tracks are checked
-    first (most visible); artist images from artist_identity_cache fill the rest.
-
-    Only entities with a completely absent or empty image_url are returned —
-    entries with non-empty URLs are skipped (already cached).
-    """
-    with _connect() as conn:
-        albums = conn.execute("""
-            SELECT DISTINCT 'album', album_name, artist_name
-            FROM playlist_tracks
-            WHERE album_name IS NOT NULL AND album_name != ''
-              AND NOT EXISTS (
-                  SELECT 1 FROM image_cache
-                  WHERE entity_type = 'album'
-                    AND entity_key = lower(playlist_tracks.artist_name) || '|||' || lower(playlist_tracks.album_name)
-                    AND image_url != ''
-              )
-            LIMIT ?
-        """, (limit,)).fetchall()
-
-        remaining = limit - len(albums)
-        artists = []
-        if remaining > 0:
-            artists = conn.execute("""
-                SELECT DISTINCT 'artist', lastfm_name, ''
-                FROM artist_identity_cache
-                WHERE lastfm_name IS NOT NULL AND lastfm_name != ''
-                  AND NOT EXISTS (
-                      SELECT 1 FROM image_cache
-                      WHERE entity_type = 'artist'
-                        AND entity_key = lower(artist_identity_cache.lastfm_name)
-                        AND image_url != ''
-                  )
-                LIMIT ?
-            """, (remaining,)).fetchall()
-
-        return [(r[0], r[1], r[2]) for r in albums + artists]
-
+    return _image_cache_store.get_missing_image_entities(_connect, limit)
 
 def backfill_normalized_titles() -> int:
     """Populate normalized_title and version_type for all lib_releases rows missing them."""
@@ -941,7 +842,7 @@ def ensure_single_catalog_cleanup():
             (secondary,),
         ).rowcount
 
-        # Reset derived columns — forces recalculation by next pipeline run
+        # Reset derived columns â€” forces recalculation by next pipeline run
         conn.execute(
             "UPDATE lib_releases SET canonical_release_id = NULL, "
             "is_owned = 0, owned_checked_at = NULL"
@@ -969,16 +870,9 @@ def insert_pipeline_run(
     config_snapshot: dict,
     triggered_by: str = "manual",
 ) -> int:
-    """Insert a new pipeline_history row at run start. Returns the new row id."""
-    import json as _json
-    with _connect() as conn:
-        cur = conn.execute(
-            """INSERT INTO pipeline_history
-               (pipeline_type, run_mode, status, config_json, triggered_by)
-               VALUES (?, ?, 'running', ?, ?)""",
-            (pipeline_type, run_mode, _json.dumps(config_snapshot), triggered_by),
-        )
-        return cur.lastrowid
+    return _pipeline_history_store.insert_pipeline_run(
+        _connect, pipeline_type, run_mode, config_snapshot, triggered_by
+    )
 
 
 def complete_pipeline_run(
@@ -986,40 +880,12 @@ def complete_pipeline_run(
     summary: dict,
     error_message: str | None = None,
 ) -> None:
-    """Mark a pipeline_history row as completed (or error) with duration and summary."""
-    import json as _json
-    status = "error" if error_message else "completed"
-    with _connect() as conn:
-        conn.execute(
-            """UPDATE pipeline_history
-               SET status = ?,
-                   finished_at = CURRENT_TIMESTAMP,
-                   run_duration = (julianday(CURRENT_TIMESTAMP)
-                                   - julianday(started_at)) * 86400,
-                   summary_json = ?,
-                   error_message = ?
-               WHERE id = ?""",
-            (status, _json.dumps(summary), error_message, run_id),
-        )
+    _pipeline_history_store.complete_pipeline_run(_connect, run_id, summary, error_message)
 
 
 def get_pipeline_runs(
     pipeline_type: str | None = None,
     limit: int = 50,
 ) -> list[dict]:
-    """Return recent pipeline_history rows, optionally filtered by pipeline_type."""
-    with _connect() as conn:
-        if pipeline_type:
-            rows = conn.execute(
-                """SELECT * FROM pipeline_history
-                   WHERE pipeline_type = ?
-                   ORDER BY started_at DESC LIMIT ?""",
-                (pipeline_type, limit),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                """SELECT * FROM pipeline_history
-                   ORDER BY started_at DESC LIMIT ?""",
-                (limit,),
-            ).fetchall()
-        return [dict(r) for r in rows]
+    return _pipeline_history_store.get_pipeline_runs(_connect, pipeline_type, limit)
+
