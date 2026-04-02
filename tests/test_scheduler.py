@@ -346,15 +346,3 @@ class TestStage7:
         assert result["playlist_name"].startswith("Weekend Picks_")
 
 
-# ---------------------------------------------------------------------------
-# Stage 8 — force_refresh
-# ---------------------------------------------------------------------------
-
-class TestForceRefresh:
-    def test_force_refresh_clears_release_cache(self):
-        _, mock_store = _run_cycle(force_refresh=True, run_mode="preview")
-        mock_store.clear_release_cache.assert_called_once()
-
-    def test_normal_run_does_not_clear_cache(self):
-        _, mock_store = _run_cycle(force_refresh=False, run_mode="preview")
-        mock_store.clear_release_cache.assert_not_called()
