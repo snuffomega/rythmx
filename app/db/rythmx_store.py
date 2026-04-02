@@ -779,7 +779,7 @@ def refresh_missing_counts(artist_id: str | None = None,
                            artist_ids: list[str] | None = None) -> int:
     """Recompute lib_artists.missing_count from lib_releases with full dedup logic.
 
-    Mirrors the ROW_NUMBER dedup in library_browse.library_artist_detail():
+    Mirrors the ROW_NUMBER dedup used by the artist detail route query.
       - resolved_kind via COALESCE(kind_deezer, kind_itunes, track_count heuristic)
       - source priority: deezer > itunes
       - singles suppressed when album/ep exists with same normalized_title
