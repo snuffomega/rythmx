@@ -94,42 +94,6 @@ export interface PlaylistTrack {
   acquisition_status?: AcquisitionStatus | null;
 }
 
-export interface CruiseControlStatus {
-  state: 'idle' | 'running' | 'error' | 'completed';
-  stage?: number;
-  stage_label?: string;
-  total_stages?: number;
-  last_run?: string;
-  summary?: {
-    artists_checked: number;
-    new_releases: number;
-    owned: number;
-    queued: number;
-  };
-  error?: string;
-}
-
-export interface CruiseControlConfig {
-  run_mode: 'build' | 'fetch';
-  playlist_prefix: string;
-  min_listens: number;
-  period: Period;
-  lookback_days: number;
-  max_per_cycle: number;
-  max_playlist_tracks: number;
-  auto_push_playlist: boolean;
-  schedule_weekday: number;
-  schedule_hour: number;
-  enabled: boolean;
-  dry_run: boolean;
-  release_cache_refresh_weekday: number;
-  release_cache_refresh_hour: number;
-  nr_ignore_keywords: string;
-  nr_ignore_artists: string;
-  include_features: boolean;
-  release_kinds: string;
-}
-
 export interface HistoryItem {
   artist: string;
   album: string;
@@ -472,7 +436,7 @@ export interface WsEnrichmentPhase {
   phase: string;
 }
 
-// CC pipeline events (scheduler)
+// New Music pipeline events (scheduler)
 export interface WsPipelineProgress {
   stage: string;
   processed: number;

@@ -326,7 +326,7 @@ export function Discovery() {
           title="Discover"
           sub="Artists similar to your taste you haven't heard much"
           cta="Run discovery"
-          onCta={() => navigate({ to: '/cruise-control' })}
+          onCta={() => navigate({ to: '/forge/custom-discovery' })}
         />
         {lovedArtists.error ? (
           <ApiErrorBanner error={lovedArtists.error} onRetry={lovedArtists.refetch} />

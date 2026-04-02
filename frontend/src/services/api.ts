@@ -5,9 +5,6 @@ import type {
   AcquisitionStats,
   PlaylistItem,
   PlaylistTrack,
-  CruiseControlStatus,
-  CruiseControlConfig,
-  HistoryItem,
   Artist,
   Track,
   TopAlbum,
@@ -131,33 +128,6 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   }
   return data as T;
 }
-
-export const cruiseControlApi = {
-  getStatus: () =>
-    request<{ status: string } & CruiseControlStatus>('/cruise-control/status')
-      .then(r => r as CruiseControlStatus),
-  getConfig: () =>
-    request<{ status: string; config: CruiseControlConfig }>('/cruise-control/config')
-      .then(r => r.config),
-  saveConfig: (config: Partial<CruiseControlConfig>) =>
-    request<{ status: string }>('/cruise-control/config', {
-      method: 'POST',
-      body: JSON.stringify(config),
-    }),
-  runNow: (runMode?: string) =>
-    request<{ status: string }>('/cruise-control/run-now', {
-      method: 'POST',
-      body: runMode ? JSON.stringify({ run_mode: runMode }) : undefined,
-    }),
-  getHistory: () =>
-    request<{ status: string; history: HistoryItem[] }>('/cruise-control/history')
-      .then(r => r.history),
-};
-
-export const releaseCacheApi = {
-  clear: () =>
-    request<{ status: string }>('/release-cache/clear', { method: 'POST' }),
-};
 
 export const acquisitionApi = {
   getQueue: (status?: AcquisitionStatus | 'all', playlist?: string) => {

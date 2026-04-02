@@ -107,7 +107,7 @@ export function ActivityPage({ toast }: ActivityPageProps) {
         <EmptyState
           icon={<Music2 size={32} />}
           message="No items in queue"
-          sub={filter === 'all' ? 'Run Cruise Control to populate the queue' : `No ${filter} items`}
+          sub={filter === 'all' ? 'Run New Music in The Forge to populate the queue' : `No ${filter} items`}
         />
       ) : (
         <div className="space-y-0">

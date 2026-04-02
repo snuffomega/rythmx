@@ -762,7 +762,7 @@ export function SettingsPage({ toast }: SettingsPageProps) {
             <div className="flex items-center justify-between gap-4">
               <div>
                 <p className="text-text-primary text-sm font-semibold">Clear History</p>
-                <p className="text-[#444] text-xs mt-0.5">Remove all Cruise Control run history</p>
+                <p className="text-[#444] text-xs mt-0.5">Remove all New Music run history</p>
               </div>
               <button onClick={() => setConfirmClearHistory(true)} className="btn-danger text-sm flex-shrink-0">
                 Clear History
@@ -784,7 +784,7 @@ export function SettingsPage({ toast }: SettingsPageProps) {
       <ConfirmDialog
         open={confirmClearHistory}
         title="Clear History?"
-        description="All Cruise Control run history will be permanently deleted. This cannot be undone."
+        description="All New Music run history will be permanently deleted. This cannot be undone."
         confirmLabel="Clear History"
         danger
         onConfirm={handleClearHistory}

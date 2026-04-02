@@ -16,7 +16,7 @@ const SOURCE_LABELS: Record<PlaylistSource, string> = {
   spotify: 'spotify',
   deezer: 'deezer',
   empty: 'empty',
-  new_music: 'Cruise Control',
+  new_music: 'The Forge',
 };
 
 const SOURCE_COLORS: Record<PlaylistSource, string> = {
