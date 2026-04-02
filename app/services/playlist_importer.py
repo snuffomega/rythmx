@@ -21,6 +21,16 @@ from app import config
 logger = logging.getLogger(__name__)
 
 
+def _resolve_redirect_url(url: str) -> str:
+    """Follow HTTP redirects and return the final URL; fallback to input URL on error."""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "rythmx/1.0"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.geturl() or url
+    except Exception:
+        return url
+
+
 def _extract_spotify_playlist_id(url: str) -> str | None:
     """Extract Spotify playlist ID from a URL or bare ID string."""
     # Handles: https://open.spotify.com/playlist/37i9dQZF...
@@ -303,7 +313,14 @@ def import_from_lastfm(playlist_url: str) -> dict:
 
 def _extract_deezer_playlist_id(url: str) -> str | None:
     """Extract Deezer playlist ID from a URL or bare ID."""
-    m = re.search(r"deezer\.com/(?:\w+/)?playlist/(\d+)", url)
+    parsed = urllib.parse.urlparse(url.strip())
+    host = parsed.netloc.lower()
+
+    candidate_url = url
+    if "link.deezer.com" in host or "deezer.page.link" in host:
+        candidate_url = _resolve_redirect_url(url)
+
+    m = re.search(r"deezer\.com/(?:\w+/)?playlist/(\d+)", candidate_url)
     if m:
         return m.group(1)
     if re.fullmatch(r"\d+", url.strip()):
