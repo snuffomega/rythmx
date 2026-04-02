@@ -11,7 +11,9 @@ from app.db.store import api_keys as _api_keys_store
 from app.db.store import download_queue as _download_queue_store
 from app.db.store import history as _history_store
 from app.db.store import image_cache as _image_cache_store
+from app.db.store import playlist as _playlist_store
 from app.db.store import settings as _settings_store
+from app.db.store import taste_cache as _taste_cache_store
 from app.db.store import pipeline_history as _pipeline_history_store
 
 logger = logging.getLogger(__name__)
@@ -172,82 +174,23 @@ def get_history_summary() -> dict:
 # --- Playlist ---
 
 def save_playlist(tracks: list[dict], playlist_name: str = "For You"):
-    """Replace the current playlist with a new scored track list."""
-    with _connect() as conn:
-        conn.execute("DELETE FROM playlist_tracks WHERE playlist_name = ?", (playlist_name,))
-        for i, t in enumerate(tracks):
-            conn.execute(
-                """INSERT OR REPLACE INTO playlist_tracks
-                   (playlist_name, track_id, spotify_track_id, track_name, artist_name,
-                    album_name, album_cover_url, score, position, is_owned, release_date)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    playlist_name,
-                    t.get("plex_rating_key"),
-                    t.get("spotify_track_id"),
-                    t.get("track_name"),
-                    t.get("artist_name"),
-                    t.get("album_name"),
-                    t.get("album_cover_url"),
-                    t.get("score"),
-                    i,
-                    1 if t.get("is_owned", True) else 0,
-                    t.get("release_date"),
-                )
-            )
+    _playlist_store.save_playlist(_connect, tracks, playlist_name)
 
 
 def get_playlist(playlist_name: str = "For You") -> list[dict]:
-    with _connect() as conn:
-        rows = conn.execute(
-            "SELECT * FROM playlist_tracks WHERE playlist_name = ? ORDER BY position ASC",
-            (playlist_name,)
-        ).fetchall()
-        return [dict(r) for r in rows]
+    return _playlist_store.get_playlist(_connect, playlist_name)
 
 
 def add_to_playlist(track: dict, playlist_name: str = "For You"):
-    """Append a single track to the playlist (upsert by track_id, ignores duplicates)."""
-    with _connect() as conn:
-        next_pos = conn.execute(
-            "SELECT COALESCE(MAX(position), -1) + 1 FROM playlist_tracks WHERE playlist_name = ?",
-            (playlist_name,)
-        ).fetchone()[0]
-        conn.execute(
-            """INSERT INTO playlist_tracks
-               (playlist_name, track_id, spotify_track_id, track_name, artist_name,
-                album_name, album_cover_url, score, position)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(track_id) DO NOTHING""",
-            (
-                playlist_name,
-                track.get("track_id"),
-                track.get("spotify_track_id"),
-                track.get("track_name"),
-                track.get("artist_name"),
-                track.get("album_name"),
-                track.get("album_cover_url"),
-                track.get("score"),
-                next_pos,
-            )
-        )
+    _playlist_store.add_to_playlist(_connect, track, playlist_name)
 
 
 def remove_from_playlist(track_id: str, playlist_name: str = "For You"):
-    """Remove a track from the playlist by track_id."""
-    with _connect() as conn:
-        conn.execute(
-            "DELETE FROM playlist_tracks WHERE track_id = ? AND playlist_name = ?",
-            (track_id, playlist_name)
-        )
+    _playlist_store.remove_from_playlist(_connect, track_id, playlist_name)
 
 
 def update_playlist_plex_id(playlist_name: str, plex_playlist_id: str):
-    with _connect() as conn:
-        conn.execute(
-            "UPDATE playlist_tracks SET plex_playlist_id = ? WHERE playlist_name = ?",
-            (plex_playlist_id, playlist_name)
-        )
+    _playlist_store.update_playlist_plex_id(_connect, playlist_name, plex_playlist_id)
 
 
 # --- Artist identity cache ---
@@ -335,22 +278,11 @@ def get_artist_navidrome_cover(artist_name: str) -> str | None:
 # --- Taste cache ---
 
 def upsert_taste_cache(artist_name: str, play_count: int, period: str):
-    with _connect() as conn:
-        conn.execute(
-            """INSERT INTO taste_cache (artist_name, play_count, period)
-               VALUES (?, ?, ?)
-               ON CONFLICT(artist_name) DO UPDATE SET
-                   play_count = excluded.play_count,
-                   period = excluded.period,
-                   last_updated = CURRENT_TIMESTAMP""",
-            (artist_name, play_count, period)
-        )
+    _taste_cache_store.upsert_taste_cache(_connect, artist_name, play_count, period)
 
 
 def get_taste_cache() -> dict:
-    with _connect() as conn:
-        rows = conn.execute("SELECT artist_name, play_count FROM taste_cache").fetchall()
-        return {r["artist_name"]: r["play_count"] for r in rows}
+    return _taste_cache_store.get_taste_cache(_connect)
 
 
 # --- Maintenance ---
@@ -380,131 +312,40 @@ def reset_db():
 def create_playlist_meta(name: str, source: str = "manual", source_url: str = None,
                          auto_sync: bool = False, mode: str = "library_only",
                          max_tracks: int = 50):
-    """Create a playlist metadata entry. Updates source/mode if called with source='new_music'."""
-    with _connect() as conn:
-        conn.execute(
-            """INSERT OR IGNORE INTO playlists (name, source, source_url, auto_sync, mode, max_tracks)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (name, source, source_url, 1 if auto_sync else 0, mode, max_tracks)
-        )
-        # CC-generated playlists always refresh their source/mode so stale values don't persist
-        if source == "new_music":
-            conn.execute(
-                "UPDATE playlists SET source=?, mode=? WHERE name=?",
-                (source, mode, name)
-            )
+    _playlist_store.create_playlist_meta(
+        _connect, name, source, source_url, auto_sync, mode, max_tracks
+    )
 
 
 def get_playlist_meta(name: str) -> dict | None:
-    """Return metadata for a single playlist, or None if not found."""
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT * FROM playlists WHERE name = ?", (name,)
-        ).fetchone()
-        return dict(row) if row else None
+    return _playlist_store.get_playlist_meta(_connect, name)
 
 
 def update_playlist_meta(name: str, auto_sync: bool = None, mode: str = None,
                          source_url: str = None, max_tracks: int = None):
-    """Update mutable fields on an existing playlist metadata row."""
-    with _connect() as conn:
-        if auto_sync is not None:
-            conn.execute(
-                "UPDATE playlists SET auto_sync = ? WHERE name = ?",
-                (1 if auto_sync else 0, name)
-            )
-        if mode is not None:
-            conn.execute(
-                "UPDATE playlists SET mode = ? WHERE name = ?",
-                (mode, name)
-            )
-        if source_url is not None:
-            conn.execute(
-                "UPDATE playlists SET source_url = ? WHERE name = ?",
-                (source_url, name)
-            )
-        if max_tracks is not None:
-            conn.execute(
-                "UPDATE playlists SET max_tracks = ? WHERE name = ?",
-                (int(max_tracks), name)
-            )
+    _playlist_store.update_playlist_meta(
+        _connect, name, auto_sync, mode, source_url, max_tracks
+    )
 
 
 def mark_playlist_synced(name: str):
-    """Update last_synced_ts to now for a playlist."""
-    import time
-    with _connect() as conn:
-        conn.execute(
-            "UPDATE playlists SET last_synced_ts = ? WHERE name = ?",
-            (int(time.time()), name)
-        )
+    _playlist_store.mark_playlist_synced(_connect, name)
 
 
 def list_playlists() -> list[dict]:
-    """
-    Return all playlists with track/owned counts.
-    Surfaces playlists that have tracks in playlist_tracks even without a metadata row
-    (e.g. the legacy 'For You' playlist created by the CC pipeline).
-    """
-    with _connect() as conn:
-        # Pre-aggregate track counts from playlist_tracks
-        agg_rows = conn.execute("""
-            SELECT playlist_name,
-                   COUNT(*) AS track_count,
-                   SUM(CASE WHEN track_id IS NOT NULL THEN 1 ELSE 0 END) AS owned_count
-            FROM playlist_tracks
-            GROUP BY playlist_name
-        """).fetchall()
-        agg = {r["playlist_name"]: dict(r) for r in agg_rows}
-
-        meta_rows = conn.execute(
-            "SELECT * FROM playlists ORDER BY created_at DESC"
-        ).fetchall()
-        meta = {r["name"]: dict(r) for r in meta_rows}
-
-        # Merge: start with all names from both tables
-        all_names = set(agg.keys()) | set(meta.keys())
-        result = []
-        for name in all_names:
-            m = meta.get(name, {})
-            a = agg.get(name, {"track_count": 0, "owned_count": 0})
-            result.append({
-                "name": name,
-                "source": m.get("source", "manual"),
-                "source_url": m.get("source_url"),
-                "auto_sync": bool(m.get("auto_sync", 0)),
-                "mode": m.get("mode", "library_only"),
-                "max_tracks": m.get("max_tracks", 50),
-                "last_synced_ts": m.get("last_synced_ts", 0),
-                "created_at": m.get("created_at"),
-                "track_count": a["track_count"],
-                "owned_count": a["owned_count"],
-            })
-        result.sort(key=lambda x: x.get("created_at") or "", reverse=True)
-        return result
+    return _playlist_store.list_playlists(_connect)
 
 
 def delete_playlist(name: str):
-    """Delete a playlist and all its tracks."""
-    with _connect() as conn:
-        conn.execute("DELETE FROM playlists WHERE name = ?", (name,))
-        conn.execute("DELETE FROM playlist_tracks WHERE playlist_name = ?", (name,))
+    _playlist_store.delete_playlist(_connect, name)
 
 
 def rename_playlist(old_name: str, new_name: str):
-    """Rename a playlist in both the playlists metadata table and playlist_tracks rows."""
-    with _connect() as conn:
-        conn.execute("UPDATE playlists SET name = ? WHERE name = ?", (new_name, old_name))
-        conn.execute(
-            "UPDATE playlist_tracks SET playlist_name = ? WHERE playlist_name = ?",
-            (new_name, old_name)
-        )
+    _playlist_store.rename_playlist(_connect, old_name, new_name)
 
 
 def remove_playlist_row(row_id: int):
-    """Remove a single track row from playlist_tracks by its primary key id."""
-    with _connect() as conn:
-        conn.execute("DELETE FROM playlist_tracks WHERE id = ?", (row_id,))
+    _playlist_store.remove_playlist_row(_connect, row_id)
 
 
 def get_release_itunes_album_id(artist_name: str, album_title: str) -> str | None:
