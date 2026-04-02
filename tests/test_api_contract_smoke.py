@@ -53,6 +53,10 @@ def test_core_contract_routes_are_registered() -> None:
     missing = expected - pairs
     assert not missing, f"Missing expected API contract routes: {sorted(missing)}"
     assert ("POST", "/api/v1/personal-discovery/run") not in pairs
+    assert ("GET", "/api/v1/playlists") not in pairs
+    assert ("POST", "/api/v1/playlists") not in pairs
+    assert ("GET", "/api/v1/discovery/candidates") not in pairs
+    assert ("POST", "/api/v1/discovery/publish") not in pairs
 
 
 def test_core_contract_routes_are_not_duplicated() -> None:

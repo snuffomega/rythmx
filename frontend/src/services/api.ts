@@ -3,8 +3,6 @@ import type {
   AcquisitionStatus,
   QueueItem,
   AcquisitionStats,
-  PlaylistItem,
-  PlaylistTrack,
   Artist,
   Track,
   TopAlbum,
@@ -160,59 +158,6 @@ export const acquisitionApi = {
       .then(({ status: _s, ...stats }) => stats as AcquisitionStats),
   checkNow: () =>
     request<{ status: string }>('/acquisition/check-now', { method: 'POST' }),
-};
-
-export const playlistsApi = {
-  getAll: () =>
-    request<{ status: string; playlists: PlaylistItem[] }>('/playlists')
-      .then(r => r.playlists),
-  create: (data: Partial<PlaylistItem>) =>
-    request<{ status: string } & PlaylistItem>('/playlists', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
-  update: (name: string, data: Partial<PlaylistItem>) =>
-    request<{ status: string }>(`/playlists/${encodeURIComponent(name)}`, {
-      method: 'PATCH',
-      body: JSON.stringify(data),
-    }),
-  rename: (name: string, newName: string) =>
-    request<{ status: string; name: string }>(`/playlists/${encodeURIComponent(name)}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ new_name: newName }),
-    }),
-  removeTrack: (playlistName: string, rowId: number) =>
-    request<{ status: string }>(`/playlists/${encodeURIComponent(playlistName)}/tracks/${rowId}`, {
-      method: 'DELETE',
-    }),
-  delete: (name: string) =>
-    request<{ status: string }>(`/playlists/${encodeURIComponent(name)}`, {
-      method: 'DELETE',
-    }),
-  getTracks: (name: string) =>
-    request<{ status: string; tracks: PlaylistTrack[] }>(
-      `/playlists/${encodeURIComponent(name)}/tracks`
-    ).then(r => r.tracks),
-  build: (name: string) =>
-    request<{ status: string }>(`/playlists/${encodeURIComponent(name)}/build`, {
-      method: 'POST',
-    }),
-  rebuild: (name: string) =>
-    request<{ status: string }>(`/playlists/${encodeURIComponent(name)}/rebuild`, {
-      method: 'POST',
-    }),
-  sync: (name: string) =>
-    request<{ status: string }>(`/playlists/${encodeURIComponent(name)}/sync`, {
-      method: 'POST',
-    }),
-  publish: (name: string) =>
-    request<{ status: string }>(`/playlists/${encodeURIComponent(name)}/publish`, {
-      method: 'POST',
-    }),
-  export: (name: string) =>
-    request<{ status: string }>(`/playlists/${encodeURIComponent(name)}/export`, {
-      method: 'POST',
-    }),
 };
 
 export const statsApi = {
