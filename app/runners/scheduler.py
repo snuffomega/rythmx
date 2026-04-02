@@ -19,6 +19,7 @@ import logging
 from datetime import datetime
 from app import config
 from app.db import rythmx_store
+from app.runners import scheduler_helpers as _scheduler_helpers
 
 logger = logging.getLogger(__name__)
 
@@ -348,107 +349,20 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
     # Dry mode skips playlist creation entirely.
     # -------------------------------------------------------------------------
     _current_stage = 7
-    playlist_tracks = []
-    plex_playlist_id = None
+    playlist_tracks, plex_playlist_id = _scheduler_helpers.build_named_playlist(
+        run_mode=run_mode,
+        owned_releases=owned_releases,
+        unowned=unowned,
+        settings=settings,
+        library_reader=library_reader,
+        store=rythmx_store,
+        music_client=music_client,
+        plex_push=plex_push,
+        playlist_name_date=playlist_name_date,
+        auto_push=auto_push,
+        logger=logger,
+    )
 
-    if run_mode in ("build", "fetch"):
-        try:
-            # Owned: expand each album to individual tracks
-            for r in owned_releases:
-                cached_r = rythmx_store.get_cached_artist(r.artist) or {}
-                ss_id = (cached_r.get("soulsync_artist_id")
-                         or library_reader.get_native_artist_id(r.artist))
-                if ss_id:
-                    tracks = library_reader.get_tracks_for_album(ss_id, r.title)
-                    for t in tracks:
-                        playlist_tracks.append({
-                            "plex_rating_key": t["plex_rating_key"],
-                            "track_name": t["track_title"],
-                            "artist_name": r.artist,
-                            "album_name": r.title,
-                            "album_cover_url": t.get("album_thumb_url") or "",
-                            "score": None,
-                            "is_owned": 1,
-                            "release_date": r.release_date,
-                        })
-                else:
-                    logger.debug("Stage 7: no native artist ID for owned release artist '%s'", r.artist)
-
-            # Unowned: album-level placeholder (shown as "Missing" in playlist UI)
-            for r in unowned:
-                playlist_tracks.append({
-                    "plex_rating_key": None,
-                    "track_name": r.title,
-                    "artist_name": r.artist,
-                    "album_name": r.title,
-                    "album_cover_url": "",
-                    "score": None,
-                    "is_owned": 0,
-                    "release_date": r.release_date,
-                })
-
-            # Seed from download_queue: items previously queued that aged out of the
-            # current lookback window (7-day cache expired, re-run after weeks, etc).
-            # Ensures the playlist always reflects the full pending acquisition state.
-            if run_mode == "fetch":
-                queued_items = (
-                    rythmx_store.get_queue(status="pending") +
-                    rythmx_store.get_queue(status="submitted")
-                )
-                in_playlist = {
-                    (music_client.norm(t["artist_name"]), music_client.norm(t["track_name"]))
-                    for t in playlist_tracks if not t.get("is_owned")
-                }
-                for q in queued_items:
-                    key = (music_client.norm(q["artist_name"]), music_client.norm(q["album_title"]))
-                    if key not in in_playlist:
-                        playlist_tracks.append({
-                            "plex_rating_key": None,
-                            "track_name": q["album_title"],
-                            "artist_name": q["artist_name"],
-                            "album_name": q["album_title"],
-                            "album_cover_url": "",
-                            "score": None,
-                            "is_owned": 0,
-                            "release_date": q.get("release_date") or "",
-                        })
-                        in_playlist.add(key)
-                        logger.debug(
-                            "Stage 7: seeded queued release '%s — %s' from download_queue",
-                            q["artist_name"], q["album_title"],
-                        )
-
-            # Cap owned tracks at max_playlist_tracks (unowned album cards are kept)
-            max_pl = int(settings.get("max_playlist_tracks", 50))
-            owned_tracks  = [t for t in playlist_tracks if t.get("is_owned")]
-            unowned_cards = [t for t in playlist_tracks if not t.get("is_owned")]
-            if len(owned_tracks) > max_pl:
-                logger.info("Stage 7: capping owned tracks at %d (had %d)", max_pl, len(owned_tracks))
-                owned_tracks = owned_tracks[:max_pl]
-            playlist_tracks = owned_tracks + unowned_cards
-
-            owned_track_count = len(owned_tracks)
-            unowned_count = len(unowned_cards)
-            rythmx_store.create_playlist_meta(playlist_name_date, source="new_music", mode="new_music")
-            rythmx_store.save_playlist(playlist_tracks, playlist_name=playlist_name_date)
-            rythmx_store.mark_playlist_synced(playlist_name_date)
-            logger.info("Stage 7: playlist '%s' saved — %d owned tracks, %d missing albums",
-                        playlist_name_date, owned_track_count, unowned_count)
-
-            if auto_push and playlist_tracks:
-                # Plex push: only owned tracks with a valid plex_rating_key
-                rating_keys = [t["plex_rating_key"] for t in playlist_tracks
-                               if t.get("is_owned", 1) and t.get("plex_rating_key")]
-                if rating_keys:
-                    plex_playlist_id = plex_push.create_or_update_playlist(
-                        playlist_name_date, rating_keys)
-                    if plex_playlist_id:
-                        rythmx_store.update_playlist_plex_id(playlist_name_date, plex_playlist_id)
-
-        except Exception as e:
-            logger.warning("Stage 7 playlist build failed (non-fatal): %s", e)
-    else:
-        logger.info("Stage 7: skipped (run_mode=preview)")
 
     # -------------------------------------------------------------------------
     # Stage 8 — Auto-sync: rebuild all auto_sync=1 playlists (playlist/cruise modes)
@@ -511,153 +425,23 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
 
 
 def _auto_sync_playlist(pl, owned_releases, top_artists, settings, library_reader):
-    """
-    Rebuild a single auto_sync playlist in-place.
-
-    Dispatches by source:
-      cc     — re-expand owned_releases to tracks using current library state
-      taste  — rebuild using latest Last.fm top artists + current library
-      deezer / spotify / lastfm — re-import from source_url
-    """
-    from app.clients import last_fm_client
-    from app.services import engine
-
-    name = pl.get("name") or pl.get("playlist_name")
-    source = pl.get("source", "")
-
-    try:
-        if source == "new_music":
-            # Re-expand owned releases to tracks (same logic as Stage 7, but in-place)
-            playlist_tracks = []
-            for r in owned_releases:
-                cached_r = rythmx_store.get_cached_artist(r.artist) or {}
-                ss_id = (cached_r.get("soulsync_artist_id")
-                         or library_reader.get_native_artist_id(r.artist))
-                if ss_id:
-                    tracks = library_reader.get_tracks_for_album(ss_id, r.title)
-                    for t in tracks:
-                        playlist_tracks.append({
-                            "plex_rating_key": t["plex_rating_key"],
-                            "track_name": t["track_title"],
-                            "artist_name": r.artist,
-                            "album_name": r.title,
-                            "album_cover_url": t.get("album_thumb_url") or "",
-                            "score": None,
-                        })
-            rythmx_store.save_playlist(playlist_tracks, playlist_name=name)
-            rythmx_store.mark_playlist_synced(name)
-            logger.info("Stage 8: auto-synced new_music playlist '%s' (%d tracks)", name, len(playlist_tracks))
-
-        elif source == "taste":
-            # Rebuild taste playlist using top_artists already fetched in Stage 1
-            meta = rythmx_store.get_playlist_meta(name) or {}
-            max_tracks = int(meta.get("max_tracks") or 50)
-            max_per_artist = int(meta.get("max_per_artist") or 2)
-            loved = last_fm_client.get_loved_artist_names()
-
-            artist_tracks = {}
-            for artist_name in top_artists:
-                cached = rythmx_store.get_cached_artist(artist_name) or {}
-                ss_id = cached.get("soulsync_artist_id") or library_reader.get_native_artist_id(artist_name)
-                if ss_id:
-                    tracks = library_reader.get_all_tracks_for_artist(ss_id)
-                    if tracks:
-                        artist_tracks[artist_name] = tracks
-
-            scored = engine.build_taste_playlist(
-                top_artists, loved, artist_tracks,
-                limit=max_tracks, max_per_artist=max_per_artist,
-            )
-            to_save = [
-                {
-                    "plex_rating_key": t["plex_rating_key"],
-                    "spotify_track_id": t.get("spotify_track_id"),
-                    "track_name": t["track_name"],
-                    "artist_name": t["artist_name"],
-                    "album_name": t["album_name"],
-                    "album_cover_url": t.get("album_cover_url", ""),
-                    "score": t["score"],
-                }
-                for t in scored
-            ]
-            rythmx_store.save_playlist(to_save, playlist_name=name)
-            rythmx_store.mark_playlist_synced(name)
-            logger.info("Stage 8: auto-synced taste playlist '%s' (%d tracks)", name, len(to_save))
-
-        elif source in ("spotify", "lastfm", "deezer"):
-            from app.services import playlist_importer
-            source_url = pl.get("source_url") or ""
-            if not source_url:
-                logger.warning("Stage 8: skipping '%s' — no source_url stored", name)
-                return
-            if source == "spotify":
-                playlist_importer.import_from_spotify(source_url, playlist_name=name)
-            elif source == "lastfm":
-                playlist_importer.import_from_lastfm(source_url, playlist_name=name)
-            elif source == "deezer":
-                playlist_importer.import_from_deezer(source_url, playlist_name=name)
-            logger.info("Stage 8: auto-synced %s playlist '%s'", source, name)
-
-        else:
-            logger.debug("Stage 8: no auto-sync handler for source='%s' (playlist='%s')", source, name)
-
-    except Exception as e:
-        logger.warning("Stage 8: auto-sync failed for playlist '%s': %s", name, e)
+    _scheduler_helpers.auto_sync_playlist(
+        pl=pl,
+        owned_releases=owned_releases,
+        top_artists=top_artists,
+        settings=settings,
+        library_reader=library_reader,
+        store=rythmx_store,
+        logger=logger,
+    )
 
 
 def _should_run_cc(settings: dict) -> bool:
-    """
-    Return True if it's time to run a CC cycle.
-    If schedule_weekday and schedule_hour are both set (≥ 0), use day/time scheduling.
-    Otherwise falls back to cycle_hours interval.
-    """
-    now = datetime.now()
-    weekday = int(settings.get("schedule_weekday") or -1)
-    hour = int(settings.get("schedule_hour") or -1)
-    last_run_iso = settings.get("last_run")
-
-    if weekday >= 0 and hour >= 0:
-        # Day/time mode: run if it's the right weekday and hour
-        if now.weekday() != weekday or now.hour != hour:
-            return False
-        # Avoid running more than once in the same hour
-        if last_run_iso:
-            last = datetime.fromisoformat(last_run_iso)
-            if last.date() == now.date() and last.hour == now.hour:
-                return False
-        return True
-
-    # Interval mode (default)
-    cycle_hours = int(settings.get("cycle_hours") or config.CYCLE_HOURS)
-    if not last_run_iso:
-        return True
-    last = datetime.fromisoformat(last_run_iso)
-    return (now - last).total_seconds() >= cycle_hours * 3600
+    return _scheduler_helpers.should_run_cc(settings)
 
 
 def _should_library_sync(settings: dict) -> bool:
-    """
-    Return True if it's time to run the library auto-pipeline.
-    Checks: connections verified, lib_auto_sync enabled, interval elapsed, not already running.
-    """
-    from app.services.enrichment.runner import PipelineRunner
-    if PipelineRunner.is_running():
-        return False
-    # Green light: library reader must be verified
-    if not settings.get("plex_verified_at"):
-        return False
-    auto_sync = settings.get("lib_auto_sync")
-    if auto_sync is not None and str(auto_sync).lower() in ("false", "0", "no"):
-        return False
-    last_synced = settings.get("library_last_synced")
-    if not last_synced:
-        return True  # never synced
-    try:
-        interval_hours = int(settings.get("lib_sync_interval_hours", 24))
-        last = datetime.fromisoformat(last_synced)
-        return (datetime.utcnow() - last).total_seconds() >= interval_hours * 3600
-    except (TypeError, ValueError):
-        return True
+    return _scheduler_helpers.should_library_sync(settings)
 
 
 def _loop():
@@ -715,3 +499,6 @@ def stop():
     """Signal the background thread to stop."""
     _stop_event.set()
     logger.info("Cruise control scheduler stop requested")
+
+
+
