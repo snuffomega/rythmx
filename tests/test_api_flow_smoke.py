@@ -418,6 +418,62 @@ def test_forge_build_get_and_delete_contract(monkeypatch):
     assert del_body["code"] == "FORGE_BUILD_NOT_FOUND"
 
 
+def test_forge_build_update_contract(monkeypatch):
+    fake_updated = {
+        "id": "build-1",
+        "name": "Renamed Build",
+        "source": "manual",
+        "status": "ready",
+        "run_mode": "build",
+        "track_list": [{"track_id": "trk-1"}],
+        "summary": {"note": "updated"},
+        "item_count": 1,
+        "created_at": "2026-04-02T20:00:00",
+        "updated_at": "2026-04-02T21:00:00",
+    }
+    calls = {"payload": None}
+
+    monkeypatch.setattr(
+        forge.rythmx_store,
+        "update_forge_build",
+        lambda build_id, **kwargs: calls.__setitem__("payload", {"build_id": build_id, **kwargs}) or fake_updated,
+    )
+
+    result = forge.forge_builds_update(
+        "build-1",
+        {
+            "name": "Renamed Build",
+            "status": "ready",
+            "run_mode": "build",
+            "track_list": [{"track_id": "trk-1"}],
+            "summary": {"note": "updated"},
+        },
+    )
+    assert result["status"] == "ok"
+    assert result["build"]["name"] == "Renamed Build"
+    assert calls["payload"]["build_id"] == "build-1"
+    assert calls["payload"]["name"] == "Renamed Build"
+
+
+def test_forge_build_update_validation_and_missing(monkeypatch):
+    bad = forge.forge_builds_update("build-1", {"status": "invalid"})
+    assert isinstance(bad, JSONResponse)
+    assert bad.status_code == 400
+    bad_body = json.loads(bad.body.decode("utf-8"))
+    assert bad_body["code"] == "FORGE_VALIDATION_ERROR"
+
+    monkeypatch.setattr(
+        forge.rythmx_store,
+        "update_forge_build",
+        lambda build_id, **kwargs: None,
+    )
+    missing = forge.forge_builds_update("missing", {"name": "x"})
+    assert isinstance(missing, JSONResponse)
+    assert missing.status_code == 404
+    missing_body = json.loads(missing.body.decode("utf-8"))
+    assert missing_body["code"] == "FORGE_BUILD_NOT_FOUND"
+
+
 def test_forge_build_publish_contract(monkeypatch):
     fake_build = {
         "id": "build-1",
@@ -491,6 +547,59 @@ def test_forge_build_publish_jellyfin_stub(monkeypatch):
     body = json.loads(result.body.decode("utf-8"))
     assert body["status"] == "error"
     assert body["code"] == "FORGE_PUBLISH_NOT_IMPLEMENTED"
+
+
+def test_forge_build_fetch_contract(monkeypatch):
+    fake_build = {
+        "id": "build-1",
+        "name": "Build 1",
+        "source": "manual",
+        "status": "ready",
+        "run_mode": "build",
+        "track_list": [{"track_id": "trk-1"}],
+        "summary": {},
+        "item_count": 1,
+        "created_at": "2026-04-02T20:00:00",
+        "updated_at": "2026-04-02T20:00:00",
+    }
+
+    monkeypatch.setattr(forge.rythmx_store, "get_forge_build", lambda build_id: fake_build if build_id == "build-1" else None)
+    monkeypatch.setattr(forge.rythmx_store, "get_setting", lambda key, default=None: "true")
+
+    result = forge.forge_builds_fetch("build-1")
+    assert isinstance(result, JSONResponse)
+    assert result.status_code == 501
+    body = json.loads(result.body.decode("utf-8"))
+    assert body["code"] == "FORGE_FETCH_NOT_IMPLEMENTED"
+
+
+def test_forge_build_fetch_disabled_and_missing(monkeypatch):
+    fake_build = {
+        "id": "build-1",
+        "name": "Build 1",
+        "source": "manual",
+        "status": "ready",
+        "run_mode": "build",
+        "track_list": [{"track_id": "trk-1"}],
+        "summary": {},
+        "item_count": 1,
+        "created_at": "2026-04-02T20:00:00",
+        "updated_at": "2026-04-02T20:00:00",
+    }
+    monkeypatch.setattr(forge.rythmx_store, "get_forge_build", lambda build_id: fake_build if build_id == "build-1" else None)
+    monkeypatch.setattr(forge.rythmx_store, "get_setting", lambda key, default=None: "false")
+
+    disabled = forge.forge_builds_fetch("build-1")
+    assert isinstance(disabled, JSONResponse)
+    assert disabled.status_code == 400
+    disabled_body = json.loads(disabled.body.decode("utf-8"))
+    assert disabled_body["code"] == "FORGE_FETCH_DISABLED"
+
+    missing = forge.forge_builds_fetch("missing")
+    assert isinstance(missing, JSONResponse)
+    assert missing.status_code == 404
+    missing_body = json.loads(missing.body.decode("utf-8"))
+    assert missing_body["code"] == "FORGE_BUILD_NOT_FOUND"
 
 
 def test_forge_sync_load_validation_requires_source_url():

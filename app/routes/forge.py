@@ -25,6 +25,7 @@ router = APIRouter(dependencies=[Depends(verify_api_key)])
 
 _BUILD_SOURCES = {"new_music", "custom_discovery", "sync", "manual"}
 _BUILD_STATUSES = {"queued", "building", "ready", "published", "failed"}
+_BUILD_RUN_MODES = {"build", "fetch"}
 
 
 def _error(message: str, status_code: int = 400, code: str | None = None) -> JSONResponse:
@@ -49,6 +50,34 @@ def _validate_build_payload(data: dict[str, Any]) -> str | None:
 
     summary = data.get("summary")
     if summary is not None and not isinstance(summary, dict):
+        return "summary must be an object"
+
+    return None
+
+
+def _validate_build_update_payload(data: dict[str, Any]) -> str | None:
+    allowed = {"name", "status", "run_mode", "track_list", "summary"}
+    unknown = sorted(k for k in data.keys() if k not in allowed)
+    if unknown:
+        return f"unknown fields: {', '.join(unknown)}"
+
+    if "name" in data and data.get("name") is not None and not isinstance(data.get("name"), str):
+        return "name must be a string"
+
+    if "status" in data and data.get("status") is not None:
+        status = str(data.get("status")).strip().lower()
+        if status not in _BUILD_STATUSES:
+            return f"status must be one of: {', '.join(sorted(_BUILD_STATUSES))}"
+
+    if "run_mode" in data and data.get("run_mode") is not None:
+        run_mode = str(data.get("run_mode")).strip().lower()
+        if run_mode not in _BUILD_RUN_MODES:
+            return f"run_mode must be one of: {', '.join(sorted(_BUILD_RUN_MODES))}"
+
+    if "track_list" in data and data.get("track_list") is not None and not isinstance(data.get("track_list"), list):
+        return "track_list must be a list"
+
+    if "summary" in data and data.get("summary") is not None and not isinstance(data.get("summary"), dict):
         return "summary must be an object"
 
     return None
@@ -123,6 +152,10 @@ def _shape_sync_track(track: dict[str, Any]) -> dict[str, Any]:
         "album_name": track.get("album_name", ""),
         "is_owned": bool(track.get("is_owned", False)),
     }
+
+
+def _is_truthy(value: Any) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 @router.get("/forge/pipeline-history")
@@ -389,6 +422,26 @@ def forge_builds_get(build_id: str):
     return {"status": "ok", "build": build}
 
 
+@router.patch("/forge/builds/{build_id}")
+def forge_builds_update(build_id: str, data: Optional[dict[str, Any]] = Body(default=None)):
+    payload = data or {}
+    validation_error = _validate_build_update_payload(payload)
+    if validation_error:
+        return _error(validation_error, status_code=400, code="FORGE_VALIDATION_ERROR")
+
+    updated = rythmx_store.update_forge_build(
+        build_id,
+        name=payload.get("name") if "name" in payload else None,
+        status=payload.get("status") if "status" in payload else None,
+        run_mode=payload.get("run_mode") if "run_mode" in payload else None,
+        track_list=payload.get("track_list") if "track_list" in payload else None,
+        summary=payload.get("summary") if "summary" in payload else None,
+    )
+    if not updated:
+        return _error("Build not found", status_code=404, code="FORGE_BUILD_NOT_FOUND")
+    return {"status": "ok", "build": updated}
+
+
 @router.post("/forge/builds")
 def forge_builds_create(data: Optional[dict[str, Any]] = Body(default=None)):
     data = data or {}
@@ -482,4 +535,25 @@ def forge_builds_publish(build_id: str, data: Optional[dict[str, Any]] = Body(de
         "platform": platform,
         "platform_playlist_id": str(platform_playlist_id),
     }
+
+
+@router.post("/forge/builds/{build_id}/fetch")
+def forge_builds_fetch(build_id: str):
+    build = rythmx_store.get_forge_build(build_id)
+    if not build:
+        return _error("Build not found", status_code=404, code="FORGE_BUILD_NOT_FOUND")
+
+    fetch_enabled = _is_truthy(rythmx_store.get_setting("fetch_enabled", "false"))
+    if not fetch_enabled:
+        return _error(
+            "Fetch is disabled in Settings.",
+            status_code=400,
+            code="FORGE_FETCH_DISABLED",
+        )
+
+    return _error(
+        "Build fetch is planned but not implemented yet.",
+        status_code=501,
+        code="FORGE_FETCH_NOT_IMPLEMENTED",
+    )
 

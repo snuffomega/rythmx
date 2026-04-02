@@ -144,3 +144,55 @@ def update_forge_build_status(
             (safe_status, now, build_id),
         )
         return (cur.rowcount or 0) > 0
+
+
+def update_forge_build(
+    connect: Callable[[], sqlite3.Connection],
+    build_id: str,
+    *,
+    name: str | None = None,
+    status: str | None = None,
+    run_mode: str | None = None,
+    track_list: list[dict] | list[Any] | None = None,
+    summary: dict | None = None,
+) -> dict | None:
+    updates: list[str] = []
+    params: list[Any] = []
+
+    if name is not None:
+        updates.append("name = ?")
+        params.append((name or "").strip() or "Untitled Build")
+    if status is not None:
+        updates.append("status = ?")
+        params.append(_normalize_status(status))
+    if run_mode is not None:
+        updates.append("run_mode = ?")
+        params.append(str(run_mode).strip().lower() or None)
+    if track_list is not None:
+        updates.append("track_list_json = ?")
+        params.append(json.dumps(track_list))
+    if summary is not None:
+        updates.append("summary_json = ?")
+        params.append(json.dumps(summary))
+
+    if not updates:
+        return get_forge_build(connect, build_id)
+
+    now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+    updates.append("updated_at = ?")
+    params.append(now)
+    params.append(build_id)
+
+    with connect() as conn:
+        cur = conn.execute(
+            f"""
+            UPDATE forge_builds
+            SET {', '.join(updates)}
+            WHERE id = ?
+            """,
+            tuple(params),
+        )
+        if (cur.rowcount or 0) <= 0:
+            return None
+        row = conn.execute("SELECT * FROM forge_builds WHERE id = ?", (build_id,)).fetchone()
+    return _shape_row(row)

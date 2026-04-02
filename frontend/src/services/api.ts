@@ -426,6 +426,17 @@ export const forgeBuildsApi = {
   get: (id: string) =>
     request<{ status: string; build: ForgeBuild }>(`/forge/builds/${encodeURIComponent(id)}`)
       .then(r => r.build),
+  update: (id: string, data: {
+    name?: string;
+    status?: ForgeBuildStatus;
+    run_mode?: 'build' | 'fetch';
+    track_list?: Array<Record<string, unknown>>;
+    summary?: Record<string, unknown>;
+  }) =>
+    request<{ status: string; build: ForgeBuild }>(`/forge/builds/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }).then(r => r.build),
   create: (data: {
     id?: string;
     name?: string;
@@ -453,6 +464,10 @@ export const forgeBuildsApi = {
     }>(`/forge/builds/${encodeURIComponent(id)}/publish`, {
       method: 'POST',
       body: JSON.stringify(name ? { name } : {}),
+    }),
+  fetch: (id: string) =>
+    request<{ status: string; message: string }>(`/forge/builds/${encodeURIComponent(id)}/fetch`, {
+      method: 'POST',
     }),
 };
 

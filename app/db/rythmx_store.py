@@ -406,6 +406,26 @@ def update_forge_build_status(build_id: str, status: str) -> bool:
     return _forge_builds_store.update_forge_build_status(_connect, build_id, status)
 
 
+def update_forge_build(
+    build_id: str,
+    *,
+    name: str | None = None,
+    status: str | None = None,
+    run_mode: str | None = None,
+    track_list: list[dict] | list | None = None,
+    summary: dict | None = None,
+) -> dict | None:
+    return _forge_builds_store.update_forge_build(
+        _connect,
+        build_id,
+        name=name,
+        status=status,
+        run_mode=run_mode,
+        track_list=track_list,
+        summary=summary,
+    )
+
+
 def upsert_forge_playlist(
     playlist_id: str,
     name: str,

@@ -1,5 +1,5 @@
 ﻿import { useMemo, useState } from 'react';
-import { Layers, Loader2, RefreshCw, Send, Trash2 } from 'lucide-react';
+import { Download, Layers, Loader2, RefreshCw, Send, Trash2 } from 'lucide-react';
 import { useApi } from '../hooks/useApi';
 import { forgeBuildsApi } from '../services/api';
 import { useToastStore } from '../stores/useToastStore';
@@ -76,6 +76,7 @@ export function ForgeBuilder() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [publishingId, setPublishingId] = useState<string | null>(null);
+  const [fetchingId, setFetchingId] = useState<string | null>(null);
 
   const { data: builds, loading, error, refetch } = useApi(() => forgeBuildsApi.list(undefined, 200));
 
@@ -114,6 +115,32 @@ export function ForgeBuilder() {
       toastError(message);
     } finally {
       setPublishingId(null);
+    }
+  };
+
+  const extractErrorMessage = (err: unknown, fallback: string) => {
+    if (!(err instanceof Error)) return fallback;
+    const raw = err.message || '';
+    if (raw.trim().startsWith('{')) {
+      try {
+        const parsed = JSON.parse(raw) as { message?: string; error?: string };
+        return parsed.message || parsed.error || fallback;
+      } catch {
+        return raw || fallback;
+      }
+    }
+    return raw || fallback;
+  };
+
+  const handleFetch = async (build: ForgeBuild) => {
+    setFetchingId(build.id);
+    try {
+      const result = await forgeBuildsApi.fetch(build.id);
+      toastSuccess(result.message || 'Fetch started');
+    } catch (err) {
+      toastError(extractErrorMessage(err, 'Failed to start fetch'));
+    } finally {
+      setFetchingId(null);
     }
   };
 
@@ -183,18 +210,32 @@ export function ForgeBuilder() {
                   </p>
                 </div>
 
-                <button
-                  onClick={() => handlePublish(selectedBuild)}
-                  disabled={publishingId === selectedBuild.id}
-                  className="btn-primary inline-flex items-center gap-2 text-xs w-fit"
-                >
-                  {publishingId === selectedBuild.id ? (
-                    <Loader2 size={12} className="animate-spin" />
-                  ) : (
-                    <Send size={12} />
-                  )}
-                  Publish
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handleFetch(selectedBuild)}
+                    disabled={fetchingId === selectedBuild.id}
+                    className="btn-secondary inline-flex items-center gap-2 text-xs w-fit"
+                  >
+                    {fetchingId === selectedBuild.id ? (
+                      <Loader2 size={12} className="animate-spin" />
+                    ) : (
+                      <Download size={12} />
+                    )}
+                    Fetch
+                  </button>
+                  <button
+                    onClick={() => handlePublish(selectedBuild)}
+                    disabled={publishingId === selectedBuild.id}
+                    className="btn-primary inline-flex items-center gap-2 text-xs w-fit"
+                  >
+                    {publishingId === selectedBuild.id ? (
+                      <Loader2 size={12} className="animate-spin" />
+                    ) : (
+                      <Send size={12} />
+                    )}
+                    Publish
+                  </button>
+                </div>
 
                 <div>
                   <p className="text-text-muted text-xs uppercase tracking-wide mb-2">Summary</p>
