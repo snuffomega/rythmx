@@ -14,6 +14,7 @@ No ORM. All SQL uses ? placeholders.
 import json
 import logging
 from datetime import datetime, timedelta
+from typing import Any
 
 from app import config
 from app.db import rythmx_store
@@ -43,20 +44,24 @@ NM_DEFAULTS = {
     "nm_schedule_hour": 8,
 }
 
+_NM_INT_KEYS = {"nm_min_scrobbles", "nm_lookback_days", "nm_schedule_weekday", "nm_schedule_hour"}
+_NM_BOOL_KEYS = {"nm_schedule_enabled"}
+_NM_PERIODS = {"7day", "1month", "3month", "6month", "12month", "overall"}
+_NM_MATCH_MODES = {"strict", "loose"}
+_NM_RELEASE_KINDS = {"all", "album_preferred", "album"}
+
 
 def get_config() -> dict:
     """Return nm_* config from app_settings, merged with defaults."""
     raw = rythmx_store.get_all_settings()
-    int_keys = {"nm_min_scrobbles", "nm_lookback_days", "nm_schedule_weekday", "nm_schedule_hour"}
-    bool_keys = {"nm_schedule_enabled"}
     result = {}
     for key, default in NM_DEFAULTS.items():
         val = raw.get(key)
         if val is None:
             result[key] = default
-        elif key in bool_keys:
+        elif key in _NM_BOOL_KEYS:
             result[key] = str(val).lower() in ("true", "1")
-        elif key in int_keys:
+        elif key in _NM_INT_KEYS:
             try:
                 result[key] = int(val)
             except (ValueError, TypeError):
@@ -64,6 +69,39 @@ def get_config() -> dict:
         else:
             result[key] = val
     return result
+
+
+def validate_config_updates(updates: dict[str, Any]) -> str | None:
+    """Return an error message if updates are invalid, otherwise None."""
+    if not isinstance(updates, dict):
+        return "Invalid payload; expected object"
+
+    for key, value in updates.items():
+        if key not in NM_DEFAULTS:
+            return f"Unknown config field: {key}"
+
+        if key in _NM_INT_KEYS:
+            try:
+                iv = int(value)
+            except (TypeError, ValueError):
+                return f"{key} must be an integer"
+            if key == "nm_min_scrobbles" and iv < 1:
+                return "nm_min_scrobbles must be >= 1"
+            if key == "nm_lookback_days" and iv < 1:
+                return "nm_lookback_days must be >= 1"
+            if key == "nm_schedule_weekday" and not (0 <= iv <= 6):
+                return "nm_schedule_weekday must be between 0 and 6"
+            if key == "nm_schedule_hour" and not (0 <= iv <= 23):
+                return "nm_schedule_hour must be between 0 and 23"
+
+        if key == "nm_period" and str(value) not in _NM_PERIODS:
+            return f"nm_period must be one of: {', '.join(sorted(_NM_PERIODS))}"
+        if key == "nm_match_mode" and str(value) not in _NM_MATCH_MODES:
+            return f"nm_match_mode must be one of: {', '.join(sorted(_NM_MATCH_MODES))}"
+        if key == "nm_release_kinds" and str(value) not in _NM_RELEASE_KINDS:
+            return f"nm_release_kinds must be one of: {', '.join(sorted(_NM_RELEASE_KINDS))}"
+
+    return None
 
 
 def save_config(updates: dict) -> None:

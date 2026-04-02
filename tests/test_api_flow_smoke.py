@@ -234,3 +234,41 @@ def test_forge_discovery_run_and_results_contract(monkeypatch):
     results_result = forge.discovery_get_results()
     assert results_result["status"] == "ok"
     assert results_result["artists"] == expected
+
+
+def test_forge_new_music_validation_rejects_invalid_values():
+    config_result = forge.nm_save_config({"nm_period": "2weeks"})
+    assert isinstance(config_result, JSONResponse)
+    assert config_result.status_code == 400
+
+    run_result = forge.nm_run({"nm_lookback_days": 0})
+    assert isinstance(run_result, JSONResponse)
+    assert run_result.status_code == 400
+
+
+def test_forge_new_music_run_contract(monkeypatch):
+    expected_releases = [
+        {
+            "id": "r1",
+            "artist_deezer_id": "123",
+            "artist_name": "Example Artist",
+            "title": "Example Release",
+            "record_type": "album",
+            "release_date": "2026-03-01",
+            "cover_url": None,
+            "in_library": 0,
+        }
+    ]
+
+    monkeypatch.setattr(
+        "app.services.forge.new_music_runner.run_new_music_pipeline",
+        lambda _override=None: {"artists_checked": 12, "neighbors_found": 8, "releases_found": 1},
+    )
+    monkeypatch.setattr("app.routes.forge._get_discovered_releases", lambda: expected_releases)
+
+    result = forge.nm_run({"nm_period": "1month", "nm_lookback_days": 30})
+    assert result["status"] == "ok"
+    assert result["artists_checked"] == 12
+    assert result["neighbors_found"] == 8
+    assert result["releases_found"] == 1
+    assert result["releases"] == expected_releases

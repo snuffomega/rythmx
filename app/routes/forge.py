@@ -45,6 +45,9 @@ def nm_get_config():
 def nm_save_config(data: Optional[dict[str, Any]] = Body(default=None)):
     """Save New Music pipeline configuration to app_settings."""
     data = data or {}
+    error = new_music_runner.validate_config_updates(data)
+    if error:
+        return JSONResponse({"status": "error", "message": error}, status_code=400)
     new_music_runner.save_config(data)
     return {"status": "ok"}
 
@@ -57,6 +60,9 @@ def nm_run(data: Optional[dict[str, Any]] = Body(default=None)):
     Returns the discovered releases and a summary.
     """
     config_override = data or {}
+    error = new_music_runner.validate_config_updates(config_override)
+    if error:
+        return JSONResponse({"status": "error", "message": error}, status_code=400)
 
     result_container: dict = {}
     error_container: dict = {}
