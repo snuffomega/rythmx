@@ -427,8 +427,11 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
                             <GripVertical size={13} />
                           </button>
                           <button
+                            draggable
+                            onDragStart={(event) => handleQueueDragStart(event, i)}
+                            onDragEnd={clearQueueDragState}
                             onClick={() => { usePlayerStore.getState().playAt(i); setQueueMenuIndex(null); setShowQueue(false); clearQueueDragState(); }}
-                            className="flex-1 min-w-0 text-left flex items-center gap-2.5"
+                            className="flex-1 min-w-0 text-left flex items-center gap-2.5 cursor-pointer hover:cursor-grab active:cursor-grabbing"
                           >
                             <span className="font-mono text-[10px] text-text-muted w-5 flex-shrink-0 text-right">
                               {i === queueIndex && isPlaying ? '>' : i + 1}
