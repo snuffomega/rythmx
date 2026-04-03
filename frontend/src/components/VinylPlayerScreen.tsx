@@ -500,7 +500,7 @@ export function VinylPlayerScreen({
           {showQueue && !queueExpanded && (
             <div
               ref={queuePanelRef}
-              className="absolute top-full left-1/2 -translate-x-1/2 mt-4 w-[min(90vw,620px)]
+              className="absolute top-full left-1/2 -translate-x-1/2 mt-3 w-[min(84vw,520px)]
                          border border-[#1e1e1e] rounded-xl overflow-hidden bg-[#0a0a0a] shadow-2xl z-30"
             >
               <div className="flex items-center justify-between px-4 py-3 border-b border-[#1a1a1a]">
@@ -533,7 +533,7 @@ export function VinylPlayerScreen({
                   </button>
                 </div>
               </div>
-              <div className="max-h-[34vh] overflow-y-auto">
+              <div className="max-h-[32vh] overflow-y-auto">
                 {queue.length === 0 ? (
                   <p className="text-[12px] text-text-muted font-mono text-center py-8 px-5 leading-relaxed">
                     Queue empty<br />play something from your library

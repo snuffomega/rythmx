@@ -44,6 +44,7 @@ export function useAudioEngine() {
     nextTrack,
     setFormattedPosition,
     setFormattedDuration,
+    setVolume: setStoreVolume,
   } = usePlayerStore();
 
   // Create the Audio element once
@@ -51,6 +52,7 @@ export function useAudioEngine() {
     if (!audioRef.current) {
       audioRef.current = new Audio();
       audioRef.current.preload = 'metadata';
+      audioRef.current.volume = usePlayerStore.getState().volume;
     }
     const audio = audioRef.current;
 
@@ -150,10 +152,12 @@ export function useAudioEngine() {
 
   // Volume handler
   const setVolume = useCallback((vol: number) => {
+    const clamped = Math.max(0, Math.min(1, vol));
     if (audioRef.current) {
-      audioRef.current.volume = Math.max(0, Math.min(1, vol));
+      audioRef.current.volume = clamped;
     }
-  }, []);
+    setStoreVolume(clamped);
+  }, [setStoreVolume]);
 
   return { seek, setVolume };
 }
