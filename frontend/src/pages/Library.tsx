@@ -128,16 +128,19 @@ function ArtistImage({
   size,
   imageUrl,
   imageHash,
+  matchConfidence,
 }: {
   name: string;
   size: number;
   imageUrl?: string | null;
   imageHash?: string | null;
+  matchConfidence?: number | null;
 }) {
   const [errored, setErrored] = useState(false);
   const hasDirectUrl = !!(imageUrl && imageUrl.startsWith('http'));
   const hasHash = !!imageHash;
-  const resolvedUrl = useImage('artist', name, '', hasDirectUrl || hasHash);
+  const allowResolverFallback = !hasDirectUrl && !hasHash && (matchConfidence ?? 0) >= 85;
+  const resolvedUrl = useImage('artist', name, '', !allowResolverFallback);
   const rawSrc = hasHash ? (imageUrl ?? '') : (hasDirectUrl ? imageUrl : resolvedUrl);
   const src = getImageUrl(rawSrc, imageHash);
   const cdnFallback = hasDirectUrl ? (imageUrl ?? '') : '';
@@ -166,17 +169,20 @@ function AlbumImage({
   size,
   thumbUrl,
   thumbHash,
+  matchConfidence,
 }: {
   title: string;
   artist: string;
   size: number;
   thumbUrl?: string | null;
   thumbHash?: string | null;
+  matchConfidence?: number | null;
 }) {
   const [errored, setErrored] = useState(false);
   const hasDirectUrl = !!(thumbUrl && thumbUrl.startsWith('http'));
   const hasHash = !!thumbHash;
-  const resolvedUrl = useImage('album', title, artist, hasDirectUrl || hasHash);
+  const allowResolverFallback = !hasDirectUrl && !hasHash && (matchConfidence ?? 0) >= 85;
+  const resolvedUrl = useImage('album', title, artist, !allowResolverFallback);
   const rawSrc = hasHash ? (thumbUrl ?? '') : (hasDirectUrl ? thumbUrl : resolvedUrl);
   const src = getImageUrl(rawSrc, thumbHash);
   const cdnFallback = hasDirectUrl ? (thumbUrl ?? '') : '';
@@ -252,7 +258,7 @@ function ArtistCard({ artist, viewMode, onShufflePlay }: ArtistCardProps) {
         className="text-left group hover:bg-[#111] rounded-sm p-2 transition-colors block"
       >
         <div className="relative aspect-square bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center mb-2 border border-[#222] group/art">
-          <ArtistImage name={artist.name} size={32} imageUrl={artist.image_url} imageHash={artist.image_hash} />
+          <ArtistImage name={artist.name} size={32} imageUrl={artist.image_url} imageHash={artist.image_hash} matchConfidence={artist.match_confidence} />
           {showHoverPlay && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-0 group-hover/art:opacity-100 transition-opacity">
               <button
@@ -285,7 +291,7 @@ function ArtistCard({ artist, viewMode, onShufflePlay }: ArtistCardProps) {
       className="w-full flex items-center gap-3 px-2 py-2 hover:bg-[#111] transition-colors rounded-sm"
     >
       <div className="relative w-10 h-10 flex-shrink-0 bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center border border-[#222] group/art">
-        <ArtistImage name={artist.name} size={18} imageUrl={artist.image_url} imageHash={artist.image_hash} />
+        <ArtistImage name={artist.name} size={18} imageUrl={artist.image_url} imageHash={artist.image_hash} matchConfidence={artist.match_confidence} />
         {showHoverPlay && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-0 group-hover/art:opacity-100 transition-opacity">
             <button
@@ -343,7 +349,7 @@ function AlbumCard({ album, viewMode, onHoverPlay }: AlbumCardProps) {
         className="text-left group hover:bg-[#111] rounded-sm p-2 transition-colors block"
       >
         <div className="relative aspect-square bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center mb-2 border border-[#222] group/album">
-          <AlbumImage title={album.title} artist={album.artist_name} size={32} thumbUrl={album.thumb_url} thumbHash={album.thumb_hash} />
+          <AlbumImage title={album.title} artist={album.artist_name} size={32} thumbUrl={album.thumb_url} thumbHash={album.thumb_hash} matchConfidence={album.match_confidence} />
           {showHoverPlay && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-0 group-hover/album:opacity-100 transition-opacity">
               <button
@@ -370,7 +376,7 @@ function AlbumCard({ album, viewMode, onHoverPlay }: AlbumCardProps) {
       className="w-full flex items-center gap-3 px-2 py-2 hover:bg-[#111] transition-colors rounded-sm"
     >
       <div className="relative w-10 h-10 flex-shrink-0 bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center border border-[#222] group/album">
-        <AlbumImage title={album.title} artist={album.artist_name} size={18} thumbUrl={album.thumb_url} thumbHash={album.thumb_hash} />
+        <AlbumImage title={album.title} artist={album.artist_name} size={18} thumbUrl={album.thumb_url} thumbHash={album.thumb_hash} matchConfidence={album.match_confidence} />
         {showHoverPlay && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-0 group-hover/album:opacity-100 transition-opacity">
             <button
@@ -800,7 +806,13 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
         {/* Artist image with cover edit overlay */}
         <div className="relative w-60 h-60 flex-shrink-0 group/cover">
           <div className="w-full h-full bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center border border-[#222]">
-            <ArtistImage name={artist.name} size={56} imageUrl={artistImageUrl ?? artist.image_url} />
+            <ArtistImage
+              name={artist.name}
+              size={56}
+              imageUrl={artistImageUrl ?? artist.image_url}
+              imageHash={artist.image_hash}
+              matchConfidence={artist.match_confidence}
+            />
           </div>
           <button
             onClick={() => { setCoverEditing(v => !v); setCoverInput(''); }}
@@ -1372,7 +1384,14 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
       <div className="px-8 pb-6 flex gap-8">
         <div className="relative w-60 h-60 flex-shrink-0 group/cover">
           <div className="w-full h-full bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center border border-[#222]">
-            <AlbumImage title={album.title} artist={album.artist_name} size={56} thumbUrl={albumImageUrl ?? album.thumb_url} />
+            <AlbumImage
+              title={album.title}
+              artist={album.artist_name}
+              size={56}
+              thumbUrl={albumImageUrl ?? album.thumb_url}
+              thumbHash={album.thumb_hash}
+              matchConfidence={album.match_confidence}
+            />
           </div>
           <button
             onClick={() => { setCoverEditing(v => !v); setCoverInput(''); }}
