@@ -17,7 +17,7 @@
  */
 import { useCallback, useRef, useState } from 'react';
 import {
-  Play, Pause, SkipBack, SkipForward,
+  Play, Pause, SkipBack,
   Shuffle, Repeat, Settings,
   Disc, Star, Heart, ListMusic, Mic2,
   ChevronDown, List, ListPlus, Volume2,
@@ -370,21 +370,7 @@ export function VinylPlayerScreen({
           )}
 
           {/* Left — misc controls */}
-          <div className="flex items-center gap-0.5">
-            <button
-              onClick={toggleShuffle}
-              aria-label={shuffle ? 'Shuffle on' : 'Shuffle off'}
-              className={`p-2 rounded-lg transition-all active:scale-90 ${shuffle ? 'text-accent' : 'text-text-muted hover:text-text-secondary'}`}
-            >
-              <Shuffle size={17} />
-            </button>
-            <button
-              onClick={toggleRepeat}
-              aria-label={repeat ? 'Repeat on' : 'Repeat off'}
-              className={`p-2 rounded-lg transition-all active:scale-90 ${repeat ? 'text-accent' : 'text-text-muted hover:text-text-secondary'}`}
-            >
-              <Repeat size={17} />
-            </button>
+          <div className="grid grid-cols-2 gap-1.5 w-fit">
             <button
               onClick={() => setLiked(v => !v)}
               aria-label={liked ? 'Unlike' : 'Like'}
@@ -408,7 +394,14 @@ export function VinylPlayerScreen({
           </div>
 
           {/* Center — primary transport */}
-          <div className="flex items-center justify-center gap-5">
+          <div className="flex items-center justify-center gap-6">
+            <button
+              onClick={toggleShuffle}
+              aria-label={shuffle ? 'Shuffle on' : 'Shuffle off'}
+              className={`text-text-secondary hover:text-text-primary transition-all active:scale-90 ${shuffle ? 'text-accent' : ''}`}
+            >
+              <Shuffle size={20} />
+            </button>
             <button
               onClick={prevTrack}
               disabled={!currentTrack}
@@ -430,12 +423,11 @@ export function VinylPlayerScreen({
                 : <Play  size={22} className="text-black ml-0.5" />}
             </button>
             <button
-              onClick={nextTrack}
-              disabled={!currentTrack}
-              aria-label="Next"
-              className="text-text-secondary hover:text-text-primary transition-all active:scale-90 disabled:opacity-25"
+              onClick={toggleRepeat}
+              aria-label={repeat ? 'Repeat on' : 'Repeat off'}
+              className={`text-text-secondary hover:text-text-primary transition-all active:scale-90 ${repeat ? 'text-accent' : ''}`}
             >
-              <SkipForward size={24} />
+              <Repeat size={20} />
             </button>
           </div>
 
