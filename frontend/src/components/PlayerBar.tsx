@@ -3,7 +3,7 @@
  */
 import {
   Play, Pause, SkipBack, SkipForward,
-  Volume2, Repeat, Repeat1, Shuffle, List, Maximize2, Disc, Star, X, MoreHorizontal, Trash2,
+  Volume2, Repeat, Repeat1, Shuffle, List, Maximize2, Disc, Star, X, MoreHorizontal, Trash2, GripVertical,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
@@ -45,6 +45,8 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
   const [hoverRating, setHoverRating] = useState(0);
   const [showQueue, setShowQueue] = useState(false);
   const [queueMenuIndex, setQueueMenuIndex] = useState<number | null>(null);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dropIndex, setDropIndex] = useState<number | null>(null);
   const {
     currentTrack,
     queue,
@@ -128,6 +130,7 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
   function handleExpand() {
     setShowQueue(false);
     setQueueMenuIndex(null);
+    clearQueueDragState();
     onExpand();
   }
 
@@ -145,6 +148,39 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
     setQueueMenuIndex(null);
   }
 
+  function clearQueueDragState() {
+    setDragIndex(null);
+    setDropIndex(null);
+  }
+
+  function handleQueueDragStart(event: React.DragEvent<HTMLElement>, index: number) {
+    setQueueMenuIndex(null);
+    setDragIndex(index);
+    setDropIndex(index);
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', String(index));
+  }
+
+  function handleQueueDragOver(event: React.DragEvent<HTMLElement>, index: number) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    if (dropIndex !== index) {
+      setDropIndex(index);
+    }
+  }
+
+  function handleQueueDrop(event: React.DragEvent<HTMLElement>, index: number) {
+    event.preventDefault();
+    if (dragIndex === null) {
+      clearQueueDragState();
+      return;
+    }
+    if (dragIndex !== index) {
+      usePlayerStore.getState().moveQueueItem(dragIndex, index);
+    }
+    clearQueueDragState();
+  }
+
   useEffect(() => {
     if (!showQueue) return;
     const onMouseDown = (event: MouseEvent) => {
@@ -153,11 +189,13 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
       if (queueButtonRef.current?.contains(target)) return;
       setShowQueue(false);
       setQueueMenuIndex(null);
+      clearQueueDragState();
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setShowQueue(false);
         setQueueMenuIndex(null);
+        clearQueueDragState();
       }
     };
     document.addEventListener('mousedown', onMouseDown);
@@ -294,7 +332,10 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
             ref={queueButtonRef}
             onClick={() => {
               setQueueMenuIndex(null);
-              setShowQueue((open) => !open);
+              setShowQueue((open) => {
+                if (open) clearQueueDragState();
+                return !open;
+              });
             }}
             className={`text-text-muted transition-colors ${showQueue ? 'text-accent' : 'hover:text-text-secondary'}`}
             aria-label="Queue"
@@ -340,14 +381,14 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
                 <div className="flex items-center gap-2">
                   {queue.length > 0 && (
                     <button
-                      onClick={() => { usePlayerStore.getState().clearQueue(); setQueueMenuIndex(null); }}
+                      onClick={() => { usePlayerStore.getState().clearQueue(); setQueueMenuIndex(null); clearQueueDragState(); }}
                       className="text-[10px] font-mono text-text-muted hover:text-text-secondary transition-colors"
                     >
                       Clear
                     </button>
                   )}
                   <button
-                    onClick={() => { setShowQueue(false); setQueueMenuIndex(null); }}
+                    onClick={() => { setShowQueue(false); setQueueMenuIndex(null); clearQueueDragState(); }}
                     aria-label="Close queue"
                     className="p-1 text-text-muted hover:text-text-primary transition-colors"
                   >
@@ -364,9 +405,29 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
                   <ul>
                     {queue.map((track, i) => (
                       <li key={`${track.id}-${i}`}>
-                        <div className="relative group px-4 py-2.5 flex items-center gap-2.5 hover:bg-[#111] transition-colors">
+                        <div
+                          onDragOver={(event) => handleQueueDragOver(event, i)}
+                          onDrop={(event) => handleQueueDrop(event, i)}
+                          className={`relative group px-4 py-2.5 flex items-center gap-2.5 transition-colors ${
+                            dropIndex === i && dragIndex !== null && dragIndex !== i
+                              ? 'bg-[#151515] ring-1 ring-accent/40'
+                              : 'hover:bg-[#111]'
+                          }`}
+                        >
                           <button
-                            onClick={() => { usePlayerStore.getState().playAt(i); setQueueMenuIndex(null); setShowQueue(false); }}
+                            draggable
+                            onDragStart={(event) => handleQueueDragStart(event, i)}
+                            onDragEnd={clearQueueDragState}
+                            className={`text-text-muted hover:text-text-secondary transition-colors ${
+                              dragIndex === i ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                            }`}
+                            title="Drag to reorder"
+                            aria-label={`Drag ${track.title} to reorder`}
+                          >
+                            <GripVertical size={13} />
+                          </button>
+                          <button
+                            onClick={() => { usePlayerStore.getState().playAt(i); setQueueMenuIndex(null); setShowQueue(false); clearQueueDragState(); }}
                             className="flex-1 min-w-0 text-left flex items-center gap-2.5"
                           >
                             <span className="font-mono text-[10px] text-text-muted w-5 flex-shrink-0 text-right">
@@ -403,7 +464,7 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
                           {queueMenuIndex === i && (
                             <div className="absolute right-3 top-full mt-1 w-40 bg-[#0f0f0f] border border-[#222] rounded-md shadow-xl z-40">
                               <button
-                                onClick={() => { usePlayerStore.getState().playAt(i); setQueueMenuIndex(null); setShowQueue(false); }}
+                                onClick={() => { usePlayerStore.getState().playAt(i); setQueueMenuIndex(null); setShowQueue(false); clearQueueDragState(); }}
                                 className="w-full px-3 py-1.5 text-left text-[11px] text-text-secondary hover:bg-[#161616] transition-colors"
                               >
                                 Play now
