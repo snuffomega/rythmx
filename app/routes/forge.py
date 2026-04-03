@@ -299,7 +299,6 @@ def nm_run(data: Optional[dict[str, Any]] = Body(default=None)):
     return {
         "status": "ok",
         "artists_checked": summary.get("artists_checked", 0),
-        "neighbors_found": summary.get("neighbors_found", 0),
         "releases_found": summary.get("releases_found", 0),
         "releases": releases,
     }
@@ -315,7 +314,7 @@ def nm_get_results():
 def _get_discovered_releases() -> list[dict]:
     """
     Query forge_discovered_releases JOIN forge_discovered_artists.
-    Adds in_library flag via LEFT JOIN on lib_artists.name_lower.
+    in_library is release-level: true only when this specific release exists in lib_releases.
     Returns list of release dicts.
     """
     with rythmx_store._connect() as conn:
@@ -329,10 +328,13 @@ def _get_discovered_releases() -> list[dict]:
                 r.record_type,
                 r.release_date,
                 r.cover_url,
-                CASE WHEN la.id IS NOT NULL THEN 1 ELSE 0 END AS in_library
+                CASE WHEN lr.id IS NOT NULL THEN 1 ELSE 0 END AS in_library
             FROM forge_discovered_releases r
             JOIN forge_discovered_artists da ON r.artist_deezer_id = da.deezer_id
             LEFT JOIN lib_artists la ON da.name_lower = la.name_lower
+            LEFT JOIN lib_releases lr
+                ON lr.artist_id = la.id
+                AND lower(trim(lr.title)) = lower(trim(r.title))
             ORDER BY r.release_date DESC, da.name ASC
             LIMIT 500
             """

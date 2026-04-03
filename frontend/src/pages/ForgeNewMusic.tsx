@@ -465,7 +465,7 @@ export function ForgeNewMusic() {
           <p className="text-text-muted text-sm mt-0.5">
             {hasResults && runSummary
               ? `${runSummary.releases_found} releases · ${periodLabel} window`
-              : 'Recent releases from your artist neighborhood.'}
+              : 'Recent releases from artists you listen to.'}
           </p>
         </div>
         {hasResults && !running && (
