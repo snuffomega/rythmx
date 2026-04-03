@@ -355,7 +355,7 @@ export const forgeNewMusicApi = {
       body: JSON.stringify(config),
     }),
   run: (config?: Partial<NewMusicConfig>) =>
-    request<{ status: string; releases: DiscoveredRelease[]; artists_checked: number; releases_found: number }>(
+    request<{ status: string; releases: DiscoveredRelease[]; artists_checked: number; releases_found: number; filtered_releases: DiscoveredRelease[] }>(
       '/forge/new-music/run',
       { method: 'POST', body: JSON.stringify(config ?? {}) }
     ),

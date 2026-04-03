@@ -66,6 +66,8 @@ export function ForgeNewMusic() {
 
   const [results, setResults] = useState<DiscoveredRelease[] | null>(null);
   const [runSummary, setRunSummary] = useState<{ releases_found: number } | null>(null);
+  const [filteredReleases, setFilteredReleases] = useState<DiscoveredRelease[]>([]);
+  const [filteredOpen, setFilteredOpen] = useState(false);
 
   const update = <K extends keyof NewMusicConfig>(key: K, value: NewMusicConfig[K]) =>
     setConfig(c => ({ ...c, [key]: value }));
@@ -77,6 +79,7 @@ export function ForgeNewMusic() {
       await forgeNewMusicApi.clear();
       setResults(null);
       setRunSummary(null);
+      setFilteredReleases([]);
       toastSuccess('Results cleared');
     } catch {
       toastError('Clear failed');
@@ -147,6 +150,8 @@ export function ForgeNewMusic() {
       finishProgress();
       setResults(data.releases);
       setRunSummary({ releases_found: data.releases_found });
+      setFilteredReleases(data.filtered_releases ?? []);
+      setFilteredOpen(false);
 
       let queued = false;
       try {
@@ -489,6 +494,41 @@ export function ForgeNewMusic() {
       {!running && hasResults && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
           {results!.map(r => <ReleaseCard key={r.id} release={r} />)}
+        </div>
+      )}
+
+      {/* Filtered releases accordion */}
+      {!running && filteredReleases.length > 0 && (
+        <div className="border border-[#1a1a1a]">
+          <button
+            onClick={() => setFilteredOpen(v => !v)}
+            className="w-full flex items-center justify-between px-4 py-3 text-xs font-semibold text-[#444] hover:text-[#666] uppercase tracking-widest transition-colors"
+          >
+            <span>Filtered out — {filteredReleases.length} release{filteredReleases.length !== 1 ? 's' : ''}</span>
+            {filteredOpen ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+          </button>
+          {filteredOpen && (
+            <div className="border-t border-[#1a1a1a] divide-y divide-[#111]">
+              {filteredReleases.map(r => (
+                <div key={r.id} className="flex items-center gap-3 px-4 py-2.5 opacity-40">
+                  {r.cover_url ? (
+                    <img src={r.cover_url} alt={r.title} className="w-8 h-8 object-cover flex-shrink-0" />
+                  ) : (
+                    <div className="w-8 h-8 bg-[#111] flex items-center justify-center flex-shrink-0">
+                      <Music2 size={12} className="text-[#2a2a2a]" />
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <p className="text-text-primary text-xs font-medium truncate">{r.title}</p>
+                    <p className="text-text-muted text-[11px] truncate">{r.artist_name}</p>
+                  </div>
+                  {r.release_date && (
+                    <span className="text-[10px] text-[#333] ml-auto flex-shrink-0">{r.release_date.slice(0, 7)}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

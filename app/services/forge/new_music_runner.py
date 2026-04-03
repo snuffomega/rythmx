@@ -237,12 +237,12 @@ def fetch_releases_for_neighbors(
     release_kinds: str,
     ignore_keywords: str,
     ignore_artists: str,
-) -> tuple[list[dict], list[dict]]:
+) -> tuple[list[dict], list[dict], list[dict]]:
     """
     For each artist name, resolve Deezer ID and fetch recent albums.
     Fast path: checks lib_artists.deezer_artist_id first to avoid redundant API searches.
     release_kinds: mode string — 'all' | 'album_preferred' | 'album'
-    Returns: (discovered_artists, discovered_releases)
+    Returns: (discovered_artists, discovered_releases, keyword_filtered_releases)
     """
     cutoff_date = (datetime.now() - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
 
@@ -265,6 +265,7 @@ def fetch_releases_for_neighbors(
 
     discovered_artists = []
     discovered_releases = []
+    keyword_filtered = []
     seen_artist_ids = set()
 
     # Limit to avoid hammering Deezer API on first run
@@ -320,6 +321,16 @@ def fetch_releases_for_neighbors(
             title_lower = title.lower()
 
             if any(kw in title_lower for kw in ignore_kw):
+                keyword_filtered.append({
+                    "id": str(album["id"]),
+                    "artist_deezer_id": deezer_id,
+                    "artist_name": display_name,
+                    "title": title,
+                    "record_type": record_type,
+                    "release_date": rel_date or None,
+                    "cover_url": album.get("artwork_url") or None,
+                    "in_library": False,
+                })
                 continue
 
             artist_releases_in_window.append({
@@ -337,10 +348,10 @@ def fetch_releases_for_neighbors(
         discovered_releases.extend(preferred)
 
     logger.info(
-        "new_music: fetched artists=%d releases=%d (lookback=%dd, kinds_mode=%s)",
-        len(discovered_artists), len(discovered_releases), lookback_days, release_kinds
+        "new_music: fetched artists=%d releases=%d filtered=%d (lookback=%dd, kinds_mode=%s)",
+        len(discovered_artists), len(discovered_releases), len(keyword_filtered), lookback_days, release_kinds
     )
-    return discovered_artists, discovered_releases
+    return discovered_artists, discovered_releases, keyword_filtered
 
 
 # ---------------------------------------------------------------------------
@@ -420,7 +431,7 @@ def run_new_music_pipeline(config_override: dict | None = None) -> dict:
     seed_names = [s["name"] for s in seeds]
 
     # Step 2: fetch recent releases from those seed artists directly
-    artists, releases = fetch_releases_for_neighbors(
+    artists, releases, filtered = fetch_releases_for_neighbors(
         seed_names, lookback_days, match_mode, release_kinds, ignore_keywords, ignore_artists
     )
 
@@ -428,11 +439,12 @@ def run_new_music_pipeline(config_override: dict | None = None) -> dict:
     write_discovered(artists, releases)
 
     logger.info(
-        "new_music: pipeline complete — seeds=%d artists_resolved=%d releases_stored=%d",
-        len(seeds), len(artists), len(releases)
+        "new_music: pipeline complete — seeds=%d artists_resolved=%d releases_stored=%d filtered=%d",
+        len(seeds), len(artists), len(releases), len(filtered)
     )
 
     return {
         "artists_checked": len(seeds),
         "releases_found": len(releases),
+        "filtered_releases": filtered,
     }

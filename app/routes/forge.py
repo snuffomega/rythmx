@@ -301,6 +301,7 @@ def nm_run(data: Optional[dict[str, Any]] = Body(default=None)):
         "artists_checked": summary.get("artists_checked", 0),
         "releases_found": summary.get("releases_found", 0),
         "releases": releases,
+        "filtered_releases": summary.get("filtered_releases", []),
     }
 
 
