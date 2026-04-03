@@ -67,11 +67,23 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
     onSeek(pct * duration);
   }
 
-  function handleVolumeClick(e: React.MouseEvent<HTMLDivElement>) {
+  function handleVolumeMouseDown(e: React.MouseEvent<HTMLDivElement>) {
     if (!volumeRef.current) return;
     const rect = volumeRef.current.getBoundingClientRect();
     const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     onVolumeChange(pct);
+    const onMove = (event: MouseEvent) => {
+      if (!volumeRef.current) return;
+      const moveRect = volumeRef.current.getBoundingClientRect();
+      const movePct = Math.max(0, Math.min(1, (event.clientX - moveRect.left) / moveRect.width));
+      onVolumeChange(movePct);
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
   }
 
   async function handleArtistClick() {
@@ -256,15 +268,15 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
           <Volume2 size={17} className="text-text-secondary flex-shrink-0" />
           <div
             ref={volumeRef}
-            onClick={handleVolumeClick}
-            className="w-24 h-[3px] bg-[#1a1a1a] rounded-full relative cursor-pointer group"
+            onMouseDown={handleVolumeMouseDown}
+            className="w-24 h-[4px] bg-[#1a1a1a] rounded-full relative cursor-pointer group"
           >
             <div
-              className="absolute top-0 left-0 h-full bg-text-secondary rounded-full pointer-events-none"
+              className="absolute top-0 left-0 h-full bg-accent rounded-full pointer-events-none"
               style={{ width: `${volume * 100}%` }}
             />
             <div
-              className="absolute top-1/2 -translate-y-1/2 w-2.5 h-2.5 bg-text-primary rounded-full opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
+              className="absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-accent rounded-full opacity-70 group-hover:opacity-100 transition-opacity pointer-events-none"
               style={{ left: `${volume * 100}%`, marginLeft: '-5px' }}
             />
           </div>
