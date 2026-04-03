@@ -3,7 +3,7 @@
  */
 import {
   Play, Pause, SkipBack, SkipForward,
-  Volume2, Repeat, Shuffle, List, Maximize2, Disc, Star, X,
+  Volume2, Repeat, Repeat1, Shuffle, List, Maximize2, Disc, Star, X, MoreHorizontal, Trash2,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
@@ -30,12 +30,21 @@ function TrackArt({ thumbUrl, title, artist }: { thumbUrl: string | null; title:
   );
 }
 
+function formatTrackDuration(seconds: number | null | undefined): string {
+  if (!seconds || seconds <= 0) return '--:--';
+  const total = Math.floor(seconds);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
 export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeChange }: PlayerBarProps) {
   const navigate = useNavigate();
   const [artistNavLoading, setArtistNavLoading] = useState(false);
   const [ratingByTrack, setRatingByTrack] = useState<Record<string, number>>({});
   const [hoverRating, setHoverRating] = useState(0);
   const [showQueue, setShowQueue] = useState(false);
+  const [queueMenuIndex, setQueueMenuIndex] = useState<number | null>(null);
   const {
     currentTrack,
     queue,
@@ -46,9 +55,11 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
     duration,
     volume,
     shuffle,
+    repeatMode,
     nextTrack,
     prevTrack,
     toggleShuffle,
+    toggleRepeat,
   } = usePlayerStore();
 
   const progressRef = useRef<HTMLDivElement>(null);
@@ -116,7 +127,22 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
 
   function handleExpand() {
     setShowQueue(false);
+    setQueueMenuIndex(null);
     onExpand();
+  }
+
+  function handleQueueTrackRemove(index: number) {
+    usePlayerStore.getState().removeFromQueue(index);
+    setQueueMenuIndex((curr) => (curr === index ? null : curr));
+  }
+
+  function handleQueueTrackPlayNext(index: number) {
+    const { queueIndex: activeIndex } = usePlayerStore.getState();
+    if (activeIndex < 0 || index === activeIndex || index === activeIndex + 1) return;
+    const target = activeIndex + 1;
+    const toIndex = index < target ? target - 1 : target;
+    usePlayerStore.getState().moveQueueItem(index, toIndex);
+    setQueueMenuIndex(null);
   }
 
   useEffect(() => {
@@ -126,9 +152,13 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
       if (queuePanelRef.current?.contains(target)) return;
       if (queueButtonRef.current?.contains(target)) return;
       setShowQueue(false);
+      setQueueMenuIndex(null);
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setShowQueue(false);
+      if (event.key === 'Escape') {
+        setShowQueue(false);
+        setQueueMenuIndex(null);
+      }
     };
     document.addEventListener('mousedown', onMouseDown);
     document.addEventListener('keydown', onKeyDown);
@@ -235,8 +265,21 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
             >
               <SkipForward size={20} />
             </button>
-            <button className="text-text-muted hover:text-text-secondary transition-colors" aria-label="Repeat">
-              <Repeat size={17} />
+            <button
+              onClick={toggleRepeat}
+              className={`transition-colors ${repeatMode !== 'off' ? 'text-accent' : 'text-text-muted hover:text-text-secondary'}`}
+              aria-label={
+                repeatMode === 'off' ? 'Repeat off'
+                  : repeatMode === 'all' ? 'Repeat all'
+                    : 'Repeat one'
+              }
+              title={
+                repeatMode === 'off' ? 'Repeat off'
+                  : repeatMode === 'all' ? 'Repeat all'
+                    : 'Repeat one'
+              }
+            >
+              {repeatMode === 'one' ? <Repeat1 size={17} /> : <Repeat size={17} />}
             </button>
           </div>
         </div>
@@ -249,7 +292,10 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
           )}
           <button
             ref={queueButtonRef}
-            onClick={() => setShowQueue((open) => !open)}
+            onClick={() => {
+              setQueueMenuIndex(null);
+              setShowQueue((open) => !open);
+            }}
             className={`text-text-muted transition-colors ${showQueue ? 'text-accent' : 'hover:text-text-secondary'}`}
             aria-label="Queue"
             title="Queue"
@@ -284,7 +330,8 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
           {showQueue && (
             <div
               ref={queuePanelRef}
-              className="absolute bottom-full right-0 mb-3 w-[min(90vw,460px)] border border-[#1e1e1e] rounded-xl overflow-hidden bg-[#0a0a0a] shadow-2xl z-40"
+              className="absolute bottom-full right-0 mb-3 w-[min(90vw,460px)] border border-[#1e1e1e] rounded-xl overflow-hidden bg-[#0a0a0a] shadow-2xl z-40
+                         transition-[transform,opacity,box-shadow] duration-200 ease-out"
             >
               <div className="flex items-center justify-between px-4 py-3 border-b border-[#1a1a1a]">
                 <span className="font-mono text-[11px] text-text-muted uppercase tracking-widest">
@@ -293,14 +340,14 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
                 <div className="flex items-center gap-2">
                   {queue.length > 0 && (
                     <button
-                      onClick={() => usePlayerStore.getState().clearQueue()}
+                      onClick={() => { usePlayerStore.getState().clearQueue(); setQueueMenuIndex(null); }}
                       className="text-[10px] font-mono text-text-muted hover:text-text-secondary transition-colors"
                     >
                       Clear
                     </button>
                   )}
                   <button
-                    onClick={() => setShowQueue(false)}
+                    onClick={() => { setShowQueue(false); setQueueMenuIndex(null); }}
                     aria-label="Close queue"
                     className="p-1 text-text-muted hover:text-text-primary transition-colors"
                   >
@@ -317,22 +364,71 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
                   <ul>
                     {queue.map((track, i) => (
                       <li key={`${track.id}-${i}`}>
-                        <button
-                          onClick={() => { usePlayerStore.getState().playAt(i); setShowQueue(false); }}
-                          className="w-full px-4 py-2.5 flex items-center gap-2.5 hover:bg-[#111] transition-colors text-left"
-                        >
-                          <span className="font-mono text-[10px] text-text-muted w-5 flex-shrink-0 text-right">
-                            {i === queueIndex && isPlaying ? '>' : i + 1}
+                        <div className="relative group px-4 py-2.5 flex items-center gap-2.5 hover:bg-[#111] transition-colors">
+                          <button
+                            onClick={() => { usePlayerStore.getState().playAt(i); setQueueMenuIndex(null); setShowQueue(false); }}
+                            className="flex-1 min-w-0 text-left flex items-center gap-2.5"
+                          >
+                            <span className="font-mono text-[10px] text-text-muted w-5 flex-shrink-0 text-right">
+                              {i === queueIndex && isPlaying ? '>' : i + 1}
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              <p className={`text-[12px] truncate leading-tight ${i === queueIndex ? 'text-accent' : 'text-text-primary'}`}>
+                                {track.title}
+                              </p>
+                              <p className="font-mono text-[10px] text-text-muted truncate leading-tight">
+                                {track.artist}
+                              </p>
+                            </div>
+                          </button>
+                          <span className="font-mono text-[10px] text-text-muted tabular-nums w-11 text-right">
+                            {formatTrackDuration(track.duration)}
                           </span>
-                          <div className="min-w-0 flex-1">
-                            <p className={`text-[12px] truncate leading-tight ${i === queueIndex ? 'text-accent' : 'text-text-primary'}`}>
-                              {track.title}
-                            </p>
-                            <p className="font-mono text-[10px] text-text-muted truncate leading-tight">
-                              {track.artist}
-                            </p>
-                          </div>
-                        </button>
+                          <button
+                            onClick={() => handleQueueTrackRemove(i)}
+                            className="text-text-muted opacity-0 group-hover:opacity-100 hover:text-danger transition-all"
+                            title="Remove from queue"
+                            aria-label={`Remove ${track.title} from queue`}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                          <button
+                            onClick={() => setQueueMenuIndex((curr) => (curr === i ? null : i))}
+                            className="text-text-muted opacity-0 group-hover:opacity-100 hover:text-text-primary transition-all"
+                            title="Queue item menu"
+                            aria-label={`Open menu for ${track.title}`}
+                          >
+                            <MoreHorizontal size={13} />
+                          </button>
+                          {queueMenuIndex === i && (
+                            <div className="absolute right-3 top-full mt-1 w-40 bg-[#0f0f0f] border border-[#222] rounded-md shadow-xl z-40">
+                              <button
+                                onClick={() => { usePlayerStore.getState().playAt(i); setQueueMenuIndex(null); setShowQueue(false); }}
+                                className="w-full px-3 py-1.5 text-left text-[11px] text-text-secondary hover:bg-[#161616] transition-colors"
+                              >
+                                Play now
+                              </button>
+                              <button
+                                onClick={() => handleQueueTrackPlayNext(i)}
+                                className="w-full px-3 py-1.5 text-left text-[11px] text-text-secondary hover:bg-[#161616] transition-colors"
+                              >
+                                Play next
+                              </button>
+                              <button
+                                onClick={() => handleQueueTrackRemove(i)}
+                                className="w-full px-3 py-1.5 text-left text-[11px] text-danger hover:bg-[#161616] transition-colors"
+                              >
+                                Remove
+                              </button>
+                              <button
+                                disabled
+                                className="w-full px-3 py-1.5 text-left text-[11px] text-text-muted opacity-60 cursor-not-allowed"
+                              >
+                                Report (soon)
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </li>
                     ))}
                   </ul>
