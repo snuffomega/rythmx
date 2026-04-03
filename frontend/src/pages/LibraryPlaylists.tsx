@@ -4,16 +4,17 @@
  * Features:
  * - Card grid: cover art (music note fallback), name, track count, platform badge
  * - Click card → detail view: track list with per-track play button
- * - "Play all" button → sends full playlist to player queue
+ * - Play + Shuffle buttons → send playlist tracks to player queue
  * - Inline rename on playlist name
  * - Delete with confirmation
  * - Sync button → POST /library/playlists/sync
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Music,
   RefreshCw,
   Play,
+  Shuffle,
   Trash2,
   Pencil,
   Check,
@@ -132,6 +133,21 @@ function PlaylistDetail({
 
   const playQueue = usePlayerStore((s) => s.playQueue);
 
+  const queueTracks = useMemo(
+    () =>
+      tracks.map((t) => ({
+        id: t.track_id,
+        title: t.title,
+        artist: t.artist_name ?? '',
+        album: t.album_title ?? '',
+        duration: t.duration,
+        thumb_url: null,
+        source_platform: playlist.source_platform,
+      })),
+    [tracks, playlist.source_platform]
+  );
+  const hasPlayableTracks = queueTracks.length > 0;
+
   useEffect(() => {
     setLoading(true);
     setError(null);
@@ -143,36 +159,22 @@ function PlaylistDetail({
   }, [playlist.id]);
 
   const handlePlayAll = useCallback(() => {
-    if (!tracks.length) return;
-    playQueue(
-      tracks.map((t) => ({
-        id: t.track_id,
-        title: t.title,
-        artist: t.artist_name ?? '',
-        album: t.album_title ?? '',
-        duration: t.duration,
-        thumb_url: null,
-        source_platform: playlist.source_platform,
-      }))
-    );
-  }, [tracks, playlist.source_platform, playQueue]);
+    if (!hasPlayableTracks) return;
+    playQueue(queueTracks);
+  }, [hasPlayableTracks, queueTracks, playQueue]);
+
+  const handleShuffleAll = useCallback(() => {
+    if (!hasPlayableTracks) return;
+    const shuffled = [...queueTracks].sort(() => Math.random() - 0.5);
+    playQueue(shuffled);
+  }, [hasPlayableTracks, queueTracks, playQueue]);
 
   const handlePlayTrack = useCallback(
     (idx: number) => {
-      const slice = tracks.slice(idx);
-      playQueue(
-        slice.map((t) => ({
-          id: t.track_id,
-          title: t.title,
-          artist: t.artist_name ?? '',
-          album: t.album_title ?? '',
-          duration: t.duration,
-          thumb_url: null,
-          source_platform: playlist.source_platform,
-        }))
-      );
+      if (idx < 0 || idx >= queueTracks.length) return;
+      playQueue(queueTracks.slice(idx));
     },
-    [tracks, playlist.source_platform, playQueue]
+    [queueTracks, playQueue]
   );
 
   const handleSaveName = useCallback(async () => {
@@ -288,13 +290,23 @@ function PlaylistDetail({
         <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={handlePlayAll}
-            disabled={!tracks.length}
+            disabled={!hasPlayableTracks}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-accent hover:bg-accent/80
                        text-black text-xs font-medium rounded-lg transition-colors
                        disabled:opacity-40 disabled:pointer-events-none"
           >
             <Play size={12} fill="currentColor" />
-            Play all
+            Play
+          </button>
+          <button
+            onClick={handleShuffleAll}
+            disabled={!hasPlayableTracks}
+            className="flex items-center gap-1.5 px-3 py-1.5 border border-[#333] hover:border-[#555]
+                       text-text-secondary text-xs font-medium rounded-lg transition-colors
+                       disabled:opacity-40 disabled:pointer-events-none"
+          >
+            <Shuffle size={12} />
+            Shuffle
           </button>
           <button
             onClick={() => setConfirmDelete(true)}
