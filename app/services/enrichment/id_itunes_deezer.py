@@ -19,6 +19,9 @@ from app.services.enrichment.catalog_promotion import promote_catalog_to_release
 
 logger = logging.getLogger(__name__)
 
+MIN_TRUSTED_ARTIST_CONFIDENCE = 85
+PROVISIONAL_CONFIDENCE_PENALTY = 50
+
 
 def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = None,
                     on_progress: "callable | None" = None) -> dict:
@@ -26,9 +29,14 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
     Stage 2 — Primary ID Workers: artist-first confidence loop for iTunes + Deezer.
 
     Batches by artist (not album). For each artist:
-      FAST PATH  — stored artist ID at confidence ≥ 85: skip validation, fetch catalog directly.
-      VALIDATION — no stored ID: run validate_artist() for iTunes + Deezer independently.
+      FAST PATH  — stored artist ID with per-source trusted confidence (>= 85):
+                   skip validation and fetch catalog directly.
+      VALIDATION — missing ID OR untrusted ID: run validate_artist() for iTunes + Deezer independently.
                    Both always run — writes both itunes_album_id AND deezer_id when found.
+
+    Guardrail:
+      0-overlap name-only validations are treated as provisional (confidence penalty -50)
+      and are NOT allowed to drive auto-matching or cached fast-path IDs.
 
     Album matching uses pre-fetched catalog + match_album_title() threshold ≥ 0.82.
 
@@ -47,7 +55,25 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
                 """
                 SELECT DISTINCT ar.id, ar.name,
                        ar.itunes_artist_id, ar.deezer_artist_id,
-                       ar.match_confidence
+                       ar.match_confidence,
+                       (
+                           SELECT em.confidence
+                           FROM enrichment_meta em
+                           WHERE em.source = 'itunes_artist'
+                             AND em.entity_type = 'artist'
+                             AND em.entity_id = ar.id
+                           ORDER BY em.enriched_at DESC
+                           LIMIT 1
+                       ) AS itunes_artist_conf,
+                       (
+                           SELECT em.confidence
+                           FROM enrichment_meta em
+                           WHERE em.source = 'deezer_artist'
+                             AND em.entity_type = 'artist'
+                             AND em.entity_id = ar.id
+                           ORDER BY em.enriched_at DESC
+                           LIMIT 1
+                       ) AS deezer_artist_conf
                 FROM lib_artists ar
                 JOIN lib_albums la ON la.artist_id = ar.id
                 WHERE la.removed_at IS NULL
@@ -111,8 +137,9 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
             # --- iTunes: fast path or validation ---
             itunes_catalog: list[dict] = []
             itunes_artist_id = artist["itunes_artist_id"]
+            itunes_artist_conf = int(artist["itunes_artist_conf"] or 0)
 
-            if itunes_artist_id:
+            if itunes_artist_id and itunes_artist_conf >= MIN_TRUSTED_ARTIST_CONFIDENCE:
                 from app.clients.music_client import get_artist_albums_itunes
                 itunes_catalog = get_artist_albums_itunes(itunes_artist_id)
                 logger.debug("enrich_library: iTunes fast path for '%s' (id=%s, %d albums)",
@@ -120,25 +147,80 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
             else:
                 val = validate_artist(artist_name, lib_titles, "itunes")
                 if val:
-                    itunes_artist_id = val["artist_id"]
-                    itunes_catalog = val["album_catalog"]
-                    _best_confidence = max(_best_confidence, val["confidence"])
+                    raw_conf = int(val.get("confidence", 0) or 0)
+                    trusted = raw_conf >= MIN_TRUSTED_ARTIST_CONFIDENCE
+                    adjusted_conf = raw_conf if trusted else max(
+                        0, raw_conf - PROVISIONAL_CONFIDENCE_PENALTY
+                    )
+                    _best_confidence = max(_best_confidence, adjusted_conf)
                     try:
-                        conn.execute(
-                            """
-                            UPDATE lib_artists
-                            SET itunes_artist_id = ?, match_confidence = ?,
-                                updated_at = CURRENT_TIMESTAMP
-                            WHERE id = ? AND itunes_artist_id IS NULL
-                            """,
-                            (itunes_artist_id, val["confidence"], artist_id),
-                        )
-                        write_enrichment_meta(conn, "itunes_artist", "artist", artist_id,
-                                               "found", confidence=val["confidence"])
-                        logger.debug(
-                            "enrich_library: iTunes validated '%s' → id=%s conf=%d",
-                            artist_name, itunes_artist_id, val["confidence"],
-                        )
+                        if trusted:
+                            itunes_artist_id = val["artist_id"]
+                            itunes_catalog = val["album_catalog"]
+                            conn.execute(
+                                """
+                                UPDATE lib_artists
+                                SET itunes_artist_id = ?,
+                                    match_confidence = CASE
+                                        WHEN COALESCE(match_confidence, 0) < ? THEN ?
+                                        ELSE match_confidence
+                                    END,
+                                    updated_at = CURRENT_TIMESTAMP
+                                WHERE id = ?
+                                  AND (itunes_artist_id IS NULL
+                                       OR COALESCE(match_confidence, 0) < ?)
+                                """,
+                                (
+                                    itunes_artist_id,
+                                    raw_conf,
+                                    raw_conf,
+                                    artist_id,
+                                    MIN_TRUSTED_ARTIST_CONFIDENCE,
+                                ),
+                            )
+                            write_enrichment_meta(
+                                conn,
+                                "itunes_artist",
+                                "artist",
+                                artist_id,
+                                "found",
+                                confidence=raw_conf,
+                            )
+                            logger.debug(
+                                "enrich_library: iTunes validated '%s' -> id=%s conf=%d",
+                                artist_name, itunes_artist_id, raw_conf,
+                            )
+                        else:
+                            # Provisional name-only/no-overlap result: do not cache ID
+                            # and do not use this catalog for automatic album matching.
+                            itunes_catalog = []
+                            conn.execute(
+                                """
+                                UPDATE lib_artists
+                                SET match_confidence = CASE
+                                    WHEN COALESCE(match_confidence, 0) < ? THEN ?
+                                    ELSE match_confidence
+                                END,
+                                    updated_at = CURRENT_TIMESTAMP
+                                WHERE id = ?
+                                """,
+                                (adjusted_conf, adjusted_conf, artist_id),
+                            )
+                            write_enrichment_meta(
+                                conn,
+                                "itunes_artist",
+                                "artist",
+                                artist_id,
+                                "not_found",
+                                error_msg="provisional_low_overlap",
+                                confidence=adjusted_conf,
+                            )
+                            logger.info(
+                                "enrich_library: iTunes provisional '%s' (raw=%d adjusted=%d) - ID not trusted",
+                                artist_name,
+                                raw_conf,
+                                adjusted_conf,
+                            )
                     except Exception as e:
                         logger.warning("enrich_library: iTunes artist write failed for '%s': %s",
                                        artist_name, e)
@@ -149,8 +231,9 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
             # --- Deezer: fast path or validation ---
             deezer_catalog: list[dict] = []
             deezer_artist_id = artist["deezer_artist_id"]
+            deezer_artist_conf = int(artist["deezer_artist_conf"] or 0)
 
-            if deezer_artist_id:
+            if deezer_artist_id and deezer_artist_conf >= MIN_TRUSTED_ARTIST_CONFIDENCE:
                 from app.clients.music_client import get_artist_albums_deezer
                 deezer_catalog = get_artist_albums_deezer(deezer_artist_id)
                 logger.debug("enrich_library: Deezer fast path for '%s' (id=%s, %d albums)",
@@ -158,21 +241,76 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
             else:
                 val = validate_artist(artist_name, lib_titles, "deezer")
                 if val:
-                    deezer_artist_id = val["artist_id"]
-                    deezer_catalog = val["album_catalog"]
-                    _best_confidence = max(_best_confidence, val["confidence"])
+                    raw_conf = int(val.get("confidence", 0) or 0)
+                    trusted = raw_conf >= MIN_TRUSTED_ARTIST_CONFIDENCE
+                    adjusted_conf = raw_conf if trusted else max(
+                        0, raw_conf - PROVISIONAL_CONFIDENCE_PENALTY
+                    )
+                    _best_confidence = max(_best_confidence, adjusted_conf)
                     try:
-                        conn.execute(
-                            """
-                            UPDATE lib_artists
-                            SET deezer_artist_id = ?, match_confidence = ?,
-                                updated_at = CURRENT_TIMESTAMP
-                            WHERE id = ? AND deezer_artist_id IS NULL
-                            """,
-                            (deezer_artist_id, val["confidence"], artist_id),
-                        )
-                        write_enrichment_meta(conn, "deezer_artist", "artist", artist_id,
-                                               "found", confidence=val["confidence"])
+                        if trusted:
+                            deezer_artist_id = val["artist_id"]
+                            deezer_catalog = val["album_catalog"]
+                            conn.execute(
+                                """
+                                UPDATE lib_artists
+                                SET deezer_artist_id = ?,
+                                    match_confidence = CASE
+                                        WHEN COALESCE(match_confidence, 0) < ? THEN ?
+                                        ELSE match_confidence
+                                    END,
+                                    updated_at = CURRENT_TIMESTAMP
+                                WHERE id = ?
+                                  AND (deezer_artist_id IS NULL
+                                       OR COALESCE(match_confidence, 0) < ?)
+                                """,
+                                (
+                                    deezer_artist_id,
+                                    raw_conf,
+                                    raw_conf,
+                                    artist_id,
+                                    MIN_TRUSTED_ARTIST_CONFIDENCE,
+                                ),
+                            )
+                            write_enrichment_meta(
+                                conn,
+                                "deezer_artist",
+                                "artist",
+                                artist_id,
+                                "found",
+                                confidence=raw_conf,
+                            )
+                        else:
+                            # Provisional name-only/no-overlap result: do not cache ID
+                            # and do not use this catalog for automatic album matching.
+                            deezer_catalog = []
+                            conn.execute(
+                                """
+                                UPDATE lib_artists
+                                SET match_confidence = CASE
+                                    WHEN COALESCE(match_confidence, 0) < ? THEN ?
+                                    ELSE match_confidence
+                                END,
+                                    updated_at = CURRENT_TIMESTAMP
+                                WHERE id = ?
+                                """,
+                                (adjusted_conf, adjusted_conf, artist_id),
+                            )
+                            write_enrichment_meta(
+                                conn,
+                                "deezer_artist",
+                                "artist",
+                                artist_id,
+                                "not_found",
+                                error_msg="provisional_low_overlap",
+                                confidence=adjusted_conf,
+                            )
+                            logger.info(
+                                "enrich_library: Deezer provisional '%s' (raw=%d adjusted=%d) - ID not trusted",
+                                artist_name,
+                                raw_conf,
+                                adjusted_conf,
+                            )
                     except Exception as e:
                         logger.warning("enrich_library: Deezer artist write failed for '%s': %s",
                                        artist_name, e)
