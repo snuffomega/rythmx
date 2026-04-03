@@ -97,6 +97,29 @@ def set_image_cache(entity_type: str, entity_key: str, image_url: str):
     _image_cache_store.set_image_cache(_connect, entity_type, entity_key, image_url)
 
 
+def set_image_cache_entry(
+    entity_type: str,
+    entity_key: str,
+    image_url: str,
+    local_path: str | None = None,
+    content_hash: str | None = None,
+    artwork_source: str | None = None,
+):
+    _image_cache_store.set_image_cache_entry(
+        _connect,
+        entity_type,
+        entity_key,
+        image_url,
+        local_path,
+        content_hash,
+        artwork_source,
+    )
+
+
+def get_image_cache_entry(entity_type: str, entity_key: str) -> dict | None:
+    return _image_cache_store.get_image_cache_entry(_connect, entity_type, entity_key)
+
+
 def clear_image_cache():
     _image_cache_store.clear_image_cache(_connect)
 
@@ -306,6 +329,10 @@ def get_release_itunes_album_id(artist_name: str, album_title: str) -> str | Non
 
 def get_missing_image_entities(limit: int = 40) -> list[tuple[str, str, str]]:
     return _image_cache_store.get_missing_image_entities(_connect, limit)
+
+
+def get_artist_artwork_source_counts() -> list[dict]:
+    return _image_cache_store.get_artist_artwork_source_counts(_connect)
 
 def backfill_normalized_titles() -> int:
     return _release_maintenance_store.backfill_normalized_titles(_connect, logger)
