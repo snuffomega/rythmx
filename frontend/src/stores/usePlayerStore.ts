@@ -1,19 +1,8 @@
-/**
- * usePlayerStore — global audio player state.
- *
- * Scope: all playback state shared across PlayerBar, FullPagePlayer,
- * Library play buttons, and useAudioEngine.
- *
- * Why Zustand: player state needs to be accessible from the footer bar,
- * the full-page overlay, every library page, and the audio engine hook —
- * deep prop drilling would cross too many boundaries.
- *
- * PlayerTrack is a minimal representation of a lib_tracks row with just
- * enough data for the player UI. Resolved from lib_tracks at enqueue time.
- */
 import { create } from 'zustand';
+import { useToastStore } from './useToastStore';
 
 export type PlayerVisibility = 'hidden' | 'mini' | 'fullpage' | 'vinyl';
+export type RepeatMode = 'off' | 'all' | 'one';
 
 export interface PlayerTrack {
   id: string;
@@ -23,7 +12,6 @@ export interface PlayerTrack {
   duration: number | null;
   thumb_url: string | null;
   source_platform: string;
-  /** Optional quality metadata for the quality badge */
   codec?: string | null;
   bitrate?: number | null;
   bit_depth?: number | null;
@@ -31,29 +19,23 @@ export interface PlayerTrack {
 }
 
 interface PlayerStore {
-  // ── Visibility ──────────────────────────────────────────────────────────
   playerState: PlayerVisibility;
 
-  // ── Playback ────────────────────────────────────────────────────────────
   isPlaying: boolean;
   currentTrack: PlayerTrack | null;
   queue: PlayerTrack[];
   queueIndex: number;
 
-  // ── Position / duration (managed by useAudioEngine) ─────────────────────
-  position: number;     // seconds
-  duration: number;     // seconds
-  volume: number;       // 0–1
+  position: number;
+  duration: number;
+  volume: number;
 
-  // ── Formatted strings for display (avoids recompute in render) ───────────
   formattedPosition: string;
   formattedDuration: string;
 
-  // ── Shuffle / Repeat ─────────────────────────────────────────────────────
   shuffle: boolean;
-  repeat: boolean;
+  repeatMode: RepeatMode;
 
-  // ── Visibility actions ───────────────────────────────────────────────────
   setPlayerState: (state: PlayerVisibility) => void;
   show: () => void;
   hide: () => void;
@@ -61,22 +43,21 @@ interface PlayerStore {
   minimize: () => void;
   showVinyl: () => void;
 
-  // ── Playback actions ─────────────────────────────────────────────────────
   setIsPlaying: (playing: boolean) => void;
   togglePlayPause: () => void;
 
-  // ── Queue actions ─────────────────────────────────────────────────────────
   playQueue: (tracks: PlayerTrack[]) => void;
   enqueueNext: (tracks: PlayerTrack[]) => void;
   addToQueue: (tracks: PlayerTrack[]) => void;
   nextTrack: () => void;
   prevTrack: () => void;
   playAt: (index: number) => void;
+  removeFromQueue: (index: number) => void;
+  moveQueueItem: (fromIndex: number, toIndex: number) => void;
   clearQueue: () => void;
   toggleShuffle: () => void;
   toggleRepeat: () => void;
 
-  // ── Position / volume (set by useAudioEngine) ────────────────────────────
   setPosition: (pos: number) => void;
   setDuration: (dur: number) => void;
   setFormattedPosition: (s: string) => void;
@@ -84,8 +65,11 @@ interface PlayerStore {
   setVolume: (vol: number) => void;
 }
 
+function clampIndex(index: number, max: number) {
+  return Math.max(0, Math.min(index, max));
+}
+
 export const usePlayerStore = create<PlayerStore>((set, get) => ({
-  // ── Initial state ────────────────────────────────────────────────────────
   playerState: 'hidden',
   isPlaying: false,
   currentTrack: null,
@@ -97,21 +81,18 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   formattedPosition: '0:00',
   formattedDuration: '0:00',
   shuffle: false,
-  repeat: false,
+  repeatMode: 'off',
 
-  // ── Visibility ───────────────────────────────────────────────────────────
   setPlayerState: (playerState) => set({ playerState }),
-  show:      () => set({ playerState: 'mini' }),
-  hide:      () => set({ playerState: 'hidden', isPlaying: false }),
-  expand:    () => set({ playerState: 'vinyl' }),
-  minimize:  () => set({ playerState: 'mini' }),
+  show: () => set({ playerState: 'mini' }),
+  hide: () => set({ playerState: 'hidden', isPlaying: false }),
+  expand: () => set({ playerState: 'vinyl' }),
+  minimize: () => set({ playerState: 'mini' }),
   showVinyl: () => set({ playerState: 'vinyl' }),
 
-  // ── Playback ─────────────────────────────────────────────────────────────
   setIsPlaying: (isPlaying) => set({ isPlaying }),
   togglePlayPause: () => set((s) => ({ isPlaying: !s.isPlaying })),
 
-  // ── Queue ─────────────────────────────────────────────────────────────────
   playQueue: (tracks) => {
     if (!tracks.length) return;
     set({
@@ -142,6 +123,8 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   addToQueue: (tracks) => {
     if (!tracks.length) return;
     const { queue, currentTrack, queueIndex } = get();
+    const toastSuccess = useToastStore.getState().success;
+
     if (!queue.length || !currentTrack || queueIndex < 0) {
       set({
         queue: tracks,
@@ -154,14 +137,36 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
         formattedPosition: '0:00',
         formattedDuration: '0:00',
       });
+      toastSuccess(
+        tracks.length === 1
+          ? `Queued "${tracks[0].title}" and started playback`
+          : `Queued ${tracks.length} tracks and started playback`
+      );
       return;
     }
+
     set({ queue: [...queue, ...tracks] });
+    toastSuccess(
+      tracks.length === 1
+        ? `Added "${tracks[0].title}" to queue`
+        : `Added ${tracks.length} tracks to queue`
+    );
   },
 
   nextTrack: () => {
-    const { queue, queueIndex, shuffle, repeat } = get();
+    const { queue, queueIndex, shuffle, repeatMode } = get();
     if (!queue.length) return;
+
+    if (repeatMode === 'one' && queueIndex >= 0 && queueIndex < queue.length) {
+      set({
+        currentTrack: queue[queueIndex],
+        isPlaying: true,
+        position: 0,
+        formattedPosition: '0:00',
+      });
+      return;
+    }
+
     let next: number;
     if (shuffle) {
       const candidates = queue.map((_, i) => i).filter((i) => i !== queueIndex);
@@ -171,12 +176,11 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     } else {
       next = queueIndex + 1;
     }
+
     if (next >= queue.length) {
-      if (repeat) {
-        // Repeat: loop back to the start of the queue
+      if (repeatMode === 'all') {
         next = 0;
       } else {
-        // End of queue with repeat off -> stop playback state
         set({
           isPlaying: false,
           currentTrack: null,
@@ -189,6 +193,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
         return;
       }
     }
+
     set({
       queueIndex: next,
       currentTrack: queue[next],
@@ -201,11 +206,11 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   prevTrack: () => {
     const { queue, queueIndex, position } = get();
     if (!queue.length) return;
-    // More than 3s in → restart; at start of queue → restart
     if (position > 3 || queueIndex === 0) {
       set({ position: 0, formattedPosition: '0:00' });
       return;
     }
+
     const prev = queueIndex - 1;
     set({
       queueIndex: prev,
@@ -228,6 +233,84 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     });
   },
 
+  removeFromQueue: (index) => {
+    const { queue, queueIndex, currentTrack, isPlaying } = get();
+    if (index < 0 || index >= queue.length) return;
+
+    const newQueue = queue.filter((_, i) => i !== index);
+    if (!newQueue.length) {
+      set({
+        queue: [],
+        queueIndex: -1,
+        currentTrack: null,
+        isPlaying: false,
+        position: 0,
+        duration: 0,
+        formattedPosition: '0:00',
+        formattedDuration: '0:00',
+      });
+      return;
+    }
+
+    if (queueIndex < 0 || queueIndex >= queue.length) {
+      set({ queue: newQueue, queueIndex: -1, currentTrack: null });
+      return;
+    }
+
+    if (index === queueIndex) {
+      const nextIndex = clampIndex(index, newQueue.length - 1);
+      set({
+        queue: newQueue,
+        queueIndex: nextIndex,
+        currentTrack: newQueue[nextIndex],
+        isPlaying,
+        position: 0,
+        formattedPosition: '0:00',
+      });
+      return;
+    }
+
+    const adjustedIndex = index < queueIndex ? queueIndex - 1 : queueIndex;
+    const nextIndex = clampIndex(adjustedIndex, newQueue.length - 1);
+    set({
+      queue: newQueue,
+      queueIndex: nextIndex,
+      currentTrack: currentTrack ?? newQueue[nextIndex],
+    });
+  },
+
+  moveQueueItem: (fromIndex, toIndex) => {
+    const { queue, queueIndex, currentTrack } = get();
+    if (
+      fromIndex < 0 || fromIndex >= queue.length ||
+      toIndex < 0 || toIndex >= queue.length ||
+      fromIndex === toIndex
+    ) {
+      return;
+    }
+
+    const newQueue = [...queue];
+    const [moved] = newQueue.splice(fromIndex, 1);
+    newQueue.splice(toIndex, 0, moved);
+
+    let nextQueueIndex = queueIndex;
+    if (fromIndex === queueIndex) {
+      nextQueueIndex = toIndex;
+    } else if (fromIndex < queueIndex && toIndex >= queueIndex) {
+      nextQueueIndex = queueIndex - 1;
+    } else if (fromIndex > queueIndex && toIndex <= queueIndex) {
+      nextQueueIndex = queueIndex + 1;
+    }
+
+    set({
+      queue: newQueue,
+      queueIndex: nextQueueIndex,
+      currentTrack: (nextQueueIndex >= 0 && nextQueueIndex < newQueue.length)
+        ? newQueue[nextQueueIndex]
+        : currentTrack,
+    });
+  },
+
   clearQueue: () => set({
     queue: [],
     queueIndex: -1,
@@ -240,7 +323,13 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   }),
 
   toggleShuffle: () => set((s) => ({ shuffle: !s.shuffle })),
-  toggleRepeat:  () => set((s) => ({ repeat: !s.repeat })),
+  toggleRepeat: () => set((s) => ({
+    repeatMode: s.repeatMode === 'off'
+      ? 'all'
+      : s.repeatMode === 'all'
+        ? 'one'
+        : 'off',
+  })),
 
   setPosition: (position) => set({ position }),
   setDuration: (duration) => set({ duration }),
