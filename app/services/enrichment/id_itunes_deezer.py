@@ -243,6 +243,7 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
                                 SET itunes_album_id = ?,
                                     api_title = ?,
                                     match_confidence = 90,
+                                    needs_verification = 0,
                                     updated_at = CURRENT_TIMESTAMP
                                 WHERE id = ? AND itunes_album_id IS NULL
                                 """,
@@ -285,6 +286,7 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
                                         WHEN itunes_album_id IS NOT NULL THEN 95
                                         ELSE 75
                                     END,
+                                    needs_verification = 0,
                                     updated_at = CURRENT_TIMESTAMP
                                 WHERE id = ? AND deezer_id IS NULL
                                 """,

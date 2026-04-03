@@ -51,13 +51,59 @@ _ITUNES_TRAILING_RE = re.compile(
     r'\s+-\s+(Single|EP|Remixes)$',
     re.IGNORECASE,
 )
+_TRAILING_RELEASE_TOKEN_RE = re.compile(
+    r"""(
+            \s+-\s+
+            |\s+
+        )
+        (
+            single|ep|mixtape|demo|remix(?:es)?|live\s+session
+        )
+        \s*$
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+_WRAPPING_QUOTES_RE = re.compile(r"""^[\s"'“”‘’]+|[\s"'“”‘’]+$""")
 
 
 def strip_title_suffixes(title: str) -> str:
     """Strip Plex/iTunes suffixes like [Single], (Deluxe Edition), ' - Single' before matching."""
+    title = title or ""
+    title = title.replace("–", "-").replace("—", "-")
     title = _TITLE_SUFFIX_RE.sub("", title).strip()
     title = _ITUNES_TRAILING_RE.sub("", title).strip()
+    title = _TRAILING_RELEASE_TOKEN_RE.sub("", title).strip()
+    title = _WRAPPING_QUOTES_RE.sub("", title).strip()
+    title = re.sub(r"\s+", " ", title).strip()
     return title
+
+
+def _album_match_variants(title: str) -> list[str]:
+    """
+    Return normalized title variants for robust album matching.
+
+    Primary variant is the cleaned title. Additional variants are generated for
+    slash-delimited titles (A / B), which often represent a single track-focus
+    release where one side matches API catalogs more reliably.
+    """
+    from app.clients.music_client import norm
+
+    cleaned = strip_title_suffixes(title)
+    variants: set[str] = set()
+
+    primary = norm(cleaned)
+    if primary:
+        variants.add(primary)
+
+    # Slash splits are common in single-side naming ("A / B").
+    if " / " in cleaned or "/" in cleaned:
+        for chunk in cleaned.split("/"):
+            c = norm(strip_title_suffixes(chunk))
+            # Avoid tiny fragments that over-match unrelated catalog entries.
+            if c and len(c) >= 5:
+                variants.add(c)
+
+    return sorted(variants)
 
 
 def detect_version_type(title: str) -> tuple[str, str]:
@@ -123,14 +169,20 @@ def match_album_title(lib_title: str, api_title: str) -> float:
     Returns 1.0 for exact normalized match; SequenceMatcher ratio otherwise.
     Threshold for a 'match' in callers is >= 0.82.
     """
-    from app.clients.music_client import norm
-    a = norm(strip_title_suffixes(lib_title))
-    b = norm(strip_title_suffixes(api_title))
-    if not a or not b:
+    a_variants = _album_match_variants(lib_title)
+    b_variants = _album_match_variants(api_title)
+    if not a_variants or not b_variants:
         return 0.0
-    if a == b:
+    if any(a == b for a in a_variants for b in b_variants):
         return 1.0
-    return difflib.SequenceMatcher(None, a, b).ratio()
+
+    best = 0.0
+    for a in a_variants:
+        for b in b_variants:
+            s = difflib.SequenceMatcher(None, a, b).ratio()
+            if s > best:
+                best = s
+    return best
 
 
 def match_ownership_title(release_title: str, lib_title: str) -> bool:
