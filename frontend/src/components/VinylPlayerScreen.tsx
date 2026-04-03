@@ -18,15 +18,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Play, Pause, SkipBack,
-  Shuffle, Repeat, Settings,
+  Shuffle, Repeat, Repeat1, Settings,
   Disc, Star, Heart, ListMusic, Mic2,
-  ChevronDown, List, ListPlus, Volume2, X, Maximize2, Minimize2,
+  ChevronDown, List, ListPlus, Volume2, X, Maximize2, Minimize2, MoreHorizontal, Trash2,
 } from 'lucide-react';
 import { useNavigate } from '@tanstack/react-router';
 import { usePlayerStore, type PlayerTrack } from '../stores/usePlayerStore';
 import { useImage } from '../hooks/useImage';
 import { AudioQualityBadge } from './common';
-import { libraryPlaylistsApi } from '../services/api';
+import { libraryBrowseApi, libraryPlaylistsApi } from '../services/api';
 import { useToastStore } from '../stores/useToastStore';
 import type { LibPlaylist } from '../types';
 
@@ -92,6 +92,14 @@ function StarRating({ rating, onChange }: { rating: number; onChange: (n: number
   );
 }
 
+function formatTrackDuration(seconds: number | null | undefined): string {
+  if (!seconds || seconds <= 0) return '--:--';
+  const total = Math.floor(seconds);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 export function VinylPlayerScreen({
@@ -108,7 +116,10 @@ export function VinylPlayerScreen({
   const [liked,      setLiked]      = useState(false);
   const [showQueue,  setShowQueue]  = useState(false);
   const [queueExpanded, setQueueExpanded] = useState(false);
+  const [queueMenuIndex, setQueueMenuIndex] = useState<number | null>(null);
   const [showVolume, setShowVolume] = useState(false);
+  const [artistNavLoading, setArtistNavLoading] = useState(false);
+  const [albumNavLoading, setAlbumNavLoading] = useState(false);
   const [playlistOptions, setPlaylistOptions] = useState<LibPlaylist[]>([]);
   const [playlistPickerOpen, setPlaylistPickerOpen] = useState(false);
   const [playlistPickerLoading, setPlaylistPickerLoading] = useState(false);
@@ -121,7 +132,7 @@ export function VinylPlayerScreen({
     currentTrack, queue, queueIndex,
     position, duration, volume,
     formattedPosition, formattedDuration,
-    shuffle, repeat,
+    shuffle, repeatMode,
     nextTrack, prevTrack,
     toggleShuffle, toggleRepeat,
     setVolume: storeSetVolume,
@@ -130,7 +141,7 @@ export function VinylPlayerScreen({
   const prevTrackItem = queueIndex > 0 ? queue[queueIndex - 1] : null;
   const nextTrackItem = (() => {
     if (shuffle) return null;
-    if (repeat && queueIndex === queue.length - 1) return queue[0] ?? null;
+    if (repeatMode === 'all' && queueIndex === queue.length - 1) return queue[0] ?? null;
     return queue[queueIndex + 1] ?? null;
   })();
 
@@ -201,9 +212,66 @@ export function VinylPlayerScreen({
     onVolumeChange(v);
   }
 
+  async function handleArtistClick() {
+    const artistName = currentTrack?.artist?.trim();
+    if (!artistName || artistNavLoading) return;
+    setArtistNavLoading(true);
+    try {
+      const res = await libraryBrowseApi.getArtists({ q: artistName, per_page: 25 });
+      const exact = res.artists.find((a) => a.name.toLowerCase() === artistName.toLowerCase()) ?? res.artists[0];
+      if (exact) {
+        onMinimize();
+        navigate({ to: '/library/artist/$id', params: { id: exact.id } });
+      } else {
+        onMinimize();
+        navigate({ to: '/library' });
+      }
+    } finally {
+      setArtistNavLoading(false);
+    }
+  }
+
+  async function handleAlbumClick() {
+    const albumTitle = currentTrack?.album?.trim();
+    const artistName = currentTrack?.artist?.trim().toLowerCase();
+    if (!albumTitle || albumNavLoading) return;
+    setAlbumNavLoading(true);
+    try {
+      const res = await libraryBrowseApi.getAlbums({ q: albumTitle, per_page: 50 });
+      const exactTitle = res.albums.filter((a) => a.title.toLowerCase() === albumTitle.toLowerCase());
+      const exact = exactTitle.find((a) => !artistName || a.artist_name.toLowerCase() === artistName)
+        ?? exactTitle[0]
+        ?? res.albums[0];
+      if (exact) {
+        onMinimize();
+        navigate({ to: '/library/album/$id', params: { id: exact.id } });
+      } else {
+        onMinimize();
+        navigate({ to: '/library' });
+      }
+    } finally {
+      setAlbumNavLoading(false);
+    }
+  }
+
+  function handleQueueTrackRemove(index: number) {
+    usePlayerStore.getState().removeFromQueue(index);
+    setQueueMenuIndex((curr) => (curr === index ? null : curr));
+  }
+
+  function handleQueueTrackPlayNext(index: number) {
+    const { queueIndex: activeIndex } = usePlayerStore.getState();
+    if (activeIndex < 0 || index === activeIndex || index === activeIndex + 1) return;
+    const target = activeIndex + 1;
+    const toIndex = index < target ? target - 1 : target;
+    usePlayerStore.getState().moveQueueItem(index, toIndex);
+    setQueueMenuIndex(null);
+  }
+
   function handleSettings() {
     setShowQueue(false);
     setQueueExpanded(false);
+    setQueueMenuIndex(null);
     onMinimize();
     navigate({ to: '/settings' });
   }
@@ -211,6 +279,7 @@ export function VinylPlayerScreen({
   function handleMinimize() {
     setShowQueue(false);
     setQueueExpanded(false);
+    setQueueMenuIndex(null);
     onMinimize();
   }
 
@@ -219,6 +288,8 @@ export function VinylPlayerScreen({
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setShowQueue(false);
+        setQueueExpanded(false);
+        setQueueMenuIndex(null);
       }
     };
     document.addEventListener('keydown', onKeyDown);
@@ -232,6 +303,7 @@ export function VinylPlayerScreen({
       if (queuePanelRef.current?.contains(target)) return;
       if (queueButtonRef.current?.contains(target)) return;
       setShowQueue(false);
+      setQueueMenuIndex(null);
     };
     document.addEventListener('mousedown', onMouseDown);
     return () => document.removeEventListener('mousedown', onMouseDown);
@@ -328,24 +400,40 @@ export function VinylPlayerScreen({
           <p className="text-[22px] font-semibold text-text-primary leading-tight truncate">
             {currentTrack?.title ?? 'Nothing playing'}
           </p>
-          <p className="font-mono text-[13px] text-text-secondary leading-tight mt-1 truncate">
-            {currentTrack
-              ? `${currentTrack.artist}${currentTrack.album ? ` - ${currentTrack.album}` : ''}`
-              : '-'}
-          </p>
-          <div className="mt-2 flex items-center justify-center gap-3 flex-wrap">
-            <StarRating rating={starRating} onChange={setStarRating} />
-            {currentTrack && (
-              <AudioQualityBadge
-                codec={currentTrack.codec}
-                bitrate={currentTrack.bitrate}
-                bit_depth={currentTrack.bit_depth}
-                sample_rate={currentTrack.sample_rate}
-              />
+          <div className="mt-1 flex items-center justify-center gap-1 font-mono text-[13px] text-text-secondary leading-tight min-h-[18px]">
+            {currentTrack ? (
+              <>
+                <button
+                  onClick={handleArtistClick}
+                  disabled={artistNavLoading || !currentTrack.artist}
+                  className="truncate max-w-[240px] hover:text-accent transition-colors disabled:cursor-default disabled:hover:text-text-secondary"
+                  title={currentTrack.artist}
+                >
+                  {currentTrack.artist}
+                </button>
+                {currentTrack.album && (
+                  <>
+                    <span className="text-text-muted">-</span>
+                    <button
+                      onClick={handleAlbumClick}
+                      disabled={albumNavLoading}
+                      className="truncate max-w-[240px] hover:text-accent transition-colors disabled:cursor-default disabled:hover:text-text-secondary"
+                      title={currentTrack.album}
+                    >
+                      {currentTrack.album}
+                    </button>
+                  </>
+                )}
+              </>
+            ) : (
+              <span>-</span>
             )}
           </div>
           <div className="mt-2 flex justify-center">
             <Waveform />
+          </div>
+          <div className="mt-2 flex justify-center">
+            <StarRating rating={starRating} onChange={setStarRating} />
           </div>
         </div>
 
@@ -372,6 +460,14 @@ export function VinylPlayerScreen({
           <span className="font-mono text-[10px] text-text-muted tabular-nums w-9 flex-shrink-0">
             {formattedDuration}
           </span>
+          {currentTrack && (
+            <AudioQualityBadge
+              codec={currentTrack.codec}
+              bitrate={currentTrack.bitrate}
+              bit_depth={currentTrack.bit_depth}
+              sample_rate={currentTrack.sample_rate}
+            />
+          )}
         </div>
 
         {/* ── Button row ───────────────────────────────────────────────────── */}
@@ -458,17 +554,26 @@ export function VinylPlayerScreen({
             </button>
             <button
               onClick={toggleRepeat}
-              aria-label={repeat ? 'Repeat on' : 'Repeat off'}
-              className={`text-text-secondary hover:text-text-primary transition-all active:scale-90 ${repeat ? 'text-accent' : ''}`}
+              aria-label={
+                repeatMode === 'off' ? 'Repeat off'
+                  : repeatMode === 'all' ? 'Repeat all'
+                    : 'Repeat one'
+              }
+              title={
+                repeatMode === 'off' ? 'Repeat off'
+                  : repeatMode === 'all' ? 'Repeat all'
+                    : 'Repeat one'
+              }
+              className={`text-text-secondary hover:text-text-primary transition-all active:scale-90 ${repeatMode !== 'off' ? 'text-accent' : ''}`}
             >
-              <Repeat size={20} />
+              {repeatMode === 'one' ? <Repeat1 size={20} /> : <Repeat size={20} />}
             </button>
           </div>
 
           {/* Right — volume + queue */}
           <div className="flex items-center justify-end gap-1">
             <button
-              onClick={() => { setShowVolume(v => !v); setShowQueue(false); setQueueExpanded(false); }}
+              onClick={() => { setShowVolume(v => !v); setShowQueue(false); setQueueExpanded(false); setQueueMenuIndex(null); }}
               aria-label="Volume"
               className={`p-2.5 rounded-lg transition-all active:scale-90 ${showVolume ? 'text-accent' : 'text-text-muted hover:text-text-secondary'}`}
             >
@@ -479,6 +584,7 @@ export function VinylPlayerScreen({
               onClick={() => {
                 setShowVolume(false);
                 setQueueExpanded(false);
+                setQueueMenuIndex(null);
                 setShowQueue((open) => {
                   return !open;
                 });
@@ -501,7 +607,8 @@ export function VinylPlayerScreen({
             <div
               ref={queuePanelRef}
               className="absolute top-full left-1/2 -translate-x-1/2 mt-3 w-[min(84vw,520px)]
-                         border border-[#1e1e1e] rounded-xl overflow-hidden bg-[#0a0a0a] shadow-2xl z-30"
+                         border border-[#1e1e1e] rounded-xl overflow-hidden bg-[#0a0a0a] shadow-2xl z-30
+                         transition-[transform,opacity,box-shadow] duration-200 ease-out"
             >
               <div className="flex items-center justify-between px-4 py-3 border-b border-[#1a1a1a]">
                 <span className="font-mono text-[11px] text-text-muted uppercase tracking-widest">
@@ -509,7 +616,7 @@ export function VinylPlayerScreen({
                 </span>
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => setQueueExpanded(true)}
+                    onClick={() => { setQueueMenuIndex(null); setQueueExpanded(true); }}
                     className="p-1 text-text-muted hover:text-text-primary transition-colors"
                     title="Expand queue"
                     aria-label="Expand queue"
@@ -518,14 +625,14 @@ export function VinylPlayerScreen({
                   </button>
                   {queue.length > 0 && (
                     <button
-                      onClick={() => usePlayerStore.getState().clearQueue()}
+                      onClick={() => { usePlayerStore.getState().clearQueue(); setQueueMenuIndex(null); }}
                       className="text-[10px] font-mono text-text-muted hover:text-text-secondary transition-colors"
                     >
                       Clear
                     </button>
                   )}
                   <button
-                    onClick={() => { setShowQueue(false); setQueueExpanded(false); }}
+                    onClick={() => { setShowQueue(false); setQueueExpanded(false); setQueueMenuIndex(null); }}
                     aria-label="Close queue"
                     className="p-1 text-text-muted hover:text-text-primary transition-colors"
                   >
@@ -542,7 +649,7 @@ export function VinylPlayerScreen({
                   <ul>
                     {queue.map((track, i) => (
                       <li key={`${track.id}-${i}`}>
-                        <div className="group px-4 py-2.5 flex items-center gap-2.5 hover:bg-[#111] transition-colors">
+                        <div className="group relative px-4 py-2.5 flex items-center gap-2.5 hover:bg-[#111] transition-colors">
                           <button
                             onClick={() => { usePlayerStore.getState().playAt(i); setShowQueue(false); setQueueExpanded(false); }}
                             className="flex-1 min-w-0 text-left flex items-center gap-2.5"
@@ -559,14 +666,67 @@ export function VinylPlayerScreen({
                               </p>
                             </div>
                           </button>
+                          <span className="font-mono text-[10px] text-text-muted tabular-nums w-11 text-right">
+                            {formatTrackDuration(track.duration)}
+                          </span>
                           <button
-                            onClick={() => openPlaylistPicker(track)}
+                            onClick={() => { setQueueMenuIndex(null); openPlaylistPicker(track); }}
                             className="text-text-muted opacity-0 group-hover:opacity-100 hover:text-accent transition-all"
                             title="Add to playlist"
                             aria-label={`Add ${track.title} to playlist`}
                           >
                             <ListPlus size={13} />
                           </button>
+                          <button
+                            onClick={() => handleQueueTrackRemove(i)}
+                            className="text-text-muted opacity-0 group-hover:opacity-100 hover:text-danger transition-all"
+                            title="Remove from queue"
+                            aria-label={`Remove ${track.title} from queue`}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                          <button
+                            onClick={() => setQueueMenuIndex((curr) => (curr === i ? null : i))}
+                            className="text-text-muted opacity-0 group-hover:opacity-100 hover:text-text-primary transition-all"
+                            title="Queue item menu"
+                            aria-label={`Open menu for ${track.title}`}
+                          >
+                            <MoreHorizontal size={13} />
+                          </button>
+                          {queueMenuIndex === i && (
+                            <div className="absolute right-3 top-full mt-1 w-40 bg-[#0f0f0f] border border-[#222] rounded-md shadow-xl z-40">
+                              <button
+                                onClick={() => { usePlayerStore.getState().playAt(i); setQueueMenuIndex(null); setShowQueue(false); setQueueExpanded(false); }}
+                                className="w-full px-3 py-1.5 text-left text-[11px] text-text-secondary hover:bg-[#161616] transition-colors"
+                              >
+                                Play now
+                              </button>
+                              <button
+                                onClick={() => handleQueueTrackPlayNext(i)}
+                                className="w-full px-3 py-1.5 text-left text-[11px] text-text-secondary hover:bg-[#161616] transition-colors"
+                              >
+                                Play next
+                              </button>
+                              <button
+                                onClick={() => { setQueueMenuIndex(null); openPlaylistPicker(track); }}
+                                className="w-full px-3 py-1.5 text-left text-[11px] text-text-secondary hover:bg-[#161616] transition-colors"
+                              >
+                                Add to playlist
+                              </button>
+                              <button
+                                onClick={() => handleQueueTrackRemove(i)}
+                                className="w-full px-3 py-1.5 text-left text-[11px] text-danger hover:bg-[#161616] transition-colors"
+                              >
+                                Remove
+                              </button>
+                              <button
+                                disabled
+                                className="w-full px-3 py-1.5 text-left text-[11px] text-text-muted opacity-60 cursor-not-allowed"
+                              >
+                                Report (soon)
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </li>
                     ))}
@@ -582,10 +742,11 @@ export function VinylPlayerScreen({
         {showQueue && queueExpanded && (
           <div
             className="fixed inset-0 z-30 bg-black/35 flex items-end justify-center px-4 pb-8"
-            onClick={() => { setShowQueue(false); setQueueExpanded(false); }}
+            onClick={() => { setShowQueue(false); setQueueExpanded(false); setQueueMenuIndex(null); }}
           >
             <div
-              className="w-full max-w-[720px] border border-[#1e1e1e] rounded-xl overflow-hidden bg-[#0a0a0a] shadow-2xl"
+              className="w-full max-w-[720px] border border-[#1e1e1e] rounded-xl overflow-hidden bg-[#0a0a0a] shadow-2xl
+                         transition-[transform,opacity,box-shadow] duration-200 ease-out"
               onClick={(event) => event.stopPropagation()}
             >
               <div className="flex items-center justify-between px-4 py-3 border-b border-[#1a1a1a]">
@@ -594,7 +755,7 @@ export function VinylPlayerScreen({
                 </span>
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => setQueueExpanded(false)}
+                    onClick={() => { setQueueMenuIndex(null); setQueueExpanded(false); }}
                     className="p-1 text-text-muted hover:text-text-primary transition-colors"
                     title="Collapse queue"
                     aria-label="Collapse queue"
@@ -603,14 +764,14 @@ export function VinylPlayerScreen({
                   </button>
                   {queue.length > 0 && (
                     <button
-                      onClick={() => usePlayerStore.getState().clearQueue()}
+                      onClick={() => { usePlayerStore.getState().clearQueue(); setQueueMenuIndex(null); }}
                       className="text-[10px] font-mono text-text-muted hover:text-text-secondary transition-colors"
                     >
                       Clear
                     </button>
                   )}
                   <button
-                    onClick={() => { setShowQueue(false); setQueueExpanded(false); }}
+                    onClick={() => { setShowQueue(false); setQueueExpanded(false); setQueueMenuIndex(null); }}
                     aria-label="Close queue"
                     className="p-1 text-text-muted hover:text-text-primary transition-colors"
                   >
@@ -627,7 +788,7 @@ export function VinylPlayerScreen({
                   <ul>
                     {queue.map((track, i) => (
                       <li key={`${track.id}-${i}`}>
-                        <div className="group px-4 py-2.5 flex items-center gap-2.5 hover:bg-[#111] transition-colors">
+                        <div className="group relative px-4 py-2.5 flex items-center gap-2.5 hover:bg-[#111] transition-colors">
                           <button
                             onClick={() => { usePlayerStore.getState().playAt(i); setShowQueue(false); setQueueExpanded(false); }}
                             className="flex-1 min-w-0 text-left flex items-center gap-2.5"
@@ -644,14 +805,67 @@ export function VinylPlayerScreen({
                               </p>
                             </div>
                           </button>
+                          <span className="font-mono text-[10px] text-text-muted tabular-nums w-11 text-right">
+                            {formatTrackDuration(track.duration)}
+                          </span>
                           <button
-                            onClick={() => openPlaylistPicker(track)}
+                            onClick={() => { setQueueMenuIndex(null); openPlaylistPicker(track); }}
                             className="text-text-muted opacity-0 group-hover:opacity-100 hover:text-accent transition-all"
                             title="Add to playlist"
                             aria-label={`Add ${track.title} to playlist`}
                           >
                             <ListPlus size={13} />
                           </button>
+                          <button
+                            onClick={() => handleQueueTrackRemove(i)}
+                            className="text-text-muted opacity-0 group-hover:opacity-100 hover:text-danger transition-all"
+                            title="Remove from queue"
+                            aria-label={`Remove ${track.title} from queue`}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                          <button
+                            onClick={() => setQueueMenuIndex((curr) => (curr === i ? null : i))}
+                            className="text-text-muted opacity-0 group-hover:opacity-100 hover:text-text-primary transition-all"
+                            title="Queue item menu"
+                            aria-label={`Open menu for ${track.title}`}
+                          >
+                            <MoreHorizontal size={13} />
+                          </button>
+                          {queueMenuIndex === i && (
+                            <div className="absolute right-3 top-full mt-1 w-40 bg-[#0f0f0f] border border-[#222] rounded-md shadow-xl z-40">
+                              <button
+                                onClick={() => { usePlayerStore.getState().playAt(i); setQueueMenuIndex(null); setShowQueue(false); setQueueExpanded(false); }}
+                                className="w-full px-3 py-1.5 text-left text-[11px] text-text-secondary hover:bg-[#161616] transition-colors"
+                              >
+                                Play now
+                              </button>
+                              <button
+                                onClick={() => handleQueueTrackPlayNext(i)}
+                                className="w-full px-3 py-1.5 text-left text-[11px] text-text-secondary hover:bg-[#161616] transition-colors"
+                              >
+                                Play next
+                              </button>
+                              <button
+                                onClick={() => { setQueueMenuIndex(null); openPlaylistPicker(track); }}
+                                className="w-full px-3 py-1.5 text-left text-[11px] text-text-secondary hover:bg-[#161616] transition-colors"
+                              >
+                                Add to playlist
+                              </button>
+                              <button
+                                onClick={() => handleQueueTrackRemove(i)}
+                                className="w-full px-3 py-1.5 text-left text-[11px] text-danger hover:bg-[#161616] transition-colors"
+                              >
+                                Remove
+                              </button>
+                              <button
+                                disabled
+                                className="w-full px-3 py-1.5 text-left text-[11px] text-text-muted opacity-60 cursor-not-allowed"
+                              >
+                                Report (soon)
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </li>
                     ))}

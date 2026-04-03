@@ -6,7 +6,7 @@
  */
 import {
   Play, Pause, SkipBack, SkipForward,
-  Volume2, Repeat, Shuffle, ListPlus, Minimize2, Disc,
+  Volume2, Repeat, Repeat1, Shuffle, ListPlus, Minimize2, Disc,
 } from 'lucide-react';
 import { useCallback, useRef, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
@@ -60,7 +60,7 @@ export function FullPagePlayer({ isPlaying, onPlayPause, onMinimize, onSeek, onV
     duration,
     volume,
     shuffle,
-    repeat,
+    repeatMode,
     nextTrack,
     prevTrack,
     playAt,
@@ -260,10 +260,19 @@ export function FullPagePlayer({ isPlaying, onPlayPause, onMinimize, onSeek, onV
           </button>
           <button
             onClick={toggleRepeat}
-            className={`transition-colors ${repeat ? 'text-accent' : 'text-text-muted hover:text-text-secondary'}`}
-            aria-label={repeat ? 'Repeat on' : 'Repeat off'}
+            className={`transition-colors ${repeatMode !== 'off' ? 'text-accent' : 'text-text-muted hover:text-text-secondary'}`}
+            aria-label={
+              repeatMode === 'off' ? 'Repeat off'
+                : repeatMode === 'all' ? 'Repeat all'
+                  : 'Repeat one'
+            }
+            title={
+              repeatMode === 'off' ? 'Repeat off'
+                : repeatMode === 'all' ? 'Repeat all'
+                  : 'Repeat one'
+            }
           >
-            <Repeat size={18} />
+            {repeatMode === 'one' ? <Repeat1 size={18} /> : <Repeat size={18} />}
           </button>
         </div>
 
