@@ -27,6 +27,7 @@ import re
 import time
 import threading
 import logging
+import difflib
 import requests
 from concurrent.futures import ThreadPoolExecutor
 
@@ -153,6 +154,59 @@ def _extract_art(data: dict | None) -> str:
     return ""
 
 
+def _norm_text(value: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", (value or "").lower())).strip()
+
+
+def _norm_album_title(value: str) -> str:
+    base = re.sub(r"\s*[-–]\s*(single|ep|extended play)\s*$", "", value or "", flags=re.IGNORECASE).strip()
+    return _norm_text(base)
+
+
+def _similarity(a: str, b: str) -> float:
+    if not a or not b:
+        return 0.0
+    if a == b:
+        return 1.0
+    return difflib.SequenceMatcher(None, a, b).ratio()
+
+
+def _select_itunes_album_art(data: dict | None, artist: str, album_title: str) -> str:
+    """
+    Pick album art from iTunes /search results only when both artist and title
+    are reasonably similar to the requested pair.
+    """
+    if not data:
+        return ""
+
+    target_artist = _norm_text(artist)
+    target_title = _norm_album_title(album_title)
+    best_url = ""
+    best_rank = 0.0
+
+    for item in data.get("results", []):
+        raw = item.get("artworkUrl100", "")
+        if not raw:
+            continue
+
+        candidate_title = _norm_album_title(item.get("collectionName", "") or item.get("trackName", ""))
+        candidate_artist = _norm_text(item.get("artistName", ""))
+
+        title_score = _similarity(target_title, candidate_title)
+        artist_score = _similarity(target_artist, candidate_artist)
+
+        # Guard against cross-artist false positives.
+        if title_score < 0.82 or artist_score < 0.72:
+            continue
+
+        rank = (title_score * 0.65) + (artist_score * 0.35)
+        if rank > best_rank:
+            best_rank = rank
+            best_url = raw
+
+    return best_url.replace("100x100bb", "600x600bb") if best_url else ""
+
+
 def _search_artist_itunes(name: str) -> str | None:
     """Search iTunes for an artist by name, return artistId or None."""
     data = _itunes_img_get("/search", {
@@ -276,11 +330,25 @@ def _deezer_search_album_art(artist: str, album_title: str) -> str:
         )
         resp.raise_for_status()
         items = resp.json().get("data", [])
+        target_artist = _norm_text(artist)
+        target_title = _norm_album_title(album_title)
+        best_url = ""
+        best_rank = 0.0
         for item in items:
             url = item.get("cover_xl") or item.get("cover_medium", "")
-            if url and "/images/cover//" not in url:
-                return url
-        return ""
+            if not url or "/images/cover//" in url:
+                continue
+            candidate_artist = _norm_text((item.get("artist") or {}).get("name", ""))
+            candidate_title = _norm_album_title(item.get("title", ""))
+            title_score = _similarity(target_title, candidate_title)
+            artist_score = _similarity(target_artist, candidate_artist)
+            if title_score < 0.82 or artist_score < 0.72:
+                continue
+            rank = (title_score * 0.65) + (artist_score * 0.35)
+            if rank > best_rank:
+                best_rank = rank
+                best_url = url
+        return best_url
     except requests.RequestException as e:
         logger.debug("Deezer album art search failed for '%s - %s': %s", artist, album_title, e)
         return ""
@@ -405,7 +473,7 @@ def _fetch_and_cache(entity_type: str, name: str, artist: str) -> None:
                     "media": "music",
                     "limit": 5,
                 })
-                url = _extract_art(data)
+                url = _select_itunes_album_art(data, artist, search_name)
 
             # Tier 1b: Retry with punctuation-stripped artist name ("Ballyhoo!" → "ballyhoo")
             if not url:
@@ -417,7 +485,7 @@ def _fetch_and_cache(entity_type: str, name: str, artist: str) -> None:
                         "media": "music",
                         "limit": 5,
                     })
-                    url = _extract_art(data)
+                    url = _select_itunes_album_art(data, artist, search_name)
 
             # Tier 2: Deezer album search
             if not url:
