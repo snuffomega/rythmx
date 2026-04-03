@@ -1,89 +1,167 @@
 """
-art_artist.py — Artist photo enrichment worker.
+art_artist.py - Artist photo enrichment worker.
 
 Resolution order:
-  1. Fanart.tv  (requires FANART_API_KEY + lastfm_mbid)
-  2. Deezer     (requires deezer_id — free, no auth)
+  1. Fanart.tv (primary upgrade path)
+  2. Deezer artist photo (fallback)
 
-Writes: lib_artists.image_url_fanart, lib_artists.image_url_deezer
-(per-source columns — resolved via COALESCE at query time)
+Stores local artwork in image_cache (content_hash/local_path/artwork_source)
+and keeps per-source URL columns on lib_artists for compatibility.
 """
+from __future__ import annotations
+
 import logging
 
+import requests
+
 from app import config
+from app.services.artwork_store import get_original_path, ingest
 from app.services.enrichment._base import run_enrichment_loop, write_enrichment_meta
 
 logger = logging.getLogger(__name__)
 
 _CANDIDATE_SQL = """
-    SELECT id, name, lastfm_mbid, deezer_artist_id FROM lib_artists
-    WHERE (image_url_fanart IS NULL OR image_url_deezer IS NULL)
-      AND removed_at IS NULL
-      AND (deezer_artist_id IS NOT NULL OR lastfm_mbid IS NOT NULL)
-      AND id NOT IN (
-          SELECT entity_id FROM enrichment_meta
-          WHERE entity_type = 'artist' AND source = 'artist_art'
-            AND (status = 'found'
-                 OR (status = 'not_found'
-                     AND (retry_after IS NULL OR retry_after > date('now'))))
-      )
+    SELECT a.id,
+           a.name,
+           COALESCE(a.musicbrainz_id, a.lastfm_mbid) AS artist_mbid,
+           a.deezer_artist_id,
+           ic.content_hash,
+           ic.artwork_source
+    FROM lib_artists a
+    LEFT JOIN image_cache ic
+           ON ic.entity_type = 'artist' AND ic.entity_key = a.id
+    WHERE a.removed_at IS NULL
+      AND (a.deezer_artist_id IS NOT NULL OR COALESCE(a.musicbrainz_id, a.lastfm_mbid) IS NOT NULL)
+      AND (ic.content_hash IS NULL OR ic.artwork_source = 'deezer')
 """
 
 _REMAINING_SQL = """
-    SELECT COUNT(*) FROM lib_artists
-    WHERE (image_url_fanart IS NULL OR image_url_deezer IS NULL)
-      AND removed_at IS NULL
-      AND (deezer_artist_id IS NOT NULL OR lastfm_mbid IS NOT NULL)
-      AND id NOT IN (
-          SELECT entity_id FROM enrichment_meta
-          WHERE entity_type = 'artist' AND source = 'artist_art'
-            AND (status = 'found'
-                 OR (status = 'not_found'
-                     AND (retry_after IS NULL OR retry_after > date('now'))))
-      )
+    SELECT COUNT(*)
+    FROM lib_artists a
+    LEFT JOIN image_cache ic
+           ON ic.entity_type = 'artist' AND ic.entity_key = a.id
+    WHERE a.removed_at IS NULL
+      AND (a.deezer_artist_id IS NOT NULL OR COALESCE(a.musicbrainz_id, a.lastfm_mbid) IS NOT NULL)
+      AND (ic.content_hash IS NULL OR ic.artwork_source = 'deezer')
 """
+
+_session = requests.Session()
+_session.headers["User-Agent"] = "Rythmx/1.0"
+
+
+def _download_image_bytes(url: str) -> bytes | None:
+    if not url:
+        return None
+    try:
+        resp = _session.get(url, timeout=15)
+        resp.raise_for_status()
+        if not resp.content:
+            return None
+        return resp.content
+    except requests.RequestException as exc:
+        logger.debug("enrich_artist_art: image download failed %s: %s", url[:80], exc)
+        return None
+
+
+def _upsert_artist_cache(
+    conn,
+    *,
+    artist_id: str,
+    image_url: str,
+    content_hash: str,
+    artwork_source: str,
+) -> None:
+    conn.execute(
+        """INSERT INTO image_cache
+               (entity_type, entity_key, image_url, local_path, content_hash, artwork_source, last_accessed)
+           VALUES ('artist', ?, ?, ?, ?, ?, datetime('now'))
+           ON CONFLICT(entity_type, entity_key) DO UPDATE SET
+               image_url=excluded.image_url,
+               local_path=excluded.local_path,
+               content_hash=excluded.content_hash,
+               artwork_source=excluded.artwork_source,
+               last_accessed=datetime('now')""",
+        (artist_id, image_url, str(get_original_path(content_hash)), content_hash, artwork_source),
+    )
 
 
 def _process_item(conn, row):
-    from app.services.image_service import fanart_get_artist, deezer_get_artist_photo
+    from app.services.image_service import deezer_get_artist_photo, fanart_get_artist
 
-    artist_id = row["id"]
+    artist_id = str(row["id"])
     artist_name = row["name"]
-    mbid = row["lastfm_mbid"]
+    mbid = row["artist_mbid"]
     deezer_id = row["deezer_artist_id"]
+    current_hash = row["content_hash"]
+    current_source = row["artwork_source"]
 
-    fanart_url = ""
-    deezer_url = ""
-
-    # Tier 1: Fanart.tv (real artist photo — requires API key + MBID)
+    # Upgrade path: try Fanart first when enabled and MBID is known.
     if config.FANART_API_KEY and mbid:
-        fanart_url = fanart_get_artist(mbid)
+        fanart_url = fanart_get_artist(str(mbid))
+        if fanart_url:
+            payload = _download_image_bytes(fanart_url)
+            if payload:
+                content_hash = ingest(payload)
+                _upsert_artist_cache(
+                    conn,
+                    artist_id=artist_id,
+                    image_url=fanart_url,
+                    content_hash=content_hash,
+                    artwork_source="fanart",
+                )
+                conn.execute(
+                    """UPDATE lib_artists
+                       SET image_url_fanart = COALESCE(image_url_fanart, ?),
+                           updated_at = CURRENT_TIMESTAMP
+                       WHERE id = ?""",
+                    (fanart_url, artist_id),
+                )
+                write_enrichment_meta(conn, "artist_art", "artist", artist_id, "found")
+                logger.debug("enrich_artist_art: '%s' -> fanart", artist_name)
+                return "found"
 
-    # Tier 2: Deezer artist photo (free, no auth)
+    # No fanart upgrade available. If we already have a deezer hash, keep it and skip.
+    if current_hash and current_source == "deezer":
+        write_enrichment_meta(conn, "artist_art", "artist", artist_id, "not_found")
+        return "not_found"
+
+    # Never downgrade an existing fanart source to deezer fallback.
+    if current_source == "fanart":
+        write_enrichment_meta(conn, "artist_art", "artist", artist_id, "not_found")
+        return "not_found"
+
+    # Fallback: Deezer photo (first-fill only; never downgrades fanart).
     if deezer_id:
         deezer_url = deezer_get_artist_photo(str(deezer_id))
+        if deezer_url:
+            payload = _download_image_bytes(deezer_url)
+            if payload:
+                content_hash = ingest(payload)
+                _upsert_artist_cache(
+                    conn,
+                    artist_id=artist_id,
+                    image_url=deezer_url,
+                    content_hash=content_hash,
+                    artwork_source="deezer",
+                )
+                conn.execute(
+                    """UPDATE lib_artists
+                       SET image_url_deezer = COALESCE(image_url_deezer, ?),
+                           updated_at = CURRENT_TIMESTAMP
+                       WHERE id = ?""",
+                    (deezer_url, artist_id),
+                )
+                write_enrichment_meta(conn, "artist_art", "artist", artist_id, "found")
+                logger.debug("enrich_artist_art: '%s' -> deezer", artist_name)
+                return "found"
 
-    if fanart_url or deezer_url:
-        conn.execute(
-            """UPDATE lib_artists
-               SET image_url_fanart = COALESCE(image_url_fanart, ?),
-                   image_url_deezer = COALESCE(image_url_deezer, ?),
-                   updated_at = CURRENT_TIMESTAMP
-               WHERE id = ?""",
-            (fanart_url or None, deezer_url or None, artist_id),
-        )
-        write_enrichment_meta(conn, "artist_art", "artist", artist_id, "found")
-        best = fanart_url or deezer_url
-        logger.debug("enrich_artist_art: '%s' -> %s", artist_name, best[:60])
-        return "found"
-    else:
-        write_enrichment_meta(conn, "artist_art", "artist", artist_id, "not_found")
-        logger.debug("enrich_artist_art: '%s' -> not found", artist_name)
-        return "not_found"
+    write_enrichment_meta(conn, "artist_art", "artist", artist_id, "not_found")
+    logger.debug("enrich_artist_art: '%s' -> not found", artist_name)
+    return "not_found"
 
 
 def enrich_artist_art(batch_size=100, stop_event=None, on_progress=None):
-    """Phase 1.8 — Artist photo enrichment: Fanart.tv → Deezer fallback."""
+    """Stage 2b: artist artwork enrichment with source-aware local storage."""
     return run_enrichment_loop(
         worker_name="enrich_artist_art",
         candidate_sql=_CANDIDATE_SQL,

@@ -177,3 +177,66 @@ def enrich_stop():
 
     orch.stop()
     return {"status": "ok", "message": "Stop signal sent"}
+
+
+@router.get("/library/enrich/artwork-sources")
+def enrich_artwork_sources():
+    """
+    Artist artwork source verification surface.
+
+    Returns grouped image_cache counts by artwork_source plus total artists
+    currently missing a local content hash.
+    """
+    from app.db.rythmx_store import _connect
+
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT COALESCE(ic.artwork_source, 'missing') AS artwork_source, COUNT(*) AS count
+            FROM lib_artists a
+            LEFT JOIN image_cache ic
+                   ON ic.entity_type = 'artist' AND ic.entity_key = a.id
+            WHERE a.removed_at IS NULL
+            GROUP BY COALESCE(ic.artwork_source, 'missing')
+            ORDER BY count DESC, artwork_source
+            """
+        ).fetchall()
+        missing = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM lib_artists a
+            LEFT JOIN image_cache ic
+                   ON ic.entity_type = 'artist' AND ic.entity_key = a.id
+            WHERE a.removed_at IS NULL
+              AND (ic.content_hash IS NULL OR ic.content_hash = '')
+            """
+        ).fetchone()[0]
+
+    return {
+        "status": "ok",
+        "sources": [dict(r) for r in rows],
+        "missing": missing,
+    }
+
+
+@router.post("/library/enrich/artist-art/retry")
+def enrich_artist_art_retry(data: Optional[dict[str, Any]] = Body(default=None)):
+    """
+    Manual retry gate for artist artwork upgrades.
+
+    Re-runs artist artwork enrichment for rows that are missing local hashes
+    or currently using deezer fallback. Worker upgrades to fanart when found
+    and never downgrades existing fanart.
+    """
+    from app.services.enrichment.art_artist import enrich_artist_art
+
+    data = data or {}
+    batch_size = data.get("batch_size", 500)
+    if not isinstance(batch_size, int) or batch_size < 1:
+        return JSONResponse(
+            {"status": "error", "message": "batch_size must be a positive integer"},
+            status_code=400,
+        )
+
+    result = enrich_artist_art(batch_size=batch_size)
+    return {"status": "ok", **result}
