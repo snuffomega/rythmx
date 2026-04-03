@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Loader2, Search, Grid3X3, List, RefreshCw,
   Library as LibraryIcon, ChevronLeft, ChevronRight, Star,
@@ -1013,9 +1013,11 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
   const [playlistPickerError, setPlaylistPickerError] = useState<string | null>(null);
   const [playlistTrack, setPlaylistTrack] = useState<LibTrack | null>(null);
   const [selectedPlaylistId, setSelectedPlaylistId] = useState('');
+  const [openTrackMenuId, setOpenTrackMenuId] = useState<string | null>(null);
   const router = useRouter();
   const playQueue = usePlayerStore(s => s.playQueue);
   const enqueueNext = usePlayerStore(s => s.enqueueNext);
+  const addToQueue = usePlayerStore(s => s.addToQueue);
 
   function tracksToQueue(tList: typeof tracks, albumObj: typeof album): PlayerTrack[] {
     return tList.map(t => ({
@@ -1101,6 +1103,27 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
     setSelectedPlaylistId('');
   }, []);
 
+  useEffect(() => {
+    if (!openTrackMenuId) return;
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target?.closest('[data-track-menu-root="true"]')) {
+        setOpenTrackMenuId(null);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setOpenTrackMenuId(null);
+      }
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [openTrackMenuId]);
+
   const confirmAddToPlaylist = useCallback(async () => {
     if (!playlistTrack || !selectedPlaylistId) {
       return;
@@ -1131,6 +1154,7 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
   }
 
   const { album, tracks } = data;
+  const albumQueue = useMemo(() => tracksToQueue(tracks, album), [tracks, album]);
   const totalMs = tracks.reduce((s, t) => s + (t.duration ?? 0), 0);
   const totalMin = Math.round(totalMs / 60000);
 
@@ -1179,14 +1203,14 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
           </div>
           <div className="flex items-center gap-2 mt-3">
             <button
-              onClick={() => playQueue(tracksToQueue(tracks, album))}
+              onClick={() => playQueue(albumQueue)}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-accent hover:bg-accent/80 rounded text-black text-xs font-semibold transition-colors"
               aria-label="Play album"
             >
               <Play size={12} className="fill-current" /> Play
             </button>
             <button
-              onClick={() => enqueueNext(tracksToQueue(tracks, album))}
+              onClick={() => enqueueNext(albumQueue)}
               className="flex items-center gap-1.5 px-3 py-1.5 border border-[#333] hover:border-[#555] rounded text-text-secondary text-xs font-mono transition-colors"
               aria-label="Add to queue"
             >
@@ -1248,7 +1272,7 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
           <span />
         </div>
         {tracks.map(t => (
-          <div key={t.id} className="group grid grid-cols-[2rem_1fr_6rem_3.5rem_auto_auto_auto_auto_auto] gap-3 items-center px-2 py-2 hover:bg-[#111] rounded-sm transition-colors">
+          <div key={t.id} className="group relative grid grid-cols-[2rem_1fr_6rem_3.5rem_auto_auto_auto_auto_auto] gap-3 items-center px-2 py-2 hover:bg-[#111] rounded-sm transition-colors">
             <span className="font-mono text-xs text-text-muted tabular-nums text-right">
               {String(t.track_number ?? 0).padStart(2, '0')}
             </span>
@@ -1258,9 +1282,8 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
             <AudioQualityBadge bit_depth={t.bit_depth} sample_rate={t.sample_rate} codec={t.codec} bitrate={t.bitrate} />
             <button
               onClick={() => {
-                const q = tracksToQueue(tracks, album);
-                const idx = q.findIndex(p => p.id === t.id);
-                if (idx >= 0) { playQueue(q); usePlayerStore.getState().playAt(idx); }
+                const idx = albumQueue.findIndex(p => p.id === t.id);
+                if (idx >= 0) { playQueue(albumQueue); usePlayerStore.getState().playAt(idx); }
               }}
               className="text-text-muted opacity-0 group-hover:opacity-100 hover:text-accent transition-all"
               aria-label="Play"
@@ -1268,7 +1291,10 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
               <Play size={14} />
             </button>
             <button
-              onClick={() => enqueueNext([tracksToQueue(tracks, album).find(p => p.id === t.id)!])}
+              onClick={() => {
+                const item = albumQueue.find(p => p.id === t.id);
+                if (item) enqueueNext([item]);
+              }}
               className="text-text-muted opacity-0 group-hover:opacity-100 hover:text-accent transition-all"
               title="Add to queue"
             >
@@ -1282,9 +1308,65 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
             >
               <span className="font-mono text-[10px]">PL</span>
             </button>
-            <button className="text-text-muted opacity-0 group-hover:opacity-100 hover:text-text-secondary transition-all" title="More">
+            <div data-track-menu-root="true" className="relative">
+            <button
+              onClick={() => setOpenTrackMenuId(prev => (prev === t.id ? null : t.id))}
+              className="text-text-muted opacity-0 group-hover:opacity-100 hover:text-text-secondary transition-all"
+              title="More actions"
+              aria-label={`More actions for ${t.title}`}
+            >
               <MoreHorizontal size={14} />
             </button>
+            {openTrackMenuId === t.id && (
+              <div className="absolute right-0 top-6 z-30 w-44 bg-[#111] border border-[#2a2a2a] rounded-sm shadow-xl py-1">
+                <button
+                  onClick={() => {
+                    const shuffled = [...albumQueue].sort(() => Math.random() - 0.5);
+                    playQueue(shuffled);
+                    setOpenTrackMenuId(null);
+                  }}
+                  className="w-full text-left px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary hover:bg-[#1a1a1a] transition-colors"
+                >
+                  Shuffle
+                </button>
+                <button
+                  onClick={() => {
+                    const item = albumQueue.find(p => p.id === t.id);
+                    if (item) enqueueNext([item]);
+                    setOpenTrackMenuId(null);
+                  }}
+                  className="w-full text-left px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary hover:bg-[#1a1a1a] transition-colors"
+                >
+                  Play next
+                </button>
+                <button
+                  onClick={() => {
+                    const item = albumQueue.find(p => p.id === t.id);
+                    if (item) addToQueue([item]);
+                    setOpenTrackMenuId(null);
+                  }}
+                  className="w-full text-left px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary hover:bg-[#1a1a1a] transition-colors"
+                >
+                  Add to queue
+                </button>
+                <button
+                  onClick={() => {
+                    openPlaylistPicker(t);
+                    setOpenTrackMenuId(null);
+                  }}
+                  className="w-full text-left px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary hover:bg-[#1a1a1a] transition-colors"
+                >
+                  Add to {'>'} Playlist
+                </button>
+                <div className="h-px bg-[#1f1f1f] my-1" />
+                <div className="px-3 py-1 text-[10px] text-text-muted/70 uppercase tracking-wider">Future</div>
+                <button disabled className="w-full text-left px-3 py-1.5 text-xs text-text-muted/40 cursor-not-allowed">Refresh (coming soon)</button>
+                <button disabled className="w-full text-left px-3 py-1.5 text-xs text-text-muted/40 cursor-not-allowed">Fix match (planned)</button>
+                <button disabled className="w-full text-left px-3 py-1.5 text-xs text-text-muted/40 cursor-not-allowed">Delete (coming soon)</button>
+                <button disabled className="w-full text-left px-3 py-1.5 text-xs text-text-muted/40 cursor-not-allowed">View history (coming soon)</button>
+              </div>
+            )}
+            </div>
           </div>
         ))}
       </div>

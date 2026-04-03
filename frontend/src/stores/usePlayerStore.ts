@@ -68,6 +68,7 @@ interface PlayerStore {
   // ── Queue actions ─────────────────────────────────────────────────────────
   playQueue: (tracks: PlayerTrack[]) => void;
   enqueueNext: (tracks: PlayerTrack[]) => void;
+  addToQueue: (tracks: PlayerTrack[]) => void;
   nextTrack: () => void;
   prevTrack: () => void;
   playAt: (index: number) => void;
@@ -136,6 +137,26 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       ...queue.slice(insertAt),
     ];
     set({ queue: newQueue });
+  },
+
+  addToQueue: (tracks) => {
+    if (!tracks.length) return;
+    const { queue, currentTrack, queueIndex } = get();
+    if (!queue.length || !currentTrack || queueIndex < 0) {
+      set({
+        queue: tracks,
+        queueIndex: 0,
+        currentTrack: tracks[0],
+        isPlaying: true,
+        playerState: 'mini',
+        position: 0,
+        duration: 0,
+        formattedPosition: '0:00',
+        formattedDuration: '0:00',
+      });
+      return;
+    }
+    set({ queue: [...queue, ...tracks] });
   },
 
   nextTrack: () => {
