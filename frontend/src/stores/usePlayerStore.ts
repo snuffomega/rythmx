@@ -103,7 +103,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   setPlayerState: (playerState) => set({ playerState }),
   show:      () => set({ playerState: 'mini' }),
   hide:      () => set({ playerState: 'hidden', isPlaying: false }),
-  expand:    () => set({ playerState: 'fullpage' }),
+  expand:    () => set({ playerState: 'vinyl' }),
   minimize:  () => set({ playerState: 'mini' }),
   showVinyl: () => set({ playerState: 'vinyl' }),
 
@@ -176,7 +176,16 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
         // Repeat: loop back to the start of the queue
         next = 0;
       } else {
-        set({ isPlaying: false });
+        // End of queue with repeat off -> stop playback state
+        set({
+          isPlaying: false,
+          currentTrack: null,
+          queueIndex: -1,
+          position: 0,
+          duration: 0,
+          formattedPosition: '0:00',
+          formattedDuration: '0:00',
+        });
         return;
       }
     }

@@ -1,24 +1,24 @@
 /**
- * PlayerBar — 80px mini player bar, fixed at the bottom of the app layout.
+ * PlayerBar - mini player bar fixed at the bottom of the app layout.
  *
- * Reads all playback state from usePlayerStore.
- * Seek and volume changes are forwarded to the audio engine via props
- * (useAudioEngine lives in __root.tsx and passes down seek/setVolume).
+ * Reads playback state from usePlayerStore.
+ * Seek and volume changes are forwarded to useAudioEngine handlers via props.
  */
 import {
   Play, Pause, SkipBack, SkipForward,
-  Volume2, Repeat, Shuffle, ListPlus, Maximize2, ChevronDown, Disc,
+  Volume2, Repeat, Shuffle, ListPlus, Maximize2, Disc,
 } from 'lucide-react';
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
+import { useNavigate } from '@tanstack/react-router';
 import { usePlayerStore } from '../stores/usePlayerStore';
 import { AudioQualityBadge } from './common';
 import { useImage } from '../hooks/useImage';
+import { libraryBrowseApi } from '../services/api';
 
 interface PlayerBarProps {
   isPlaying: boolean;
   onPlayPause: () => void;
   onExpand: () => void;
-  onMinimize: () => void;
   onSeek: (seconds: number) => void;
   onVolumeChange: (vol: number) => void;
 }
@@ -34,7 +34,9 @@ function TrackArt({ thumbUrl, title, artist }: { thumbUrl: string | null; title:
   );
 }
 
-export function PlayerBar({ isPlaying, onPlayPause, onExpand, onMinimize, onSeek, onVolumeChange }: PlayerBarProps) {
+export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeChange }: PlayerBarProps) {
+  const navigate = useNavigate();
+  const [artistNavLoading, setArtistNavLoading] = useState(false);
   const {
     currentTrack,
     queue,
@@ -50,37 +52,69 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onMinimize, onSeek
   } = usePlayerStore();
 
   const progressRef = useRef<HTMLDivElement>(null);
-  const volumeRef   = useRef<HTMLDivElement>(null);
+  const volumeRef = useRef<HTMLDivElement>(null);
 
   const progressPct = duration > 0 ? (position / duration) * 100 : 0;
 
   function handleProgressClick(e: React.MouseEvent<HTMLDivElement>) {
     if (!progressRef.current || duration <= 0) return;
     const rect = progressRef.current.getBoundingClientRect();
-    const pct  = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     onSeek(pct * duration);
   }
 
   function handleVolumeClick(e: React.MouseEvent<HTMLDivElement>) {
     if (!volumeRef.current) return;
     const rect = volumeRef.current.getBoundingClientRect();
-    const pct  = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     onVolumeChange(pct);
   }
 
-  return (
-    <div className="fixed bottom-0 left-16 right-0 z-30 h-[80px] bg-[#0a0a0a] border-t border-[#1a1a1a] flex items-center px-5 gap-5">
+  async function handleArtistClick() {
+    const artistName = currentTrack?.artist?.trim();
+    if (!artistName || artistNavLoading) return;
+    setArtistNavLoading(true);
+    try {
+      const res = await libraryBrowseApi.getArtists({ q: artistName, per_page: 25 });
+      const exact = res.artists.find((a) => a.name.toLowerCase() === artistName.toLowerCase()) ?? res.artists[0];
+      if (exact) {
+        navigate({ to: '/library/artist/$id', params: { id: exact.id } });
+      } else {
+        navigate({ to: '/library' });
+      }
+    } finally {
+      setArtistNavLoading(false);
+    }
+  }
 
-      {/* ── Left: track info ─────────────────────────────────────────────── */}
+  return (
+    <div className="fixed bottom-0 left-0 right-0 z-30 h-[80px] bg-[#0a0a0a] border-t border-[#1a1a1a] flex items-center px-5 gap-5">
       <div className="flex items-center gap-3.5 w-[280px] min-w-0">
-        <TrackArt thumbUrl={currentTrack?.thumb_url ?? null} title={currentTrack?.album ?? ''} artist={currentTrack?.artist ?? ''} />
+        <button
+          onClick={onExpand}
+          disabled={!currentTrack}
+          className="rounded-sm transition-all hover:brightness-110 active:scale-95 disabled:opacity-60 disabled:cursor-default"
+          aria-label="Open large player"
+          title="Open large player"
+        >
+          <TrackArt
+            thumbUrl={currentTrack?.thumb_url ?? null}
+            title={currentTrack?.album ?? ''}
+            artist={currentTrack?.artist ?? ''}
+          />
+        </button>
         <div className="min-w-0 flex-1">
           <p className="text-[15px] text-text-primary truncate leading-tight">
             {currentTrack?.title ?? 'Nothing playing'}
           </p>
-          <p className="font-mono text-[13px] text-text-secondary truncate leading-tight mt-0.5">
-            {currentTrack?.artist ?? '—'}
-          </p>
+          <button
+            onClick={handleArtistClick}
+            disabled={!currentTrack?.artist || artistNavLoading}
+            className="font-mono text-[13px] text-text-secondary hover:text-accent truncate leading-tight mt-0.5 transition-colors text-left max-w-full disabled:cursor-default disabled:hover:text-text-secondary"
+            title={currentTrack?.artist ? `Open ${currentTrack.artist}` : undefined}
+          >
+            {currentTrack?.artist ?? '-'}
+          </button>
           {currentTrack && (
             <div className="mt-0.5">
               <AudioQualityBadge
@@ -94,7 +128,6 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onMinimize, onSeek
         </div>
       </div>
 
-      {/* ── Center: controls + progress ──────────────────────────────────── */}
       <div className="flex-1 flex flex-col items-center justify-center gap-1.5 max-w-[640px] mx-auto">
         <div className="flex items-center gap-5">
           <button
@@ -120,7 +153,7 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onMinimize, onSeek
           >
             {isPlaying
               ? <Pause size={16} className="text-black" />
-              : <Play  size={16} className="text-black ml-0.5" />}
+              : <Play size={16} className="text-black ml-0.5" />}
           </button>
           <button
             onClick={nextTrack}
@@ -135,7 +168,6 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onMinimize, onSeek
           </button>
         </div>
 
-        {/* Progress bar */}
         <div className="w-full flex items-center gap-2.5">
           <span className="font-mono text-[11px] text-text-muted tabular-nums w-9 text-right">
             {formattedPosition}
@@ -160,7 +192,6 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onMinimize, onSeek
         </div>
       </div>
 
-      {/* ── Right: queue count + volume + actions ─────────────────────────── */}
       <div className="flex items-center gap-3 w-[200px] justify-end">
         {queue.length > 0 && (
           <span className="font-mono text-[11px] text-text-muted tabular-nums">
@@ -173,8 +204,8 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onMinimize, onSeek
         <button
           onClick={onExpand}
           className="text-text-muted hover:text-text-secondary transition-colors"
-          aria-label="Full page player"
-          title="Full page player"
+          aria-label="Open large player"
+          title="Open large player"
         >
           <Maximize2 size={14} />
         </button>
@@ -196,15 +227,6 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onMinimize, onSeek
             style={{ left: `${volume * 100}%`, marginLeft: '-4px' }}
           />
         </div>
-
-        <button
-          onClick={onMinimize}
-          className="text-text-muted hover:text-text-secondary transition-colors ml-1"
-          aria-label="Minimize player"
-          title="Minimize"
-        >
-          <ChevronDown size={16} />
-        </button>
       </div>
     </div>
   );

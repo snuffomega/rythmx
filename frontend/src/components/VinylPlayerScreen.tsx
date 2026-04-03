@@ -18,7 +18,7 @@
 import { useCallback, useRef, useState } from 'react';
 import {
   Play, Pause, SkipBack, SkipForward,
-  Shuffle, Repeat, LayoutList, Settings,
+  Shuffle, Repeat, Settings,
   Disc, Star, Heart, ListMusic, Mic2,
   ChevronDown, List, ListPlus, Volume2,
 } from 'lucide-react';
@@ -120,7 +120,7 @@ export function VinylPlayerScreen({
     formattedPosition, formattedDuration,
     shuffle, repeat,
     nextTrack, prevTrack,
-    toggleShuffle, toggleRepeat, expand,
+    toggleShuffle, toggleRepeat,
     setVolume: storeSetVolume,
   } = usePlayerStore();
 
@@ -224,14 +224,7 @@ export function VinylPlayerScreen({
               Minimize
             </span>
           </button>
-          <button
-            onClick={expand}
-            className="text-text-muted hover:text-text-secondary transition-all active:scale-95"
-            aria-label="Standard view"
-            title="Standard view"
-          >
-            <LayoutList size={16} />
-          </button>
+          <div className="w-5" />
         </div>
 
         {/* ── Three-cover carousel ────────────────────────────────────────── */}

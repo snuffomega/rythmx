@@ -1,9 +1,8 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { createRootRoute, Outlet, Link, useRouter } from '@tanstack/react-router';
-import { Compass, Zap, Activity, BarChart2, Settings, ChevronRight, Menu, Library, Play } from 'lucide-react';
+import { Compass, Zap, Activity, BarChart2, Settings, ChevronRight, Menu, Library } from 'lucide-react';
 import { ToastContainer } from '../components/ToastContainer';
 import { PlayerBar } from '../components/PlayerBar';
-import { FullPagePlayer } from '../components/FullPagePlayer';
 import { VinylPlayerScreen } from '../components/VinylPlayerScreen';
 import ProcessingSignal from '../components/ProcessingSignal';
 import { useToastStore } from '../stores/useToastStore';
@@ -34,7 +33,7 @@ function RootLayout() {
   const sidebarRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
-  const { playerState, isPlaying, show: showPlayer, hide: hidePlayer,
+  const { playerState, isPlaying, currentTrack, hide: hidePlayer,
           expand: expandPlayer, minimize: minimizePlayer, togglePlayPause } = usePlayerStore();
 
   const { seek, setVolume } = useAudioEngine();
@@ -62,17 +61,17 @@ function RootLayout() {
     return () => document.removeEventListener('mousedown', handleClick);
   }, [expanded]);
 
-  const handlePlay = useCallback(() => { showPlayer(); }, [showPlayer]);
-
-  const handleNowPlayingClick = useCallback(() => {
-    if (playerState === 'hidden') minimizePlayer();
-    else hidePlayer();
-  }, [playerState, minimizePlayer, hidePlayer]);
-
-  const handleNowPlayingDblClick = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    expandPlayer();
-  }, [expandPlayer]);
+  useEffect(() => {
+    // Mini bar should auto-show whenever a track is loaded and user is not in large player.
+    // It should hide when playback is fully stopped (no current track).
+    if (!currentTrack) {
+      if (playerState !== 'hidden') hidePlayer();
+      return;
+    }
+    if (playerState === 'hidden') {
+      minimizePlayer();
+    }
+  }, [currentTrack, playerState, hidePlayer, minimizePlayer]);
 
   return (
     <div className="min-h-screen bg-base flex">
@@ -87,7 +86,7 @@ function RootLayout() {
         ref={sidebarRef}
         className={`fixed inset-y-0 left-0 z-20 flex flex-col bg-[#0d0d0d] border-r border-border transition-all duration-200 ${
           expanded ? 'w-56' : 'w-16'
-        }`}
+        } ${playerState === 'mini' ? 'pb-20' : ''}`}
       >
         <div className="flex items-center h-14 border-b border-border flex-shrink-0 overflow-hidden">
           <button
@@ -125,7 +124,12 @@ function RootLayout() {
                 key={item.to}
                 to={item.to}
                 title={!expanded ? item.label : undefined}
-                onClick={() => setExpanded(false)}
+                onClick={() => {
+                  setExpanded(false);
+                  if (playerState === 'vinyl') {
+                    minimizePlayer();
+                  }
+                }}
                 activeOptions={{ includeSearch: false }}
                 className="relative w-full flex items-center h-11 transition-colors group text-text-muted hover:text-accent hover:bg-surface-highlight"
                 activeProps={{
@@ -150,40 +154,11 @@ function RootLayout() {
           })}
         </nav>
 
-        <button
-          onClick={handleNowPlayingClick}
-          onDoubleClick={handleNowPlayingDblClick}
-          title={!expanded ? 'Now Playing' : undefined}
-          className={`w-full flex items-center h-11 transition-colors border-t border-border ${
-            playerState !== 'hidden'
-              ? 'text-accent'
-              : 'text-text-muted hover:text-text-secondary'
-          }`}
-        >
-          <span className="w-16 flex items-center justify-center flex-shrink-0">
-            <Play
-              size={16}
-              fill={playerState !== 'hidden' && isPlaying ? 'currentColor' : 'none'}
-            />
-          </span>
-          {expanded && (
-            <span className="text-sm font-medium whitespace-nowrap">Now Playing</span>
-          )}
-        </button>
-
       </aside>
 
       <main className="flex-1 min-w-0 pl-16 flex flex-col min-h-screen">
         {playerState === 'vinyl' ? (
           <VinylPlayerScreen
-            isPlaying={isPlaying}
-            onPlayPause={togglePlayPause}
-            onMinimize={minimizePlayer}
-            onSeek={seek}
-            onVolumeChange={setVolume}
-          />
-        ) : playerState === 'fullpage' ? (
-          <FullPagePlayer
             isPlaying={isPlaying}
             onPlayPause={togglePlayPause}
             onMinimize={minimizePlayer}
@@ -203,7 +178,6 @@ function RootLayout() {
             isPlaying={isPlaying}
             onPlayPause={togglePlayPause}
             onExpand={expandPlayer}
-            onMinimize={hidePlayer}
             onSeek={seek}
             onVolumeChange={setVolume}
           />
