@@ -15,12 +15,12 @@
  * Artwork fix: useImage lives inside ArtCard; parent passes key={track?.id}
  * so React remounts on skip → fresh image every track change.
  */
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Play, Pause, SkipBack,
   Shuffle, Repeat, Settings,
   Disc, Star, Heart, ListMusic, Mic2,
-  ChevronDown, List, ListPlus, Volume2,
+  ChevronDown, List, ListPlus, Volume2, X,
 } from 'lucide-react';
 import { useNavigate } from '@tanstack/react-router';
 import { usePlayerStore, type PlayerTrack } from '../stores/usePlayerStore';
@@ -199,9 +199,26 @@ export function VinylPlayerScreen({
   }
 
   function handleSettings() {
+    setShowQueue(false);
     onMinimize();
     navigate({ to: '/settings' });
   }
+
+  function handleMinimize() {
+    setShowQueue(false);
+    onMinimize();
+  }
+
+  useEffect(() => {
+    if (!showQueue) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setShowQueue(false);
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [showQueue]);
 
   return (
     // ── Outer canvas — full dark screen, content centered ─────────────────
@@ -214,7 +231,7 @@ export function VinylPlayerScreen({
         {/* ── Header ──────────────────────────────────────────────────────── */}
         <div className="flex items-center justify-between mb-5">
           <button
-            onClick={onMinimize}
+            onClick={handleMinimize}
             className="flex items-center gap-1.5 text-text-muted hover:text-text-secondary
                        transition-all active:scale-95 group"
             aria-label="Minimize player"
@@ -458,61 +475,78 @@ export function VinylPlayerScreen({
 
         </div>
 
-        {/* ── Queue panel — expands inline below button row, scrobble-bar width ── */}
+        {/* Queue popup overlay */}
         {showQueue && (
-          <div className="mt-3 border border-[#1e1e1e] rounded-xl overflow-hidden bg-[#0a0a0a]">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-[#1a1a1a]">
-              <span className="font-mono text-[11px] text-text-muted uppercase tracking-widest">
-                Queue · {queue.length} track{queue.length !== 1 ? 's' : ''}
-              </span>
-              {queue.length > 0 && (
-                <button
-                  onClick={() => usePlayerStore.getState().clearQueue()}
-                  className="text-[10px] font-mono text-text-muted hover:text-text-secondary transition-colors"
-                >
-                  Clear
-                </button>
-              )}
-            </div>
-            <div className="max-h-[40vh] overflow-y-auto">
-              {queue.length === 0 ? (
-                <p className="text-[12px] text-text-muted font-mono text-center py-8 px-5 leading-relaxed">
-                  Queue empty —<br />play something from your library
-                </p>
-              ) : (
-                <ul>
-                  {queue.map((track, i) => (
-                    <li key={`${track.id}-${i}`}>
-                      <div className="group px-4 py-2.5 flex items-center gap-2.5 hover:bg-[#111] transition-colors">
-                        <button
-                          onClick={() => { usePlayerStore.getState().playAt(i); setShowQueue(false); }}
-                          className="flex-1 min-w-0 text-left flex items-center gap-2.5"
-                        >
-                          <span className="font-mono text-[10px] text-text-muted w-5 flex-shrink-0 text-right">
-                            {i === queueIndex && isPlaying ? '▶' : i + 1}
-                          </span>
-                          <div className="min-w-0 flex-1">
-                            <p className={`text-[12px] truncate leading-tight ${i === queueIndex ? 'text-accent' : 'text-text-primary'}`}>
-                              {track.title}
-                            </p>
-                            <p className="font-mono text-[10px] text-text-muted truncate leading-tight">
-                              {track.artist}
-                            </p>
-                          </div>
-                        </button>
-                        <button
-                          onClick={() => openPlaylistPicker(track)}
-                          className="text-text-muted opacity-0 group-hover:opacity-100 hover:text-accent transition-all"
-                          title="Add to playlist"
-                          aria-label={`Add ${track.title} to playlist`}
-                        >
-                          <ListPlus size={13} />
-                        </button>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
+          <div
+            className="fixed inset-0 z-30 bg-black/35 flex items-end justify-center px-4 pb-8"
+            onClick={() => setShowQueue(false)}
+          >
+            <div
+              className="w-full max-w-[720px] border border-[#1e1e1e] rounded-xl overflow-hidden bg-[#0a0a0a] shadow-2xl"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="flex items-center justify-between px-4 py-3 border-b border-[#1a1a1a]">
+                <span className="font-mono text-[11px] text-text-muted uppercase tracking-widest">
+                  Queue - {queue.length} track{queue.length !== 1 ? 's' : ''}
+                </span>
+                <div className="flex items-center gap-2">
+                  {queue.length > 0 && (
+                    <button
+                      onClick={() => usePlayerStore.getState().clearQueue()}
+                      className="text-[10px] font-mono text-text-muted hover:text-text-secondary transition-colors"
+                    >
+                      Clear
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setShowQueue(false)}
+                    aria-label="Close queue"
+                    className="p-1 text-text-muted hover:text-text-primary transition-colors"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              </div>
+              <div className="max-h-[55vh] overflow-y-auto">
+                {queue.length === 0 ? (
+                  <p className="text-[12px] text-text-muted font-mono text-center py-8 px-5 leading-relaxed">
+                    Queue empty<br />play something from your library
+                  </p>
+                ) : (
+                  <ul>
+                    {queue.map((track, i) => (
+                      <li key={`${track.id}-${i}`}>
+                        <div className="group px-4 py-2.5 flex items-center gap-2.5 hover:bg-[#111] transition-colors">
+                          <button
+                            onClick={() => { usePlayerStore.getState().playAt(i); setShowQueue(false); }}
+                            className="flex-1 min-w-0 text-left flex items-center gap-2.5"
+                          >
+                            <span className="font-mono text-[10px] text-text-muted w-5 flex-shrink-0 text-right">
+                              {i === queueIndex && isPlaying ? '>' : i + 1}
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              <p className={`text-[12px] truncate leading-tight ${i === queueIndex ? 'text-accent' : 'text-text-primary'}`}>
+                                {track.title}
+                              </p>
+                              <p className="font-mono text-[10px] text-text-muted truncate leading-tight">
+                                {track.artist}
+                              </p>
+                            </div>
+                          </button>
+                          <button
+                            onClick={() => openPlaylistPicker(track)}
+                            className="text-text-muted opacity-0 group-hover:opacity-100 hover:text-accent transition-all"
+                            title="Add to playlist"
+                            aria-label={`Add ${track.title} to playlist`}
+                          >
+                            <ListPlus size={13} />
+                          </button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </div>
           </div>
         )}
