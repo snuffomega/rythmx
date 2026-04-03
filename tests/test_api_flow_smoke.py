@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import sqlite3
 
+import pytest
+from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 
 from app.routes import acquisition
@@ -638,6 +640,50 @@ def test_forge_publish_flow_visible_in_library_playlists(monkeypatch):
     track_rows = library_playlists.get_playlist_tracks("pl-123")
     assert track_rows["status"] == "ok"
     assert [t["track_id"] for t in track_rows["tracks"]] == ["trk-1", "trk-2"]
+
+
+def test_library_playlists_add_tracks_contract(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.library_playlists_service.add_tracks_to_playlist",
+        lambda playlist_id, track_ids: {
+            "playlist_id": playlist_id,
+            "added_count": len(track_ids),
+            "track_count": 12,
+        },
+    )
+
+    result = library_playlists.add_playlist_tracks(
+        "pl-1",
+        library_playlists.AddTracksBody(track_ids=["t1", "t2"]),
+    )
+    assert result["status"] == "ok"
+    assert result["playlist_id"] == "pl-1"
+    assert result["added_count"] == 2
+    assert result["track_count"] == 12
+
+
+def test_library_playlists_add_tracks_validation_and_not_found(monkeypatch):
+    with pytest.raises(HTTPException) as empty_exc:
+        library_playlists.add_playlist_tracks(
+            "pl-1",
+            library_playlists.AddTracksBody(track_ids=[]),
+        )
+    assert empty_exc.value.status_code == 400
+
+    def _not_found(_playlist_id, _track_ids):
+        raise ValueError("Playlist not found: pl-1")
+
+    monkeypatch.setattr(
+        "app.services.library_playlists_service.add_tracks_to_playlist",
+        _not_found,
+    )
+
+    with pytest.raises(HTTPException) as not_found_exc:
+        library_playlists.add_playlist_tracks(
+            "pl-1",
+            library_playlists.AddTracksBody(track_ids=["t1"]),
+        )
+    assert not_found_exc.value.status_code == 404
 
 
 def test_forge_build_publish_jellyfin_stub(monkeypatch):

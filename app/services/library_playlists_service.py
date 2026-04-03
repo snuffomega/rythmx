@@ -270,3 +270,158 @@ def delete_playlist(playlist_id: str) -> None:
             "DELETE FROM lib_playlists WHERE id = ?",
             (playlist_id,),
         )
+
+
+# ---------------------------------------------------------------------------
+# Add tracks
+# ---------------------------------------------------------------------------
+
+def add_tracks_to_playlist(playlist_id: str, track_ids: list[str]) -> dict:
+    """
+    Add library tracks to an existing platform playlist and update local mirror.
+
+    Returns:
+      {
+        "playlist_id": str,
+        "added_count": int,
+        "track_count": int,
+      }
+    """
+    cleaned = [str(t or "").strip() for t in track_ids]
+    cleaned = [t for t in cleaned if t]
+    if not cleaned:
+        raise ValueError("track_ids must contain at least one track id")
+
+    # De-dupe while preserving order.
+    seen: set[str] = set()
+    unique_track_ids: list[str] = []
+    for tid in cleaned:
+        if tid in seen:
+            continue
+        seen.add(tid)
+        unique_track_ids.append(tid)
+
+    with _connect() as conn:
+        pl = conn.execute(
+            "SELECT id, source_platform FROM lib_playlists WHERE id = ?",
+            (playlist_id,),
+        ).fetchone()
+        if not pl:
+            raise ValueError(f"Playlist not found: {playlist_id}")
+
+        platform = str(pl["source_platform"] or "").lower()
+
+        placeholders = ",".join("?" for _ in unique_track_ids)
+        valid_rows = conn.execute(
+            f"SELECT id, duration FROM lib_tracks WHERE id IN ({placeholders})",
+            tuple(unique_track_ids),
+        ).fetchall()
+        valid_duration = {str(r["id"]): int(r["duration"] or 0) for r in valid_rows}
+        valid_track_ids = [tid for tid in unique_track_ids if tid in valid_duration]
+        if not valid_track_ids:
+            raise ValueError("No valid library track IDs provided")
+
+        existing_rows = conn.execute(
+            "SELECT track_id FROM lib_playlist_tracks WHERE playlist_id = ?",
+            (playlist_id,),
+        ).fetchall()
+        existing_ids = {str(r["track_id"]) for r in existing_rows}
+        to_add = [tid for tid in valid_track_ids if tid not in existing_ids]
+
+    if not to_add:
+        with _connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS c FROM lib_playlist_tracks WHERE playlist_id = ?",
+                (playlist_id,),
+            ).fetchone()
+        return {
+            "playlist_id": playlist_id,
+            "added_count": 0,
+            "track_count": int(row["c"] if row else 0),
+        }
+
+    if platform == "navidrome":
+        from app.db.navidrome_reader import _get_client
+        client = _get_client()
+        client.update_playlist(playlist_id, to_add)
+        added = to_add
+    elif platform == "plex":
+        if not config.PLEX_URL or not config.PLEX_TOKEN:
+            raise ValueError("PLEX_URL and PLEX_TOKEN must be set")
+        from plexapi.server import PlexServer
+
+        plex = PlexServer(config.PLEX_URL, config.PLEX_TOKEN)
+        playlist = plex.fetchItem(int(playlist_id))
+        items = []
+        added = []
+        for tid in to_add:
+            try:
+                item = plex.fetchItem(int(tid))
+            except Exception:
+                logger.warning(
+                    "library_playlists_service: skipping missing Plex track id=%s for playlist %s",
+                    tid,
+                    playlist_id,
+                )
+                continue
+            items.append(item)
+            added.append(tid)
+
+        if not items:
+            raise ValueError("No valid platform tracks to add")
+        playlist.addItems(items)
+    else:
+        raise ValueError(f"Unsupported platform for add_tracks: {platform}")
+
+    if not added:
+        with _connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS c FROM lib_playlist_tracks WHERE playlist_id = ?",
+                (playlist_id,),
+            ).fetchone()
+        return {
+            "playlist_id": playlist_id,
+            "added_count": 0,
+            "track_count": int(row["c"] if row else 0),
+        }
+
+    with _connect() as conn:
+        base = conn.execute(
+            "SELECT COALESCE(MAX(position), -1) AS max_pos FROM lib_playlist_tracks WHERE playlist_id = ?",
+            (playlist_id,),
+        ).fetchone()
+        next_pos = int(base["max_pos"] if base else -1) + 1
+
+        for tid in added:
+            conn.execute(
+                "INSERT OR IGNORE INTO lib_playlist_tracks (playlist_id, track_id, position) VALUES (?, ?, ?)",
+                (playlist_id, tid, next_pos),
+            )
+            next_pos += 1
+
+        meta = conn.execute(
+            """
+            SELECT COUNT(*) AS track_count, COALESCE(SUM(t.duration), 0) AS duration_ms
+            FROM lib_playlist_tracks lpt
+            JOIN lib_tracks t ON t.id = lpt.track_id
+            WHERE lpt.playlist_id = ?
+            """,
+            (playlist_id,),
+        ).fetchone()
+        track_count = int(meta["track_count"] if meta else 0)
+        duration_ms = int(meta["duration_ms"] if meta else 0)
+
+        conn.execute(
+            """
+            UPDATE lib_playlists
+            SET track_count = ?, duration_ms = ?, synced_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (track_count, duration_ms, playlist_id),
+        )
+
+    return {
+        "playlist_id": playlist_id,
+        "added_count": len(added),
+        "track_count": track_count,
+    }

@@ -28,6 +28,10 @@ class RenameBody(BaseModel):
     name: str
 
 
+class AddTracksBody(BaseModel):
+    track_ids: list[str]
+
+
 # ---------------------------------------------------------------------------
 # List all playlists
 # ---------------------------------------------------------------------------
@@ -89,6 +93,37 @@ def get_playlist_tracks(playlist_id: str):
         "status": "ok",
         "tracks": [dict(r) for r in rows],
     }
+
+
+# ---------------------------------------------------------------------------
+# Add tracks
+# ---------------------------------------------------------------------------
+
+@router.post("/library/playlists/{playlist_id}/tracks")
+def add_playlist_tracks(playlist_id: str, body: AddTracksBody):
+    """Add one or more lib_tracks IDs to a playlist on the active platform."""
+    if not body.track_ids:
+        raise HTTPException(
+            status_code=400,
+            detail={"status": "error", "message": "track_ids must not be empty"},
+        )
+    try:
+        from app.services.library_playlists_service import add_tracks_to_playlist as _add_tracks
+        result = _add_tracks(playlist_id, body.track_ids)
+        return {"status": "ok", **result}
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 404 if message.startswith("Playlist not found") else 400
+        raise HTTPException(
+            status_code=status_code,
+            detail={"status": "error", "message": message},
+        )
+    except Exception as exc:
+        logger.error("add_playlist_tracks failed: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"status": "error", "message": "Add tracks failed"},
+        )
 
 
 # ---------------------------------------------------------------------------

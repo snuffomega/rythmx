@@ -464,4 +464,9 @@ export const libraryPlaylistsApi = {
       `/library/playlists/${encodeURIComponent(id)}`,
       { method: 'DELETE' }
     ),
+  addTracks: (id: string, trackIds: string[]) =>
+    request<{ status: string; playlist_id: string; added_count: number; track_count: number }>(
+      `/library/playlists/${encodeURIComponent(id)}/tracks`,
+      { method: 'POST', body: JSON.stringify({ track_ids: trackIds }) }
+    ),
 };
