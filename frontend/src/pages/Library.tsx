@@ -393,6 +393,9 @@ interface ArtistDetailProps {
 }
 
 export function ArtistDetail({ artistId }: ArtistDetailProps) {
+  const navigate = useNavigate();
+  const toastSuccess = useToastStore(s => s.success);
+  const toastError = useToastStore(s => s.error);
   const [data, setData] = useState<LibArtistDetailType | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -405,6 +408,13 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
   const [coverInput, setCoverInput] = useState('');
   const [coverSaving, setCoverSaving] = useState(false);
   const [artistImageUrl, setArtistImageUrl] = useState<string | null>(null);
+  const [playlistOptions, setPlaylistOptions] = useState<LibPlaylist[]>([]);
+  const [playlistPickerOpen, setPlaylistPickerOpen] = useState(false);
+  const [playlistPickerLoading, setPlaylistPickerLoading] = useState(false);
+  const [playlistPickerSaving, setPlaylistPickerSaving] = useState(false);
+  const [playlistPickerError, setPlaylistPickerError] = useState<string | null>(null);
+  const [playlistTrack, setPlaylistTrack] = useState<LibTrack | null>(null);
+  const [selectedPlaylistId, setSelectedPlaylistId] = useState('');
   const playQueue = usePlayerStore(s => s.playQueue);
   const enqueueNext = usePlayerStore(s => s.enqueueNext);
 
@@ -514,6 +524,59 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
       setCoverSaving(false);
     }
   }, [coverInput, data]);
+
+  const openPlaylistPicker = useCallback(async (track: LibTrack) => {
+    setPlaylistTrack(track);
+    setPlaylistPickerOpen(true);
+    setPlaylistPickerLoading(true);
+    setPlaylistPickerSaving(false);
+    setPlaylistPickerError(null);
+    try {
+      const list = await libraryPlaylistsApi.list();
+      setPlaylistOptions(list);
+      setSelectedPlaylistId(list[0]?.id ?? '');
+      if (list.length === 0) {
+        setPlaylistPickerError('No playlists found. Sync or create one in Library > Playlists first.');
+      }
+    } catch (err) {
+      setPlaylistOptions([]);
+      setSelectedPlaylistId('');
+      setPlaylistPickerError(err instanceof Error ? err.message : 'Failed to load playlists');
+    } finally {
+      setPlaylistPickerLoading(false);
+    }
+  }, []);
+
+  const closePlaylistPicker = useCallback(() => {
+    setPlaylistPickerOpen(false);
+    setPlaylistPickerLoading(false);
+    setPlaylistPickerSaving(false);
+    setPlaylistPickerError(null);
+    setPlaylistTrack(null);
+    setSelectedPlaylistId('');
+  }, []);
+
+  const confirmAddToPlaylist = useCallback(async () => {
+    if (!playlistTrack || !selectedPlaylistId) {
+      return;
+    }
+    setPlaylistPickerSaving(true);
+    setPlaylistPickerError(null);
+    try {
+      const result = await libraryPlaylistsApi.addTracks(selectedPlaylistId, [playlistTrack.id]);
+      const selected = playlistOptions.find(p => p.id === selectedPlaylistId);
+      toastSuccess(
+        `Added "${playlistTrack.title}" to "${selected?.name ?? selectedPlaylistId}" (${result.track_count} tracks)`
+      );
+      closePlaylistPicker();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to add track to playlist';
+      setPlaylistPickerError(msg);
+      toastError(msg);
+    } finally {
+      setPlaylistPickerSaving(false);
+    }
+  }, [playlistTrack, selectedPlaylistId, playlistOptions, toastSuccess, toastError, closePlaylistPicker]);
 
   if (loading) {
     return <div className="flex-1 flex items-center justify-center"><Loader2 size={20} className="animate-spin text-text-muted" /></div>;
@@ -732,7 +795,7 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
           <h2 className="text-xs font-mono font-semibold text-text-muted uppercase tracking-widest mb-3">Popular Tracks</h2>
           <div>
             {top_tracks.map((t, i) => (
-              <div key={t.id} className="group grid grid-cols-[2rem_1fr_1fr_3.5rem_auto] gap-3 items-center py-2 px-2 hover:bg-[#111] rounded-sm transition-colors">
+              <div key={t.id} className="group grid grid-cols-[2rem_1fr_1fr_3.5rem_auto_auto] gap-3 items-center py-2 px-2 hover:bg-[#111] rounded-sm transition-colors">
                 <span className="font-mono text-xs text-text-muted tabular-nums text-right">{i + 1}</span>
                 <span className="text-sm text-text-primary truncate">{t.title}</span>
                 <span className="font-mono text-xs text-text-muted truncate">{t.album_title}</span>
@@ -753,6 +816,14 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
                   aria-label="Play"
                 >
                   <Play size={14} />
+                </button>
+                <button
+                  onClick={() => openPlaylistPicker(t)}
+                  className="text-text-muted opacity-0 group-hover:opacity-100 hover:text-accent transition-all"
+                  title="Add to playlist"
+                  aria-label={`Add ${t.title} to playlist`}
+                >
+                  <ListPlus size={14} />
                 </button>
               </div>
             ))}
@@ -822,6 +893,81 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
         </>
       )}
 
+      {playlistPickerOpen && (
+        <div className="fixed inset-0 z-40 bg-black/60 flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-[#0d0d0d] border border-[#2a2a2a] p-4">
+            <h3 className="text-sm font-semibold text-text-primary">Add To Playlist</h3>
+            <p className="text-xs text-text-muted mt-1 truncate">
+              {playlistTrack ? `Track: ${playlistTrack.title}` : 'Select a playlist'}
+            </p>
+
+            {playlistPickerLoading ? (
+              <div className="flex items-center gap-2 text-xs text-text-muted mt-4">
+                <Loader2 size={12} className="animate-spin" />
+                Loading playlists...
+              </div>
+            ) : (
+              <>
+                <div className="mt-4">
+                  <label className="block text-[10px] font-mono text-text-muted uppercase tracking-wider mb-1.5">
+                    Playlist
+                  </label>
+                  <select
+                    value={selectedPlaylistId}
+                    onChange={e => setSelectedPlaylistId(e.target.value)}
+                    className="w-full bg-[#111] border border-[#2a2a2a] text-text-primary text-sm px-3 py-2 focus:outline-none focus:border-accent"
+                    disabled={playlistOptions.length === 0 || playlistPickerSaving}
+                  >
+                    {playlistOptions.length === 0 ? (
+                      <option value="">No playlists available</option>
+                    ) : (
+                      playlistOptions.map(pl => (
+                        <option key={pl.id} value={pl.id}>
+                          {pl.name} ({pl.track_count} tracks)
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </div>
+
+                {playlistPickerError && (
+                  <p className="text-xs text-danger mt-3">{playlistPickerError}</p>
+                )}
+              </>
+            )}
+
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                onClick={closePlaylistPicker}
+                disabled={playlistPickerSaving}
+                className="px-3 py-1.5 text-xs border border-[#333] text-text-muted hover:text-text-primary transition-colors disabled:opacity-40"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => navigate({ to: '/library/playlists' })}
+                disabled={playlistPickerSaving}
+                className="px-3 py-1.5 text-xs border border-[#333] text-text-muted hover:text-text-primary transition-colors disabled:opacity-40"
+              >
+                Open Playlists
+              </button>
+              <button
+                onClick={confirmAddToPlaylist}
+                disabled={
+                  playlistPickerLoading ||
+                  playlistPickerSaving ||
+                  !playlistTrack ||
+                  !selectedPlaylistId
+                }
+                className="px-3 py-1.5 text-xs bg-accent text-black hover:bg-accent/80 transition-colors disabled:opacity-40"
+              >
+                {playlistPickerSaving ? 'Adding...' : 'Add'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="h-4" />
     </div>
   );
@@ -836,10 +982,20 @@ interface AlbumDetailProps {
 }
 
 export function AlbumDetail({ albumId }: AlbumDetailProps) {
+  const navigate = useNavigate();
+  const toastSuccess = useToastStore(s => s.success);
+  const toastError = useToastStore(s => s.error);
   const [data, setData] = useState<LibAlbumDetailType | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [ratings, setRatings] = useState<Record<string, number>>({});
+  const [playlistOptions, setPlaylistOptions] = useState<LibPlaylist[]>([]);
+  const [playlistPickerOpen, setPlaylistPickerOpen] = useState(false);
+  const [playlistPickerLoading, setPlaylistPickerLoading] = useState(false);
+  const [playlistPickerSaving, setPlaylistPickerSaving] = useState(false);
+  const [playlistPickerError, setPlaylistPickerError] = useState<string | null>(null);
+  const [playlistTrack, setPlaylistTrack] = useState<LibTrack | null>(null);
+  const [selectedPlaylistId, setSelectedPlaylistId] = useState('');
   const router = useRouter();
   const playQueue = usePlayerStore(s => s.playQueue);
   const enqueueNext = usePlayerStore(s => s.enqueueNext);
@@ -876,8 +1032,61 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
 
   const handleRate = useCallback(async (trackId: string, rating: number) => {
     setRatings(prev => ({ ...prev, [trackId]: rating }));
-    try { await libraryBrowseApi.rateTrack(trackId, rating); } catch { /* optimistic — silently ignore */ }
+    try { await libraryBrowseApi.rateTrack(trackId, rating); } catch { /* optimistic - silently ignore */ }
   }, []);
+
+  const openPlaylistPicker = useCallback(async (track: LibTrack) => {
+    setPlaylistTrack(track);
+    setPlaylistPickerOpen(true);
+    setPlaylistPickerLoading(true);
+    setPlaylistPickerSaving(false);
+    setPlaylistPickerError(null);
+    try {
+      const list = await libraryPlaylistsApi.list();
+      setPlaylistOptions(list);
+      setSelectedPlaylistId(list[0]?.id ?? '');
+      if (list.length === 0) {
+        setPlaylistPickerError('No playlists found. Sync or create one in Library > Playlists first.');
+      }
+    } catch (err) {
+      setPlaylistOptions([]);
+      setSelectedPlaylistId('');
+      setPlaylistPickerError(err instanceof Error ? err.message : 'Failed to load playlists');
+    } finally {
+      setPlaylistPickerLoading(false);
+    }
+  }, []);
+
+  const closePlaylistPicker = useCallback(() => {
+    setPlaylistPickerOpen(false);
+    setPlaylistPickerLoading(false);
+    setPlaylistPickerSaving(false);
+    setPlaylistPickerError(null);
+    setPlaylistTrack(null);
+    setSelectedPlaylistId('');
+  }, []);
+
+  const confirmAddToPlaylist = useCallback(async () => {
+    if (!playlistTrack || !selectedPlaylistId) {
+      return;
+    }
+    setPlaylistPickerSaving(true);
+    setPlaylistPickerError(null);
+    try {
+      const result = await libraryPlaylistsApi.addTracks(selectedPlaylistId, [playlistTrack.id]);
+      const selected = playlistOptions.find(p => p.id === selectedPlaylistId);
+      toastSuccess(
+        `Added "${playlistTrack.title}" to "${selected?.name ?? selectedPlaylistId}" (${result.track_count} tracks)`
+      );
+      closePlaylistPicker();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to add track to playlist';
+      setPlaylistPickerError(msg);
+      toastError(msg);
+    } finally {
+      setPlaylistPickerSaving(false);
+    }
+  }, [playlistTrack, selectedPlaylistId, playlistOptions, toastSuccess, toastError, closePlaylistPicker]);
 
   if (loading) {
     return <div className="flex-1 flex items-center justify-center"><Loader2 size={20} className="animate-spin text-text-muted" /></div>;
@@ -954,7 +1163,7 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
 
       {/* Track list */}
       <div className="px-8 py-5">
-        <div className="grid grid-cols-[2rem_1fr_6rem_3.5rem_auto_auto_auto] gap-3 items-center px-2 py-1.5 border-b border-[#1a1a1a] mb-1">
+        <div className="grid grid-cols-[2rem_1fr_6rem_3.5rem_auto_auto_auto_auto] gap-3 items-center px-2 py-1.5 border-b border-[#1a1a1a] mb-1">
           <span className="font-mono text-[10px] text-text-muted uppercase tracking-widest text-right">#</span>
           <span className="font-mono text-[10px] text-text-muted uppercase tracking-widest">Title</span>
           <span className="font-mono text-[10px] text-text-muted uppercase tracking-widest">Rating</span>
@@ -962,9 +1171,10 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
           <span />
           <span />
           <span />
+          <span />
         </div>
         {tracks.map(t => (
-          <div key={t.id} className="group grid grid-cols-[2rem_1fr_6rem_3.5rem_auto_auto_auto_auto] gap-3 items-center px-2 py-2 hover:bg-[#111] rounded-sm transition-colors">
+          <div key={t.id} className="group grid grid-cols-[2rem_1fr_6rem_3.5rem_auto_auto_auto_auto_auto] gap-3 items-center px-2 py-2 hover:bg-[#111] rounded-sm transition-colors">
             <span className="font-mono text-xs text-text-muted tabular-nums text-right">
               {String(t.track_number ?? 0).padStart(2, '0')}
             </span>
@@ -990,12 +1200,95 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
             >
               <ListPlus size={14} />
             </button>
+            <button
+              onClick={() => openPlaylistPicker(t)}
+              className="text-text-muted opacity-0 group-hover:opacity-100 hover:text-accent transition-all"
+              title="Add to playlist"
+              aria-label={`Add ${t.title} to playlist`}
+            >
+              <span className="font-mono text-[10px]">PL</span>
+            </button>
             <button className="text-text-muted opacity-0 group-hover:opacity-100 hover:text-text-secondary transition-all" title="More">
               <MoreHorizontal size={14} />
             </button>
           </div>
         ))}
       </div>
+
+      {playlistPickerOpen && (
+        <div className="fixed inset-0 z-40 bg-black/60 flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-[#0d0d0d] border border-[#2a2a2a] p-4">
+            <h3 className="text-sm font-semibold text-text-primary">Add To Playlist</h3>
+            <p className="text-xs text-text-muted mt-1 truncate">
+              {playlistTrack ? `Track: ${playlistTrack.title}` : 'Select a playlist'}
+            </p>
+
+            {playlistPickerLoading ? (
+              <div className="flex items-center gap-2 text-xs text-text-muted mt-4">
+                <Loader2 size={12} className="animate-spin" />
+                Loading playlists...
+              </div>
+            ) : (
+              <>
+                <div className="mt-4">
+                  <label className="block text-[10px] font-mono text-text-muted uppercase tracking-wider mb-1.5">
+                    Playlist
+                  </label>
+                  <select
+                    value={selectedPlaylistId}
+                    onChange={e => setSelectedPlaylistId(e.target.value)}
+                    className="w-full bg-[#111] border border-[#2a2a2a] text-text-primary text-sm px-3 py-2 focus:outline-none focus:border-accent"
+                    disabled={playlistOptions.length === 0 || playlistPickerSaving}
+                  >
+                    {playlistOptions.length === 0 ? (
+                      <option value="">No playlists available</option>
+                    ) : (
+                      playlistOptions.map(pl => (
+                        <option key={pl.id} value={pl.id}>
+                          {pl.name} ({pl.track_count} tracks)
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </div>
+
+                {playlistPickerError && (
+                  <p className="text-xs text-danger mt-3">{playlistPickerError}</p>
+                )}
+              </>
+            )}
+
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                onClick={closePlaylistPicker}
+                disabled={playlistPickerSaving}
+                className="px-3 py-1.5 text-xs border border-[#333] text-text-muted hover:text-text-primary transition-colors disabled:opacity-40"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => navigate({ to: '/library/playlists' })}
+                disabled={playlistPickerSaving}
+                className="px-3 py-1.5 text-xs border border-[#333] text-text-muted hover:text-text-primary transition-colors disabled:opacity-40"
+              >
+                Open Playlists
+              </button>
+              <button
+                onClick={confirmAddToPlaylist}
+                disabled={
+                  playlistPickerLoading ||
+                  playlistPickerSaving ||
+                  !playlistTrack ||
+                  !selectedPlaylistId
+                }
+                className="px-3 py-1.5 text-xs bg-accent text-black hover:bg-accent/80 transition-colors disabled:opacity-40"
+              >
+                {playlistPickerSaving ? 'Adding...' : 'Add'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="h-4" />
     </div>
@@ -1746,3 +2039,4 @@ export function ReleaseDetailView({ releaseId }: ReleaseDetailViewProps) {
     </div>
   );
 }
+
