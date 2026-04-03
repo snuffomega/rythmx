@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 
 from fastapi.responses import JSONResponse
 
 from app.routes import acquisition
 from app.routes import forge
 from app.routes import library_enrich
+from app.routes import library_playlists
 from app.routes.library import albums, artists, audit, releases, tracks
 
 
@@ -487,7 +489,7 @@ def test_forge_build_publish_contract(monkeypatch):
         "created_at": "2026-04-02T20:00:00",
         "updated_at": "2026-04-02T20:00:00",
     }
-    calls = {"upsert": None, "status": None}
+    calls = {"upsert": None, "status": None, "library_cache": None}
 
     class _FakePusher:
         @staticmethod
@@ -511,18 +513,131 @@ def test_forge_build_publish_contract(monkeypatch):
         "update_forge_build_status",
         lambda build_id, status: calls.__setitem__("status", {"build_id": build_id, "status": status}) or True,
     )
+    monkeypatch.setattr(
+        forge,
+        "_sync_library_playlist_cache",
+        lambda **kwargs: calls.__setitem__("library_cache", kwargs)
+        or {
+            "id": "platform-123",
+            "name": kwargs["playlist_name"],
+            "source_platform": kwargs["platform"],
+            "track_count": 2,
+            "duration_ms": 300000,
+        },
+    )
 
     result = forge.forge_builds_publish("build-1", {"name": "Published Build 1"})
     assert result["status"] == "ok"
     assert result["platform"] == "navidrome"
     assert result["platform_playlist_id"] == "platform-123"
     assert result["playlist"]["id"] == "build-1"
+    assert result["library_playlist_cached"] is True
+    assert result["library_playlist"]["id"] == "platform-123"
     assert calls["upsert"] == {
         "playlist_id": "build-1",
         "name": "Published Build 1",
         "track_ids": ["trk-1", "trk-2"],
     }
     assert calls["status"] == {"build_id": "build-1", "status": "published"}
+    assert calls["library_cache"] == {
+        "playlist_id": "platform-123",
+        "playlist_name": "Published Build 1",
+        "platform": "navidrome",
+        "track_ids": ["trk-1", "trk-2"],
+    }
+
+
+def test_forge_publish_flow_visible_in_library_playlists(monkeypatch):
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """
+        CREATE TABLE lib_artists (id TEXT PRIMARY KEY, name TEXT);
+        CREATE TABLE lib_albums (id TEXT PRIMARY KEY, title TEXT);
+        CREATE TABLE lib_tracks (
+            id TEXT PRIMARY KEY,
+            title TEXT,
+            artist_id TEXT,
+            album_id TEXT,
+            duration INTEGER,
+            file_path TEXT
+        );
+        CREATE TABLE lib_playlists (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            source_platform TEXT NOT NULL,
+            cover_url TEXT,
+            track_count INTEGER NOT NULL DEFAULT 0,
+            duration_ms INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT,
+            synced_at TEXT
+        );
+        CREATE TABLE lib_playlist_tracks (
+            playlist_id TEXT NOT NULL,
+            track_id TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            PRIMARY KEY (playlist_id, track_id)
+        );
+        """
+    )
+    conn.executemany(
+        "INSERT INTO lib_artists (id, name) VALUES (?, ?)",
+        [("a1", "Artist 1"), ("a2", "Artist 2")],
+    )
+    conn.executemany(
+        "INSERT INTO lib_albums (id, title) VALUES (?, ?)",
+        [("al1", "Album 1"), ("al2", "Album 2")],
+    )
+    conn.executemany(
+        "INSERT INTO lib_tracks (id, title, artist_id, album_id, duration, file_path) VALUES (?, ?, ?, ?, ?, ?)",
+        [
+            ("trk-1", "Track One", "a1", "al1", 120000, None),
+            ("trk-2", "Track Two", "a2", "al2", 180000, None),
+        ],
+    )
+
+    fake_build = {
+        "id": "build-1",
+        "name": "Build 1",
+        "source": "manual",
+        "status": "ready",
+        "run_mode": "build",
+        "track_list": [{"track_id": "trk-1"}, {"track_id": "trk-2"}],
+        "summary": {},
+        "item_count": 2,
+        "created_at": "2026-04-02T20:00:00",
+        "updated_at": "2026-04-02T20:00:00",
+    }
+
+    class _FakePusher:
+        @staticmethod
+        def push_playlist(_name, _track_ids):
+            return "pl-123"
+
+    monkeypatch.setattr(forge.rythmx_store, "get_forge_build", lambda _build_id: fake_build)
+    monkeypatch.setattr(forge, "_get_library_platform", lambda: "navidrome")
+    monkeypatch.setattr(forge, "get_playlist_pusher", lambda: _FakePusher())
+    monkeypatch.setattr(forge.rythmx_store, "upsert_forge_playlist", lambda **_kwargs: {"id": "build-1"})
+    monkeypatch.setattr(forge.rythmx_store, "update_forge_build_status", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(forge.rythmx_store, "_connect", lambda: conn)
+    monkeypatch.setattr(library_playlists.rythmx_store, "_connect", lambda: conn)
+
+    publish_result = forge.forge_builds_publish("build-1", {"name": "Published Build"})
+    assert publish_result["status"] == "ok"
+    assert publish_result["platform_playlist_id"] == "pl-123"
+    assert publish_result["library_playlist_cached"] is True
+    assert publish_result["library_playlist"]["id"] == "pl-123"
+    assert publish_result["library_playlist"]["track_count"] == 2
+
+    listed = library_playlists.list_playlists()
+    assert listed["status"] == "ok"
+    assert len(listed["playlists"]) == 1
+    assert listed["playlists"][0]["id"] == "pl-123"
+    assert listed["playlists"][0]["name"] == "Published Build"
+
+    track_rows = library_playlists.get_playlist_tracks("pl-123")
+    assert track_rows["status"] == "ok"
+    assert [t["track_id"] for t in track_rows["tracks"]] == ["trk-1", "trk-2"]
 
 
 def test_forge_build_publish_jellyfin_stub(monkeypatch):

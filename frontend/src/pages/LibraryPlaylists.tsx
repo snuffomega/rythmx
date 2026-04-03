@@ -23,6 +23,7 @@ import {
   ListMusic,
   Clock,
 } from 'lucide-react';
+import { useNavigate } from '@tanstack/react-router';
 import { libraryPlaylistsApi } from '../services/api';
 import { usePlayerStore } from '../stores/usePlayerStore';
 import { ConfirmDialog } from '../components/ConfirmDialog';
@@ -392,6 +393,7 @@ function PlaylistCard({
 // Main page
 // ---------------------------------------------------------------------------
 export function LibraryPlaylists({ toast }: LibraryPlaylistsProps) {
+  const navigate = useNavigate();
   const [playlists, setPlaylists] = useState<LibPlaylist[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -454,6 +456,35 @@ export function LibraryPlaylists({ toast }: LibraryPlaylistsProps) {
 
   return (
     <div className="flex flex-col h-full">
+      {/* Library tabs */}
+      <div className="px-6 pt-4">
+        <div className="flex gap-1 bg-[#111] p-0.5 rounded-sm w-fit">
+          <button
+            onClick={() => navigate({ to: '/library' })}
+            className="px-4 py-1.5 text-sm font-medium rounded-sm transition-colors capitalize text-text-muted hover:text-text-secondary"
+          >
+            artists
+          </button>
+          <button
+            onClick={() => navigate({ to: '/library' })}
+            className="px-4 py-1.5 text-sm font-medium rounded-sm transition-colors capitalize text-text-muted hover:text-text-secondary"
+          >
+            albums
+          </button>
+          <button
+            onClick={() => navigate({ to: '/library' })}
+            className="px-4 py-1.5 text-sm font-medium rounded-sm transition-colors capitalize text-text-muted hover:text-text-secondary"
+          >
+            tracks
+          </button>
+          <button
+            className="px-4 py-1.5 text-sm font-medium rounded-sm transition-colors capitalize bg-[#1e1e1e] text-text-primary"
+          >
+            playlists
+          </button>
+        </div>
+      </div>
+
       {/* Toolbar */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-[#1e1e1e] shrink-0">
         <h1 className="text-lg font-semibold text-text-primary">Playlists</h1>

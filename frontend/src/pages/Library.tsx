@@ -1009,6 +1009,7 @@ const AZ_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ#'.split('');
 
 
 export function LibraryRoot() {
+  const navigate = useNavigate();
   const [tab, setTab] = useState<Tab>('artists');
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [search, setSearch] = useState('');
@@ -1133,6 +1134,10 @@ export function LibraryRoot() {
     setSearch('');
   };
 
+  const handlePlaylistsTab = () => {
+    navigate({ to: '/library/playlists' });
+  };
+
   // Root view
   const footerText = loading ? null
     : tab === 'artists' ? `${totalArtists} artist${totalArtists !== 1 ? 's' : ''}`
@@ -1195,6 +1200,12 @@ export function LibraryRoot() {
                 {t}
               </button>
             ))}
+            <button
+              onClick={handlePlaylistsTab}
+              className="px-4 py-1.5 text-sm font-medium rounded-sm transition-colors capitalize text-text-muted hover:text-text-secondary"
+            >
+              playlists
+            </button>
           </div>
 
           <div className="flex items-center gap-1.5 flex-wrap">

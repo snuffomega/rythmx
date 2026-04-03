@@ -1,5 +1,6 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
 import { Download, Layers, Loader2, RefreshCw, Send, Trash2 } from 'lucide-react';
+import { useNavigate } from '@tanstack/react-router';
 import { useApi } from '../hooks/useApi';
 import { forgeBuildsApi, settingsApi } from '../services/api';
 import { useToastStore } from '../stores/useToastStore';
@@ -70,6 +71,7 @@ function BuildCard({
 }
 
 export function ForgeBuilder() {
+  const navigate = useNavigate();
   const toastSuccess = useToastStore(s => s.success);
   const toastError = useToastStore(s => s.error);
 
@@ -143,6 +145,7 @@ export function ForgeBuilder() {
         `Published "${result.playlist.name}" (${result.playlist.track_count} tracks) to ${result.platform}`
       );
       refetch();
+      navigate({ to: '/library/playlists' });
     } catch (err) {
       toastError(extractErrorMessage(err, 'Failed to publish build'));
     } finally {
@@ -370,3 +373,4 @@ export function ForgeBuilder() {
     </div>
   );
 }
+

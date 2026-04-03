@@ -121,6 +121,75 @@ def _push_playlist(pusher: Any, playlist_name: str, track_ids: list[str]) -> str
     return None
 
 
+def _sync_library_playlist_cache(
+    *,
+    playlist_id: str,
+    playlist_name: str,
+    platform: str,
+    track_ids: list[str],
+) -> dict[str, Any]:
+    """
+    Upsert a published playlist into lib_playlists/lib_playlist_tracks so it is
+    immediately visible in Library UX without waiting for a full sync run.
+    """
+    ordered_ids: list[str] = []
+    seen: set[str] = set()
+    for raw in track_ids:
+        tid = str(raw or "").strip()
+        if not tid or tid in seen:
+            continue
+        seen.add(tid)
+        ordered_ids.append(tid)
+
+    now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+
+    with rythmx_store._connect() as conn:
+        durations: dict[str, int] = {}
+        if ordered_ids:
+            placeholders = ",".join("?" for _ in ordered_ids)
+            rows = conn.execute(
+                f"SELECT id, duration FROM lib_tracks WHERE id IN ({placeholders})",
+                tuple(ordered_ids),
+            ).fetchall()
+            durations = {str(r["id"]): int(r["duration"] or 0) for r in rows}
+
+        publishable_ids = [tid for tid in ordered_ids if tid in durations]
+        duration_ms = sum(durations[tid] for tid in publishable_ids)
+
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO lib_playlists
+                (id, name, source_platform, cover_url, track_count, duration_ms, updated_at, synced_at)
+            VALUES (?, ?, ?, NULL, ?, ?, ?, CURRENT_TIMESTAMP)
+            """,
+            (
+                playlist_id,
+                playlist_name,
+                platform,
+                len(publishable_ids),
+                duration_ms,
+                now,
+            ),
+        )
+        conn.execute("DELETE FROM lib_playlist_tracks WHERE playlist_id = ?", (playlist_id,))
+        for pos, track_id in enumerate(publishable_ids):
+            conn.execute(
+                """
+                INSERT INTO lib_playlist_tracks (playlist_id, track_id, position)
+                VALUES (?, ?, ?)
+                """,
+                (playlist_id, track_id, pos),
+            )
+
+    return {
+        "id": playlist_id,
+        "name": playlist_name,
+        "source_platform": platform,
+        "track_count": len(publishable_ids),
+        "duration_ms": duration_ms,
+    }
+
+
 def _detect_sync_source(source_url: str) -> str | None:
     parsed = urlparse(source_url)
     host = parsed.netloc.lower()
@@ -528,10 +597,19 @@ def forge_builds_publish(build_id: str, data: Optional[dict[str, Any]] = Body(de
     )
     rythmx_store.update_forge_build_status(build_id, "published")
 
+    library_playlist = _sync_library_playlist_cache(
+        playlist_id=str(platform_playlist_id),
+        playlist_name=playlist_name,
+        platform=platform,
+        track_ids=track_ids,
+    )
+
     return {
         "status": "ok",
         "build_id": build_id,
         "playlist": playlist,
+        "library_playlist": library_playlist,
+        "library_playlist_cached": True,
         "platform": platform,
         "platform_playlist_id": str(platform_playlist_id),
     }
