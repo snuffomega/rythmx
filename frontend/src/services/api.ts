@@ -362,6 +362,8 @@ export const forgeNewMusicApi = {
   getResults: () =>
     request<{ status: string; releases: DiscoveredRelease[] }>('/forge/new-music/results')
       .then(r => r.releases),
+  clear: () =>
+    request<{ status: string }>('/forge/new-music/clear', { method: 'POST' }),
 };
 
 export const forgeBuildsApi = {

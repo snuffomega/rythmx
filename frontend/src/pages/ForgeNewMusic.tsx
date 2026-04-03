@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Zap, ChevronDown, ChevronUp, Music2 } from 'lucide-react';
+import { Zap, ChevronDown, ChevronUp, Music2, Trash2 } from 'lucide-react';
 import { useNavigate } from '@tanstack/react-router';
 import { forgeBuildsApi, forgeNewMusicApi } from '../services/api';
 import { useToastStore } from '../stores/useToastStore';
@@ -71,6 +71,17 @@ export function ForgeNewMusic() {
     setConfig(c => ({ ...c, [key]: value }));
 
   const periodIdx = Math.max(0, PERIOD_VALUES.indexOf(config.nm_period as typeof PERIOD_VALUES[number]));
+
+  const handleClear = async () => {
+    try {
+      await forgeNewMusicApi.clear();
+      setResults(null);
+      setRunSummary(null);
+      toastSuccess('Results cleared');
+    } catch {
+      toastError('Clear failed');
+    }
+  };
 
   // Load config + existing results on mount
   useEffect(() => {
@@ -219,36 +230,52 @@ export function ForgeNewMusic() {
       {/* Config panel — always visible */}
       <div className="bg-[#0a0a0a] border border-[#1a1a1a] p-5 space-y-6">
 
-        {/* Listening period — slider */}
+        {/* Listening period — custom dot slider */}
         <div>
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex items-end justify-between mb-4">
             <label className="text-xs font-semibold text-text-muted uppercase tracking-widest">
               Listening period
             </label>
-            <span className="text-accent text-xs font-semibold">{PERIOD_LABELS[periodIdx]}</span>
+            <span className="text-2xl font-bold text-text-primary leading-none">
+              {PERIOD_LABELS[periodIdx]}
+            </span>
           </div>
-          <input
-            type="range"
-            min={0}
-            max={5}
-            step={1}
-            value={periodIdx}
-            onChange={e => update('nm_period', PERIOD_VALUES[+e.target.value] as NewMusicConfig['nm_period'])}
-            className="w-full h-px bg-[#2a2a2a] appearance-none cursor-pointer
-              [&::-webkit-slider-thumb]:appearance-none
-              [&::-webkit-slider-thumb]:w-3
-              [&::-webkit-slider-thumb]:h-3
-              [&::-webkit-slider-thumb]:rounded-full
-              [&::-webkit-slider-thumb]:bg-accent
-              [&::-webkit-slider-thumb]:cursor-pointer
-              [&::-moz-range-thumb]:w-3
-              [&::-moz-range-thumb]:h-3
-              [&::-moz-range-thumb]:rounded-full
-              [&::-moz-range-thumb]:bg-accent
-              [&::-moz-range-thumb]:border-0
-              [&::-moz-range-thumb]:cursor-pointer"
-          />
-          <div className="flex justify-between mt-2">
+
+          {/* Track + dots */}
+          <div className="relative flex items-center h-6">
+            {/* Background track */}
+            <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-px bg-[#2a2a2a]" />
+            {/* Filled track */}
+            <div
+              className="absolute left-0 top-1/2 -translate-y-1/2 h-px transition-all duration-200"
+              style={{
+                width: `${(periodIdx / 5) * 100}%`,
+                backgroundColor: '#D4F53C',
+              }}
+            />
+            {/* Dots */}
+            <div className="relative flex justify-between w-full">
+              {PERIOD_LABELS.map((label, i) => (
+                <button
+                  key={i}
+                  onClick={() => update('nm_period', PERIOD_VALUES[i] as NewMusicConfig['nm_period'])}
+                  className="flex flex-col items-center gap-2 group"
+                  title={label}
+                >
+                  <div className={`w-2.5 h-2.5 rounded-full border transition-all duration-150 ${
+                    i <= periodIdx
+                      ? 'border-transparent'
+                      : 'bg-[#111] border-[#333] group-hover:border-[#555]'
+                  }`}
+                    style={i <= periodIdx ? { backgroundColor: '#D4F53C' } : undefined}
+                  />
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Period labels below dots */}
+          <div className="flex justify-between mt-1.5">
             {PERIOD_LABELS.map((label, i) => (
               <span
                 key={i}
@@ -258,12 +285,12 @@ export function ForgeNewMusic() {
               </span>
             ))}
           </div>
-          <p className="text-[#444] text-[11px] mt-1.5">How far back in your listening history to look for seed artists.</p>
+          <p className="text-[#444] text-[11px] mt-2">How far back in your listening history to look for seed artists.</p>
         </div>
 
-        {/* Release window + Min listens — same row */}
+        {/* Release window + Min listens — same row, left-aligned */}
         <div className="flex items-start gap-8">
-          <div className="flex-1">
+          <div>
             <label className="block text-xs font-semibold text-text-muted uppercase tracking-widest mb-2">
               Release window
             </label>
@@ -290,8 +317,8 @@ export function ForgeNewMusic() {
           </div>
         </div>
 
-        {/* Release types + Match mode — same row, two columns */}
-        <div className="grid grid-cols-2 gap-6">
+        {/* Release types + Match mode — same row, left-aligned */}
+        <div className="flex items-start gap-8 flex-wrap">
           <div>
             <label className="block text-xs font-semibold text-text-muted uppercase tracking-widest mb-2">
               Release types
@@ -359,6 +386,22 @@ export function ForgeNewMusic() {
                   className="w-full bg-[#111] border border-[#2a2a2a] text-text-primary text-sm px-3 py-1.5 placeholder:text-[#333] focus:outline-none focus:border-accent"
                 />
                 <p className="text-[#444] text-[11px] mt-1">Comma-separated artist names to skip.</p>
+              </div>
+
+              {/* Clear results */}
+              <div>
+                <label className="block text-xs font-semibold text-text-muted uppercase tracking-widest mb-2">
+                  Results
+                </label>
+                <button
+                  onClick={handleClear}
+                  disabled={running || !results?.length}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-[#555] border border-[#222] hover:border-danger hover:text-danger transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  <Trash2 size={11} />
+                  Clear results
+                </button>
+                <p className="text-[#444] text-[11px] mt-1">Removes stored results from the database.</p>
               </div>
 
               <div>

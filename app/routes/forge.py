@@ -311,6 +311,16 @@ def nm_get_results():
     return {"status": "ok", "releases": releases}
 
 
+@router.post("/forge/new-music/clear")
+def nm_clear():
+    """Clear all discovered releases and artists (Tier 2 — rebuildable)."""
+    with rythmx_store._connect() as conn:
+        conn.execute("DELETE FROM forge_discovered_releases")
+        conn.execute("DELETE FROM forge_discovered_artists")
+    logger.info("new_music: manually cleared forge_discovered tables")
+    return {"status": "ok"}
+
+
 def _get_discovered_releases() -> list[dict]:
     """
     Query forge_discovered_releases JOIN forge_discovered_artists.
