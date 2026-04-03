@@ -199,6 +199,30 @@ class PipelineRunner:
                 result["status"] = "stopped"
                 return result
 
+            # === Stage 1.2: Album Artwork Local Storage ===
+            self._set_phase("album_art", on_phase)
+            try:
+                from app.services.enrichment.art_album import enrich_album_art
+                album_art_result = enrich_album_art(
+                    batch_size=500,
+                    stop_event=stop_event,
+                    on_progress=self._progress_fn(on_progress, "album_art"),
+                )
+                result["album_art"] = album_art_result
+                logger.info(
+                    "PipelineRunner: album_art - enriched=%d skipped=%d failed=%d remaining=%d",
+                    album_art_result.get("enriched", 0),
+                    album_art_result.get("skipped", 0),
+                    album_art_result.get("failed", 0),
+                    album_art_result.get("remaining", 0),
+                )
+            except Exception as e:
+                logger.warning("PipelineRunner: album_art failed: %s", e)
+
+            if self._stopped(stop_event):
+                result["status"] = "stopped"
+                return result
+
             # === Stage 2a: iTunes/Deezer IDs (sequential — feeds catalog promotion) ===
             self._set_phase("id_itunes_deezer", on_phase)
             modified_artist_ids: list[str] = []
@@ -368,6 +392,25 @@ class PipelineRunner:
                         future.result()
                     except Exception as e:
                         logger.error("PipelineRunner: Stage 3 '%s' failed: %s", key, e)
+
+            if self._stopped(stop_event):
+                result["status"] = "stopped"
+                return result
+
+            # === Post-Stage-3: low-priority album artwork pre-warmer ===
+            self._set_phase("album_art_prewarm", on_phase)
+            try:
+                from app.services.enrichment.art_album import prewarm_album_art_cache
+                prewarm_result = prewarm_album_art_cache(size=300, limit=2000)
+                result["album_art_prewarm"] = prewarm_result
+                logger.info(
+                    "PipelineRunner: album_art_prewarm - warmed=%d errors=%d candidates=%d",
+                    prewarm_result.get("warmed", 0),
+                    prewarm_result.get("errors", 0),
+                    prewarm_result.get("candidates", 0),
+                )
+            except Exception as e:
+                logger.warning("PipelineRunner: album_art_prewarm failed: %s", e)
 
             # === Pipeline complete ===
             if self._stopped(stop_event):
