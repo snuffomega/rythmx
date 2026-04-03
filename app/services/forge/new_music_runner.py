@@ -406,7 +406,7 @@ def write_discovered(artists: list[dict], releases: list[dict]) -> None:
 def run_new_music_pipeline(config_override: dict | None = None) -> dict:
     """
     Run the full New Music pipeline.
-    Returns summary: {artists_checked, neighbors_found, releases_found, releases: [...]}
+    Returns summary: {artists_checked, releases_found, filtered_releases: [...]}
     """
     cfg = get_config()
     if config_override:
