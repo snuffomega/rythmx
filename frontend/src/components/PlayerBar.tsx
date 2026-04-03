@@ -1,17 +1,13 @@
 /**
  * PlayerBar - mini player bar fixed at the bottom of the app layout.
- *
- * Reads playback state from usePlayerStore.
- * Seek and volume changes are forwarded to useAudioEngine handlers via props.
  */
 import {
   Play, Pause, SkipBack, SkipForward,
-  Volume2, Repeat, Shuffle, ListPlus, Maximize2, Disc,
+  Volume2, Repeat, Shuffle, ListPlus, Maximize2, Disc, Star,
 } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { usePlayerStore } from '../stores/usePlayerStore';
-import { AudioQualityBadge } from './common';
 import { useImage } from '../hooks/useImage';
 import { libraryBrowseApi } from '../services/api';
 
@@ -26,10 +22,10 @@ interface PlayerBarProps {
 function TrackArt({ thumbUrl, title, artist }: { thumbUrl: string | null; title: string; artist: string }) {
   const resolved = useImage('album', title, artist);
   const src = thumbUrl ?? resolved ?? null;
-  if (src) return <img src={src} alt="" className="w-12 h-12 object-cover rounded-sm flex-shrink-0" />;
+  if (src) return <img src={src} alt="" className="w-16 h-16 object-cover rounded-sm flex-shrink-0" />;
   return (
-    <div className="w-12 h-12 bg-[#1a1a1a] rounded-sm flex-shrink-0 flex items-center justify-center border border-[#222]">
-      <Disc size={20} className="text-text-muted" />
+    <div className="w-16 h-16 bg-[#1a1a1a] rounded-sm flex-shrink-0 flex items-center justify-center border border-[#222]">
+      <Disc size={24} className="text-text-muted" />
     </div>
   );
 }
@@ -37,6 +33,8 @@ function TrackArt({ thumbUrl, title, artist }: { thumbUrl: string | null; title:
 export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeChange }: PlayerBarProps) {
   const navigate = useNavigate();
   const [artistNavLoading, setArtistNavLoading] = useState(false);
+  const [ratingByTrack, setRatingByTrack] = useState<Record<string, number>>({});
+  const [hoverRating, setHoverRating] = useState(0);
   const {
     currentTrack,
     queue,
@@ -55,6 +53,8 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
   const volumeRef = useRef<HTMLDivElement>(null);
 
   const progressPct = duration > 0 ? (position / duration) * 100 : 0;
+  const currentRating = currentTrack ? ratingByTrack[currentTrack.id] ?? 0 : 0;
+  const activeRating = hoverRating || currentRating;
 
   function handleProgressClick(e: React.MouseEvent<HTMLDivElement>) {
     if (!progressRef.current || duration <= 0) return;
@@ -87,55 +87,67 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
     }
   }
 
+  async function handleRate(star: number) {
+    if (!currentTrack) return;
+    const next = star === currentRating ? 0 : star;
+    setRatingByTrack((prev) => ({ ...prev, [currentTrack.id]: next }));
+    try {
+      await libraryBrowseApi.rateTrack(currentTrack.id, next * 2);
+    } catch {
+      // Keep mini-bar interaction optimistic and non-blocking.
+    }
+  }
+
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-30 h-[80px] bg-[#0a0a0a] border-t border-[#1a1a1a] flex items-center px-5 gap-5">
-      <div className="flex items-center gap-3.5 w-[280px] min-w-0">
-        <button
-          onClick={onExpand}
-          disabled={!currentTrack}
-          className="rounded-sm transition-all hover:brightness-110 active:scale-95 disabled:opacity-60 disabled:cursor-default"
-          aria-label="Open large player"
-          title="Open large player"
-        >
-          <TrackArt
-            thumbUrl={currentTrack?.thumb_url ?? null}
-            title={currentTrack?.album ?? ''}
-            artist={currentTrack?.artist ?? ''}
-          />
-        </button>
-        <div className="min-w-0 flex-1">
-          <p className="text-[15px] text-text-primary truncate leading-tight">
-            {currentTrack?.title ?? 'Nothing playing'}
-          </p>
-          <button
-            onClick={handleArtistClick}
-            disabled={!currentTrack?.artist || artistNavLoading}
-            className="font-mono text-[13px] text-text-secondary hover:text-accent truncate leading-tight mt-0.5 transition-colors text-left max-w-full disabled:cursor-default disabled:hover:text-text-secondary"
-            title={currentTrack?.artist ? `Open ${currentTrack.artist}` : undefined}
-          >
-            {currentTrack?.artist ?? '-'}
-          </button>
-          {currentTrack && (
-            <div className="mt-0.5">
-              <AudioQualityBadge
-                codec={currentTrack.codec}
-                bitrate={currentTrack.bitrate}
-                bit_depth={currentTrack.bit_depth}
-                sample_rate={currentTrack.sample_rate}
-              />
-            </div>
-          )}
-        </div>
+    <div className="fixed bottom-0 left-0 right-0 z-30 h-[96px] bg-[#0a0a0a] border-t border-[#1a1a1a]">
+      <div
+        ref={progressRef}
+        onClick={handleProgressClick}
+        className="absolute top-0 left-0 right-0 h-[4px] bg-[#1a1a1a] cursor-pointer"
+      >
+        <div className="absolute top-0 left-0 h-full bg-accent" style={{ width: `${progressPct}%` }} />
       </div>
 
-      <div className="flex-1 flex flex-col items-center justify-center gap-1.5 max-w-[640px] mx-auto">
-        <div className="flex items-center gap-5">
+      <div className="h-full pt-[8px] px-6 flex items-center gap-6">
+        <div className="flex items-center gap-4 w-[360px] min-w-0">
+          <button
+            onClick={onExpand}
+            disabled={!currentTrack}
+            className="rounded-sm transition-all hover:brightness-110 active:scale-95 disabled:opacity-60 disabled:cursor-default"
+            aria-label="Open large player"
+            title="Open large player"
+          >
+            <TrackArt
+              thumbUrl={currentTrack?.thumb_url ?? null}
+              title={currentTrack?.album ?? ''}
+              artist={currentTrack?.artist ?? ''}
+            />
+          </button>
+          <div className="min-w-0 flex-1">
+            <p className="text-[16px] text-text-primary truncate leading-tight">
+              {currentTrack?.title ?? 'Nothing playing'}
+            </p>
+            <button
+              onClick={handleArtistClick}
+              disabled={!currentTrack?.artist || artistNavLoading}
+              className="font-mono text-[14px] text-text-secondary hover:text-accent truncate leading-tight mt-0.5 transition-colors text-left max-w-full disabled:cursor-default disabled:hover:text-text-secondary"
+              title={currentTrack?.artist ? `Open ${currentTrack.artist}` : undefined}
+            >
+              {currentTrack?.artist ?? '-'}
+            </button>
+          </div>
+        </div>
+
+        <div className="flex-1 flex items-center justify-center gap-4">
+          <span className="font-mono text-[12px] text-text-muted tabular-nums">
+            {formattedPosition} / {formattedDuration}
+          </span>
           <button
             onClick={toggleShuffle}
             className={`transition-colors ${shuffle ? 'text-accent' : 'text-text-muted hover:text-text-secondary'}`}
             aria-label="Shuffle"
           >
-            <Shuffle size={15} />
+            <Shuffle size={17} />
           </button>
           <button
             onClick={prevTrack}
@@ -143,17 +155,17 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
             aria-label="Previous"
             disabled={!currentTrack}
           >
-            <SkipBack size={18} />
+            <SkipBack size={20} />
           </button>
           <button
             onClick={onPlayPause}
             aria-label={isPlaying ? 'Pause' : 'Play'}
             disabled={!currentTrack}
-            className="w-9 h-9 rounded-full bg-accent hover:bg-accent/80 flex items-center justify-center transition-colors disabled:opacity-40"
+            className="w-11 h-11 rounded-full bg-accent hover:bg-accent/80 flex items-center justify-center transition-colors disabled:opacity-40"
           >
             {isPlaying
-              ? <Pause size={16} className="text-black" />
-              : <Play size={16} className="text-black ml-0.5" />}
+              ? <Pause size={18} className="text-black" />
+              : <Play size={18} className="text-black ml-0.5" />}
           </button>
           <button
             onClick={nextTrack}
@@ -161,71 +173,63 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
             aria-label="Next"
             disabled={!currentTrack}
           >
-            <SkipForward size={18} />
+            <SkipForward size={20} />
           </button>
           <button className="text-text-muted hover:text-text-secondary transition-colors" aria-label="Repeat">
-            <Repeat size={15} />
+            <Repeat size={17} />
           </button>
+          <div className="flex items-center gap-0.5" onMouseLeave={() => setHoverRating(0)}>
+            {[1, 2, 3, 4, 5].map((star) => (
+              <button
+                key={star}
+                onMouseEnter={() => setHoverRating(star)}
+                onClick={() => handleRate(star)}
+                className="transition-colors"
+                aria-label={`Rate ${star} stars`}
+              >
+                <Star
+                  size={13}
+                  className={star <= activeRating ? 'text-accent' : 'text-text-muted'}
+                  fill={star <= activeRating ? 'currentColor' : 'none'}
+                />
+              </button>
+            ))}
+          </div>
         </div>
 
-        <div className="w-full flex items-center gap-2.5">
-          <span className="font-mono text-[11px] text-text-muted tabular-nums w-9 text-right">
-            {formattedPosition}
-          </span>
+        <div className="flex items-center gap-3 w-[240px] justify-end">
+          {queue.length > 0 && (
+            <span className="font-mono text-[12px] text-text-muted tabular-nums">
+              {usePlayerStore.getState().queueIndex + 1}/{queue.length}
+            </span>
+          )}
+          <button className="text-text-muted hover:text-text-secondary transition-colors" aria-label="Queue" title="Queue">
+            <ListPlus size={18} />
+          </button>
+          <button
+            onClick={onExpand}
+            className="text-text-muted hover:text-text-secondary transition-colors"
+            aria-label="Open large player"
+            title="Open large player"
+          >
+            <Maximize2 size={16} />
+          </button>
+          <div className="w-px h-5 bg-[#222] mx-1" />
+          <Volume2 size={17} className="text-text-secondary flex-shrink-0" />
           <div
-            ref={progressRef}
-            onClick={handleProgressClick}
-            className="flex-1 h-1 bg-[#1a1a1a] rounded-full relative cursor-pointer group"
+            ref={volumeRef}
+            onClick={handleVolumeClick}
+            className="w-24 h-[3px] bg-[#1a1a1a] rounded-full relative cursor-pointer group"
           >
             <div
-              className="absolute top-0 left-0 h-full bg-accent rounded-full pointer-events-none"
-              style={{ width: `${progressPct}%` }}
+              className="absolute top-0 left-0 h-full bg-text-secondary rounded-full pointer-events-none"
+              style={{ width: `${volume * 100}%` }}
             />
             <div
-              className="absolute top-1/2 -translate-y-1/2 w-2.5 h-2.5 bg-accent rounded-full opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
-              style={{ left: `${progressPct}%`, marginLeft: '-5px' }}
+              className="absolute top-1/2 -translate-y-1/2 w-2.5 h-2.5 bg-text-primary rounded-full opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
+              style={{ left: `${volume * 100}%`, marginLeft: '-5px' }}
             />
           </div>
-          <span className="font-mono text-[11px] text-text-muted tabular-nums w-9">
-            {formattedDuration}
-          </span>
-        </div>
-      </div>
-
-      <div className="flex items-center gap-3 w-[200px] justify-end">
-        {queue.length > 0 && (
-          <span className="font-mono text-[11px] text-text-muted tabular-nums">
-            {usePlayerStore.getState().queueIndex + 1}/{queue.length}
-          </span>
-        )}
-        <button className="text-text-muted hover:text-text-secondary transition-colors" aria-label="Queue" title="Queue">
-          <ListPlus size={16} />
-        </button>
-        <button
-          onClick={onExpand}
-          className="text-text-muted hover:text-text-secondary transition-colors"
-          aria-label="Open large player"
-          title="Open large player"
-        >
-          <Maximize2 size={14} />
-        </button>
-
-        <div className="w-px h-4 bg-[#222] mx-1" />
-
-        <Volume2 size={15} className="text-text-secondary flex-shrink-0" />
-        <div
-          ref={volumeRef}
-          onClick={handleVolumeClick}
-          className="w-20 h-1 bg-[#1a1a1a] rounded-full relative cursor-pointer group"
-        >
-          <div
-            className="absolute top-0 left-0 h-full bg-text-secondary rounded-full pointer-events-none"
-            style={{ width: `${volume * 100}%` }}
-          />
-          <div
-            className="absolute top-1/2 -translate-y-1/2 w-2 h-2 bg-text-primary rounded-full opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
-            style={{ left: `${volume * 100}%`, marginLeft: '-4px' }}
-          />
         </div>
       </div>
     </div>
