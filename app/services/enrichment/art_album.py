@@ -112,6 +112,42 @@ def _extract_embedded_art(file_path: str) -> bytes | None:
     return None
 
 
+def _extract_sidecar_art(file_path: str) -> bytes | None:
+    """
+    Look for common album sidecar artwork files in the track's directory.
+
+    This is the local-file fallback when tracks do not embed APIC/PICTURE bytes.
+    """
+    folder = os.path.dirname(file_path)
+    if not folder:
+        return None
+
+    candidates = (
+        "cover.jpg",
+        "cover.jpeg",
+        "cover.png",
+        "folder.jpg",
+        "folder.jpeg",
+        "folder.png",
+        "front.jpg",
+        "front.jpeg",
+        "front.png",
+    )
+
+    for name in candidates:
+        candidate = os.path.join(folder, name)
+        if not os.path.isfile(candidate):
+            continue
+        try:
+            with open(candidate, "rb") as fh:
+                payload = fh.read()
+            if payload:
+                return payload
+        except OSError as exc:
+            logger.debug("art_album: failed reading sidecar art %s: %s", candidate, exc)
+    return None
+
+
 def _itunes_artwork_url(itunes_album_id: str) -> str:
     if not itunes_album_id:
         return ""
@@ -185,13 +221,18 @@ def _process_item(conn, row):
     source = ""
     source_url: str | None = None
 
-    # Priority 1: embedded artwork for local-file-backed navidrome libraries.
+    # Priority 1: local file artwork for navidrome-backed libraries.
+    # Order inside tier-1: embedded APIC/PICTURE -> sidecar cover files.
     if source_platform == "navidrome" and config.MUSIC_DIR and sample_file_path:
         abs_path = os.path.join(config.MUSIC_DIR, str(sample_file_path).lstrip("/\\"))
         if os.path.isfile(abs_path):
             payload = _extract_embedded_art(abs_path)
             if payload:
                 source = "embedded"
+            if payload is None:
+                payload = _extract_sidecar_art(abs_path)
+                if payload:
+                    source = "embedded"
 
     # Priority 2: Deezer cover URL from Stage 2a promotion.
     if payload is None and thumb_url_deezer:
