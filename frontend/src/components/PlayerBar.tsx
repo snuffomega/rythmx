@@ -108,7 +108,7 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
         <div className="absolute top-0 left-0 h-full bg-accent" style={{ width: `${progressPct}%` }} />
       </div>
 
-      <div className="h-full pt-[8px] px-6 flex items-center gap-6">
+      <div className="h-full pt-[8px] pl-[72px] pr-6 flex items-center gap-6">
         <div className="flex items-center gap-4 w-[360px] min-w-0">
           <button
             onClick={onExpand}
@@ -138,62 +138,66 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
           </div>
         </div>
 
-        <div className="flex-1 flex items-center justify-center gap-4">
-          <span className="font-mono text-[12px] text-text-muted tabular-nums">
-            {formattedPosition} / {formattedDuration}
-          </span>
-          <button
-            onClick={toggleShuffle}
-            className={`transition-colors ${shuffle ? 'text-accent' : 'text-text-muted hover:text-text-secondary'}`}
-            aria-label="Shuffle"
-          >
-            <Shuffle size={17} />
-          </button>
-          <button
-            onClick={prevTrack}
-            className="text-text-secondary hover:text-text-primary transition-colors"
-            aria-label="Previous"
-            disabled={!currentTrack}
-          >
-            <SkipBack size={20} />
-          </button>
-          <button
-            onClick={onPlayPause}
-            aria-label={isPlaying ? 'Pause' : 'Play'}
-            disabled={!currentTrack}
-            className="w-11 h-11 rounded-full bg-accent hover:bg-accent/80 flex items-center justify-center transition-colors disabled:opacity-40"
-          >
-            {isPlaying
-              ? <Pause size={18} className="text-black" />
-              : <Play size={18} className="text-black ml-0.5" />}
-          </button>
-          <button
-            onClick={nextTrack}
-            className="text-text-secondary hover:text-text-primary transition-colors"
-            aria-label="Next"
-            disabled={!currentTrack}
-          >
-            <SkipForward size={20} />
-          </button>
-          <button className="text-text-muted hover:text-text-secondary transition-colors" aria-label="Repeat">
-            <Repeat size={17} />
-          </button>
-          <div className="flex items-center gap-0.5" onMouseLeave={() => setHoverRating(0)}>
-            {[1, 2, 3, 4, 5].map((star) => (
-              <button
-                key={star}
-                onMouseEnter={() => setHoverRating(star)}
-                onClick={() => handleRate(star)}
-                className="transition-colors"
-                aria-label={`Rate ${star} stars`}
-              >
-                <Star
-                  size={13}
-                  className={star <= activeRating ? 'text-accent' : 'text-text-muted'}
-                  fill={star <= activeRating ? 'currentColor' : 'none'}
-                />
-              </button>
-            ))}
+        <div className="flex-1 flex items-center justify-center gap-5">
+          <div className="w-[124px] flex flex-col items-center justify-center">
+            <div className="h-[18px] flex items-center gap-0.5" onMouseLeave={() => setHoverRating(0)}>
+              {[1, 2, 3, 4, 5].map((star) => (
+                <button
+                  key={star}
+                  onMouseEnter={() => setHoverRating(star)}
+                  onClick={() => handleRate(star)}
+                  className="transition-colors"
+                  aria-label={`Rate ${star} stars`}
+                >
+                  <Star
+                    size={13}
+                    className={star <= activeRating ? 'text-accent' : 'text-text-muted'}
+                    fill={star <= activeRating ? 'currentColor' : 'none'}
+                  />
+                </button>
+              ))}
+            </div>
+            <span className="h-[18px] font-mono text-[12px] text-text-muted tabular-nums leading-[18px]">
+              {formattedPosition} / {formattedDuration}
+            </span>
+          </div>
+          <div className="flex items-center gap-4">
+            <button
+              onClick={toggleShuffle}
+              className={`transition-colors ${shuffle ? 'text-accent' : 'text-text-muted hover:text-text-secondary'}`}
+              aria-label="Shuffle"
+            >
+              <Shuffle size={17} />
+            </button>
+            <button
+              onClick={prevTrack}
+              className="text-text-secondary hover:text-text-primary transition-colors"
+              aria-label="Previous"
+              disabled={!currentTrack}
+            >
+              <SkipBack size={20} />
+            </button>
+            <button
+              onClick={onPlayPause}
+              aria-label={isPlaying ? 'Pause' : 'Play'}
+              disabled={!currentTrack}
+              className="w-11 h-11 rounded-full bg-accent hover:bg-accent/80 flex items-center justify-center transition-colors disabled:opacity-40"
+            >
+              {isPlaying
+                ? <Pause size={18} className="text-black" />
+                : <Play size={18} className="text-black ml-0.5" />}
+            </button>
+            <button
+              onClick={nextTrack}
+              className="text-text-secondary hover:text-text-primary transition-colors"
+              aria-label="Next"
+              disabled={!currentTrack}
+            >
+              <SkipForward size={20} />
+            </button>
+            <button className="text-text-muted hover:text-text-secondary transition-colors" aria-label="Repeat">
+              <Repeat size={17} />
+            </button>
           </div>
         </div>
 
