@@ -329,6 +329,17 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
                     if on_progress:
                         on_progress(enriched, skipped, failed, _total_pending)
                 else:
+                    # Catalog exists but this album did not clear threshold on either source.
+                    # Keep it visible to audit/fix-match flows.
+                    conn.execute(
+                        """
+                        UPDATE lib_albums
+                        SET needs_verification = 1,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                        """,
+                        (album_id,),
+                    )
                     skipped += 1
                     if on_progress:
                         on_progress(enriched, skipped, failed, _total_pending)
