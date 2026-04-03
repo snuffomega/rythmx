@@ -1146,15 +1146,20 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
     }
   }, [playlistTrack, selectedPlaylistId, playlistOptions, toastSuccess, toastError, closePlaylistPicker]);
 
+  const album = data?.album ?? null;
+  const tracks = data?.tracks ?? [];
+  const albumQueue = useMemo(() => {
+    if (!album) return [];
+    return tracksToQueue(tracks, album);
+  }, [tracks, album]);
+
   if (loading) {
     return <div className="flex-1 flex items-center justify-center"><Loader2 size={20} className="animate-spin text-text-muted" /></div>;
   }
-  if (error || !data) {
+  if (error || !album || !data) {
     return <ApiErrorBanner error={error ?? 'Not found'} onRetry={() => setLoading(true)} />;
   }
 
-  const { album, tracks } = data;
-  const albumQueue = useMemo(() => tracksToQueue(tracks, album), [tracks, album]);
   const totalMs = tracks.reduce((s, t) => s + (t.duration ?? 0), 0);
   const totalMin = Math.round(totalMs / 60000);
 
