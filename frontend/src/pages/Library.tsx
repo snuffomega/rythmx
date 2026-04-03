@@ -173,10 +173,18 @@ function ConfidenceBadge({ value }: { value: number }) {
 interface ArtistCardProps {
   artist: LibArtist;
   viewMode: ViewMode;
+  onShufflePlay?: (artist: LibArtist) => void;
 }
 
-function ArtistCard({ artist, viewMode }: ArtistCardProps) {
+function ArtistCard({ artist, viewMode, onShufflePlay }: ArtistCardProps) {
   const genre = firstTag(artist.lastfm_tags_json);
+  const showHoverPlay = Boolean(onShufflePlay);
+
+  function handleShufflePlayClick(event: React.MouseEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    onShufflePlay?.(artist);
+  }
 
   if (viewMode === 'grid') {
     return (
@@ -185,8 +193,18 @@ function ArtistCard({ artist, viewMode }: ArtistCardProps) {
         params={{ id: artist.id }}
         className="text-left group hover:bg-[#111] rounded-sm p-2 transition-colors block"
       >
-        <div className="aspect-square bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center mb-2 border border-[#222]">
+        <div className="relative aspect-square bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center mb-2 border border-[#222] group/art">
           <ArtistImage name={artist.name} size={32} imageUrl={artist.image_url} />
+          {showHoverPlay && (
+            <button
+              onClick={handleShufflePlayClick}
+              className="absolute inset-0 flex items-center justify-center bg-black/45 text-accent opacity-0 group-hover/art:opacity-100 transition-opacity"
+              aria-label={`Shuffle play ${artist.name}`}
+              title="Shuffle play"
+            >
+              <Shuffle size={20} />
+            </button>
+          )}
         </div>
         <p className="text-text-primary text-sm font-medium truncate">{artist.name}</p>
         <p className="text-text-muted text-xs font-mono truncate">
@@ -206,8 +224,18 @@ function ArtistCard({ artist, viewMode }: ArtistCardProps) {
       params={{ id: artist.id }}
       className="w-full flex items-center gap-3 px-2 py-2 hover:bg-[#111] transition-colors rounded-sm"
     >
-      <div className="w-10 h-10 flex-shrink-0 bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center border border-[#222]">
+      <div className="relative w-10 h-10 flex-shrink-0 bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center border border-[#222] group/art">
         <ArtistImage name={artist.name} size={18} imageUrl={artist.image_url} />
+        {showHoverPlay && (
+          <button
+            onClick={handleShufflePlayClick}
+            className="absolute inset-0 flex items-center justify-center bg-black/45 text-accent opacity-0 group-hover/art:opacity-100 transition-opacity"
+            aria-label={`Shuffle play ${artist.name}`}
+            title="Shuffle play"
+          >
+            <Shuffle size={14} />
+          </button>
+        )}
       </div>
       <div className="flex-1 min-w-0 text-left">
         <p className="text-text-primary text-sm font-medium truncate">{artist.name}</p>
@@ -233,9 +261,18 @@ function ArtistCard({ artist, viewMode }: ArtistCardProps) {
 interface AlbumCardProps {
   album: LibAlbum;
   viewMode: ViewMode;
+  onHoverPlay?: (album: LibAlbum) => void;
 }
 
-function AlbumCard({ album, viewMode }: AlbumCardProps) {
+function AlbumCard({ album, viewMode, onHoverPlay }: AlbumCardProps) {
+  const showHoverPlay = Boolean(onHoverPlay);
+
+  function handleHoverPlayClick(event: React.MouseEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    onHoverPlay?.(album);
+  }
+
   if (viewMode === 'grid') {
     return (
       <Link
@@ -243,8 +280,18 @@ function AlbumCard({ album, viewMode }: AlbumCardProps) {
         params={{ id: album.id }}
         className="text-left group hover:bg-[#111] rounded-sm p-2 transition-colors block"
       >
-        <div className="aspect-square bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center mb-2 border border-[#222]">
+        <div className="relative aspect-square bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center mb-2 border border-[#222] group/album">
           <AlbumImage title={album.title} artist={album.artist_name} size={32} thumbUrl={album.thumb_url} />
+          {showHoverPlay && (
+            <button
+              onClick={handleHoverPlayClick}
+              className="absolute inset-0 flex items-center justify-center bg-black/45 text-accent opacity-0 group-hover/album:opacity-100 transition-opacity"
+              aria-label={`Play ${album.title}`}
+              title="Play album"
+            >
+              <Play size={20} className="fill-current" />
+            </button>
+          )}
         </div>
         <p className="text-text-primary text-sm font-medium truncate">{album.title}</p>
         {album.year && <p className="text-text-muted text-xs font-mono">{album.year}</p>}
@@ -258,8 +305,18 @@ function AlbumCard({ album, viewMode }: AlbumCardProps) {
       params={{ id: album.id }}
       className="w-full flex items-center gap-3 px-2 py-2 hover:bg-[#111] transition-colors rounded-sm"
     >
-      <div className="w-10 h-10 flex-shrink-0 bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center border border-[#222]">
+      <div className="relative w-10 h-10 flex-shrink-0 bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center border border-[#222] group/album">
         <AlbumImage title={album.title} artist={album.artist_name} size={18} thumbUrl={album.thumb_url} />
+        {showHoverPlay && (
+          <button
+            onClick={handleHoverPlayClick}
+            className="absolute inset-0 flex items-center justify-center bg-black/45 text-accent opacity-0 group-hover/album:opacity-100 transition-opacity"
+            aria-label={`Play ${album.title}`}
+            title="Play album"
+          >
+            <Play size={14} className="fill-current" />
+          </button>
+        )}
       </div>
       <div className="flex-1 min-w-0 text-left">
         <p className="text-text-primary text-sm font-medium truncate">{album.title}</p>
@@ -417,6 +474,7 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
   const [selectedPlaylistId, setSelectedPlaylistId] = useState('');
   const playQueue = usePlayerStore(s => s.playQueue);
   const enqueueNext = usePlayerStore(s => s.enqueueNext);
+  const addToQueue = usePlayerStore(s => s.addToQueue);
 
   useEffect(() => {
     setLoading(true);
@@ -492,6 +550,39 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
     const shuffled = [...tracks].sort(() => Math.random() - 0.5);
     playQueue(shuffled);
   }, [data, fetchAllArtistTracks, playQueue]);
+
+  const handleQueueArtist = useCallback(async () => {
+    if (!data) return;
+    const tracks = await fetchAllArtistTracks(data.artist);
+    if (!tracks.length) return;
+    addToQueue(tracks);
+  }, [data, fetchAllArtistTracks, addToQueue]);
+
+  const handlePlayOwnedAlbum = useCallback(async (albumItem: LibAlbum) => {
+    try {
+      const res = await libraryBrowseApi.getAlbum(albumItem.id);
+      const queueTracks: PlayerTrack[] = res.tracks.map(t => ({
+        id: t.id,
+        title: t.title,
+        artist: albumItem.artist_name,
+        album: albumItem.title,
+        duration: t.duration,
+        thumb_url: albumItem.thumb_url ?? null,
+        source_platform: albumItem.source_platform ?? 'navidrome',
+        codec: t.codec,
+        bitrate: t.bitrate,
+        bit_depth: t.bit_depth,
+        sample_rate: t.sample_rate,
+      }));
+      if (!queueTracks.length) {
+        toastError(`No playable tracks found for "${albumItem.title}"`);
+        return;
+      }
+      playQueue(queueTracks);
+    } catch (err) {
+      toastError(err instanceof Error ? err.message : 'Failed to play album');
+    }
+  }, [playQueue, toastError]);
 
   const handlePlaySimilar = useCallback(async (similarArtist: SimilarArtist) => {
     if (!similarArtist.library_id) return;
@@ -621,7 +712,7 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
       {/* Hero */}
       <div className="px-8 pb-6 flex gap-8">
         {/* Artist image with cover edit overlay */}
-        <div className="relative w-48 h-48 flex-shrink-0 group/cover">
+        <div className="relative w-60 h-60 flex-shrink-0 group/cover">
           <div className="w-full h-full bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center border border-[#222]">
             <ArtistImage name={artist.name} size={56} imageUrl={artistImageUrl ?? artist.image_url} />
           </div>
@@ -692,6 +783,13 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
               aria-label="Shuffle artist"
             >
               <Shuffle size={12} /> Shuffle
+            </button>
+            <button
+              onClick={handleQueueArtist}
+              className="flex items-center gap-1.5 px-3 py-1.5 border border-[#333] hover:border-[#555] rounded text-text-secondary text-xs font-mono transition-colors"
+              aria-label="Queue artist"
+            >
+              <ListPlus size={12} /> Queue
             </button>
           </div>
 
@@ -860,7 +958,14 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
               {group.label} ({group.items.length})
             </h3>
             <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3">
-              {group.items.map(al => <AlbumCard key={al.id} album={al} viewMode="grid" />)}
+              {group.items.map(al => (
+                <AlbumCard
+                  key={al.id}
+                  album={al}
+                  viewMode="grid"
+                  onHoverPlay={handlePlayOwnedAlbum}
+                />
+              ))}
             </div>
           </div>
         ))}
@@ -1162,6 +1267,13 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
 
   const totalMs = tracks.reduce((s, t) => s + (t.duration ?? 0), 0);
   const totalMin = Math.round(totalMs / 60000);
+  const playTrackNow = useCallback((trackId: string) => {
+    const idx = albumQueue.findIndex(p => p.id === trackId);
+    if (idx >= 0) {
+      playQueue(albumQueue);
+      usePlayerStore.getState().playAt(idx);
+    }
+  }, [albumQueue, playQueue]);
 
   return (
     <div className="flex-1 overflow-y-auto">
@@ -1178,7 +1290,7 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
 
       {/* Hero */}
       <div className="px-8 pb-6 flex gap-8">
-        <div className="relative w-48 h-48 flex-shrink-0 group/cover">
+        <div className="relative w-60 h-60 flex-shrink-0 group/cover">
           <div className="w-full h-full bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center border border-[#222]">
             <AlbumImage title={album.title} artist={album.artist_name} size={56} thumbUrl={albumImageUrl ?? album.thumb_url} />
           </div>
@@ -1194,7 +1306,7 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
           <Link
             to="/library/artist/$id"
             params={{ id: album.artist_id }}
-            className="font-mono text-base text-accent hover:text-accent/80 transition-colors text-left w-fit mb-1"
+            className="font-mono text-xl text-accent hover:text-accent/80 transition-colors text-left w-fit mb-1"
           >
             {album.artist_name}
           </Link>
@@ -1213,6 +1325,16 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
               aria-label="Play album"
             >
               <Play size={12} className="fill-current" /> Play
+            </button>
+            <button
+              onClick={() => {
+                const shuffled = [...albumQueue].sort(() => Math.random() - 0.5);
+                playQueue(shuffled);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 border border-[#333] hover:border-[#555] rounded text-text-secondary text-xs font-mono transition-colors"
+              aria-label="Shuffle album"
+            >
+              <Shuffle size={12} /> Shuffle
             </button>
             <button
               onClick={() => enqueueNext(albumQueue)}
@@ -1266,7 +1388,8 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
 
       {/* Track list */}
       <div className="px-8 py-5">
-        <div className="grid grid-cols-[2rem_1fr_6rem_3.5rem_auto_auto_auto_auto] gap-3 items-center px-2 py-1.5 border-b border-[#1a1a1a] mb-1">
+        <div className="grid grid-cols-[1.75rem_2rem_1fr_6rem_3.5rem_auto_auto_auto_auto] gap-3 items-center px-2 py-1.5 border-b border-[#1a1a1a] mb-1">
+          <span />
           <span className="font-mono text-[10px] text-text-muted uppercase tracking-widest text-right">#</span>
           <span className="font-mono text-[10px] text-text-muted uppercase tracking-widest">Title</span>
           <span className="font-mono text-[10px] text-text-muted uppercase tracking-widest">Rating</span>
@@ -1277,24 +1400,26 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
           <span />
         </div>
         {tracks.map(t => (
-          <div key={t.id} className="group relative grid grid-cols-[2rem_1fr_6rem_3.5rem_auto_auto_auto_auto_auto] gap-3 items-center px-2 py-2 hover:bg-[#111] rounded-sm transition-colors">
-            <span className="font-mono text-xs text-text-muted tabular-nums text-right">
-              {String(t.track_number ?? 0).padStart(2, '0')}
-            </span>
-            <span className="text-sm text-text-primary truncate">{t.title}</span>
-            <StarRating value={ratings[t.id] ?? 0} onChange={v => handleRate(t.id, v)} size={12} />
-            <span className="font-mono text-xs text-text-muted tabular-nums text-right">{formatDuration(t.duration)}</span>
-            <AudioQualityBadge bit_depth={t.bit_depth} sample_rate={t.sample_rate} codec={t.codec} bitrate={t.bitrate} />
+          <div
+            key={t.id}
+            onDoubleClick={() => playTrackNow(t.id)}
+            className="group relative grid grid-cols-[1.75rem_2rem_1fr_6rem_3.5rem_auto_auto_auto_auto] gap-3 items-center px-2 py-2 hover:bg-[#111] rounded-sm transition-colors"
+          >
             <button
-              onClick={() => {
-                const idx = albumQueue.findIndex(p => p.id === t.id);
-                if (idx >= 0) { playQueue(albumQueue); usePlayerStore.getState().playAt(idx); }
-              }}
+              onClick={() => playTrackNow(t.id)}
               className="text-text-muted opacity-0 group-hover:opacity-100 hover:text-accent transition-all"
-              aria-label="Play"
+              aria-label={`Play ${t.title}`}
+              title="Play now"
             >
               <Play size={14} />
             </button>
+            <span className="font-mono text-xs text-text-muted group-hover:text-accent/80 tabular-nums text-right">
+              {String(t.track_number ?? 0).padStart(2, '0')}
+            </span>
+            <span className="text-sm text-text-primary group-hover:text-accent truncate">{t.title}</span>
+            <StarRating value={ratings[t.id] ?? 0} onChange={v => handleRate(t.id, v)} size={12} />
+            <span className="font-mono text-xs text-text-muted group-hover:text-accent/80 tabular-nums text-right">{formatDuration(t.duration)}</span>
+            <AudioQualityBadge bit_depth={t.bit_depth} sample_rate={t.sample_rate} codec={t.codec} bitrate={t.bitrate} />
             <button
               onClick={() => {
                 const item = albumQueue.find(p => p.id === t.id);
@@ -1494,6 +1619,7 @@ export function LibraryRoot() {
   const [playlistPickerError, setPlaylistPickerError] = useState<string | null>(null);
   const [playlistTrack, setPlaylistTrack] = useState<LibTrack | null>(null);
   const [selectedPlaylistId, setSelectedPlaylistId] = useState('');
+  const playQueue = usePlayerStore(s => s.playQueue);
 
   // Filters
   const [backendFilter, setBackendFilter] = useState('all');
@@ -1656,6 +1782,33 @@ export function LibraryRoot() {
       setPlaylistPickerSaving(false);
     }
   }, [playlistTrack, selectedPlaylistId, playlistOptions, toastSuccess, toastError, closePlaylistPicker]);
+
+  const handleShufflePlayArtistCard = useCallback(async (artistItem: LibArtist) => {
+    try {
+      const res = await libraryBrowseApi.getTracks({ artist_id: artistItem.id, per_page: 500 });
+      const queueTracks: PlayerTrack[] = res.tracks.map(t => ({
+        id: t.id,
+        title: t.title,
+        artist: artistItem.name,
+        album: t.album_title ?? '',
+        duration: t.duration,
+        thumb_url: null,
+        source_platform: artistItem.source_platform ?? 'navidrome',
+        codec: t.codec,
+        bitrate: t.bitrate,
+        bit_depth: t.bit_depth,
+        sample_rate: t.sample_rate,
+      }));
+      if (!queueTracks.length) {
+        toastError(`No playable tracks found for "${artistItem.name}"`);
+        return;
+      }
+      const shuffled = [...queueTracks].sort(() => Math.random() - 0.5);
+      playQueue(shuffled);
+    } catch (err) {
+      toastError(err instanceof Error ? err.message : 'Failed to shuffle play artist');
+    }
+  }, [playQueue, toastError]);
 
   // Root view
   const footerText = loading ? null
@@ -1836,11 +1989,25 @@ export function LibraryRoot() {
         {!loading && !fetchError && tab === 'artists' && (
           viewMode === 'grid' ? (
             <div className="p-4 grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-3">
-              {artists.map(a => <ArtistCard key={a.id} artist={a} viewMode="grid" />)}
+              {artists.map(a => (
+                <ArtistCard
+                  key={a.id}
+                  artist={a}
+                  viewMode="grid"
+                  onShufflePlay={handleShufflePlayArtistCard}
+                />
+              ))}
             </div>
           ) : (
             <div className="py-2">
-              {artists.map(a => <ArtistCard key={a.id} artist={a} viewMode="list" />)}
+              {artists.map(a => (
+                <ArtistCard
+                  key={a.id}
+                  artist={a}
+                  viewMode="list"
+                  onShufflePlay={handleShufflePlayArtistCard}
+                />
+              ))}
             </div>
           )
         )}
