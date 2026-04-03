@@ -196,14 +196,16 @@ function ArtistCard({ artist, viewMode, onShufflePlay }: ArtistCardProps) {
         <div className="relative aspect-square bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center mb-2 border border-[#222] group/art">
           <ArtistImage name={artist.name} size={32} imageUrl={artist.image_url} />
           {showHoverPlay && (
-            <button
-              onClick={handleShufflePlayClick}
-              className="absolute inset-0 flex items-center justify-center bg-black/45 text-accent opacity-0 group-hover/art:opacity-100 transition-opacity"
-              aria-label={`Shuffle play ${artist.name}`}
-              title="Shuffle play"
-            >
-              <Shuffle size={20} />
-            </button>
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-0 group-hover/art:opacity-100 transition-opacity">
+              <button
+                onClick={handleShufflePlayClick}
+                className="pointer-events-auto w-11 h-11 rounded-full bg-accent text-black flex items-center justify-center shadow-lg hover:bg-accent/85 transition-colors"
+                aria-label={`Shuffle play ${artist.name}`}
+                title="Shuffle play"
+              >
+                <Shuffle size={18} />
+              </button>
+            </div>
           )}
         </div>
         <p className="text-text-primary text-sm font-medium truncate">{artist.name}</p>
@@ -227,14 +229,16 @@ function ArtistCard({ artist, viewMode, onShufflePlay }: ArtistCardProps) {
       <div className="relative w-10 h-10 flex-shrink-0 bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center border border-[#222] group/art">
         <ArtistImage name={artist.name} size={18} imageUrl={artist.image_url} />
         {showHoverPlay && (
-          <button
-            onClick={handleShufflePlayClick}
-            className="absolute inset-0 flex items-center justify-center bg-black/45 text-accent opacity-0 group-hover/art:opacity-100 transition-opacity"
-            aria-label={`Shuffle play ${artist.name}`}
-            title="Shuffle play"
-          >
-            <Shuffle size={14} />
-          </button>
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-0 group-hover/art:opacity-100 transition-opacity">
+            <button
+              onClick={handleShufflePlayClick}
+              className="pointer-events-auto w-7 h-7 rounded-full bg-accent text-black flex items-center justify-center shadow-md hover:bg-accent/85 transition-colors"
+              aria-label={`Shuffle play ${artist.name}`}
+              title="Shuffle play"
+            >
+              <Shuffle size={12} />
+            </button>
+          </div>
         )}
       </div>
       <div className="flex-1 min-w-0 text-left">
@@ -283,14 +287,16 @@ function AlbumCard({ album, viewMode, onHoverPlay }: AlbumCardProps) {
         <div className="relative aspect-square bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center mb-2 border border-[#222] group/album">
           <AlbumImage title={album.title} artist={album.artist_name} size={32} thumbUrl={album.thumb_url} />
           {showHoverPlay && (
-            <button
-              onClick={handleHoverPlayClick}
-              className="absolute inset-0 flex items-center justify-center bg-black/45 text-accent opacity-0 group-hover/album:opacity-100 transition-opacity"
-              aria-label={`Play ${album.title}`}
-              title="Play album"
-            >
-              <Play size={20} className="fill-current" />
-            </button>
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-0 group-hover/album:opacity-100 transition-opacity">
+              <button
+                onClick={handleHoverPlayClick}
+                className="pointer-events-auto w-11 h-11 rounded-full bg-accent text-black flex items-center justify-center shadow-lg hover:bg-accent/85 transition-colors"
+                aria-label={`Play ${album.title}`}
+                title="Play album"
+              >
+                <Play size={18} className="fill-current" />
+              </button>
+            </div>
           )}
         </div>
         <p className="text-text-primary text-sm font-medium truncate">{album.title}</p>
@@ -308,14 +314,16 @@ function AlbumCard({ album, viewMode, onHoverPlay }: AlbumCardProps) {
       <div className="relative w-10 h-10 flex-shrink-0 bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center border border-[#222] group/album">
         <AlbumImage title={album.title} artist={album.artist_name} size={18} thumbUrl={album.thumb_url} />
         {showHoverPlay && (
-          <button
-            onClick={handleHoverPlayClick}
-            className="absolute inset-0 flex items-center justify-center bg-black/45 text-accent opacity-0 group-hover/album:opacity-100 transition-opacity"
-            aria-label={`Play ${album.title}`}
-            title="Play album"
-          >
-            <Play size={14} className="fill-current" />
-          </button>
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-0 group-hover/album:opacity-100 transition-opacity">
+            <button
+              onClick={handleHoverPlayClick}
+              className="pointer-events-auto w-7 h-7 rounded-full bg-accent text-black flex items-center justify-center shadow-md hover:bg-accent/85 transition-colors"
+              aria-label={`Play ${album.title}`}
+              title="Play album"
+            >
+              <Play size={12} className="fill-current" />
+            </button>
+          </div>
         )}
       </div>
       <div className="flex-1 min-w-0 text-left">
@@ -699,6 +707,26 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
   const bioTruncated = bioFull && bioFull.length > 220;
   const similarInLib = (similar ?? []).filter(s => s.in_library);
   const similarNotInLib = (similar ?? []).filter(s => !s.in_library);
+  const popularQueue: PlayerTrack[] = top_tracks.map(tr => ({
+    id: tr.id,
+    title: tr.title,
+    artist: artist.name,
+    album: tr.album_title ?? '',
+    duration: tr.duration,
+    thumb_url: null,
+    source_platform: artist.source_platform ?? 'navidrome',
+    codec: tr.codec,
+    bitrate: tr.bitrate,
+    bit_depth: tr.bit_depth,
+    sample_rate: tr.sample_rate,
+  }));
+
+  function playPopularTrackNow(trackId: string) {
+    const idx = popularQueue.findIndex((track) => track.id === trackId);
+    if (idx >= 0) {
+      playQueue(popularQueue.slice(idx));
+    }
+  }
 
   return (
     <div className="flex-1 overflow-y-auto">
@@ -906,28 +934,22 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
           <h2 className="text-xs font-mono font-semibold text-text-muted uppercase tracking-widest mb-3">Popular Tracks</h2>
           <div>
             {top_tracks.map((t, i) => (
-              <div key={t.id} className="group grid grid-cols-[2rem_1fr_1fr_3.5rem_auto_auto] gap-3 items-center py-2 px-2 hover:bg-[#111] rounded-sm transition-colors">
-                <span className="font-mono text-xs text-text-muted tabular-nums text-right">{i + 1}</span>
-                <span className="text-sm text-text-primary truncate">{t.title}</span>
-                <span className="font-mono text-xs text-text-muted truncate">{t.album_title}</span>
-                <span className="font-mono text-xs text-text-muted tabular-nums text-right">{formatDuration(t.duration)}</span>
+              <div
+                key={t.id}
+                onDoubleClick={() => playPopularTrackNow(t.id)}
+                className="group grid grid-cols-[1.75rem_2rem_1fr_1fr_3.5rem_auto] gap-3 items-center py-2 px-2 hover:bg-[#111] rounded-sm transition-colors"
+              >
                 <button
-                  onClick={() => playQueue(top_tracks.map((tr, idx) => ({
-                    id: tr.id,
-                    title: tr.title,
-                    artist: data.artist.name,
-                    album: tr.album_title ?? '',
-                    duration: tr.duration,
-                    thumb_url: null,
-                    source_platform: data.artist.source_platform ?? 'navidrome',
-                    codec: tr.codec, bitrate: tr.bitrate,
-                    bit_depth: tr.bit_depth, sample_rate: tr.sample_rate,
-                  })).slice(i))}
+                  onClick={() => playPopularTrackNow(t.id)}
                   className="text-text-muted opacity-0 group-hover:opacity-100 hover:text-accent transition-all"
                   aria-label="Play"
                 >
                   <Play size={14} />
                 </button>
+                <span className="font-mono text-xs text-text-muted group-hover:text-accent/80 tabular-nums text-right">{i + 1}</span>
+                <span className="text-sm text-text-primary group-hover:text-accent truncate">{t.title}</span>
+                <span className="font-mono text-xs text-text-muted group-hover:text-accent/80 truncate">{t.album_title}</span>
+                <span className="font-mono text-xs text-text-muted group-hover:text-accent/80 tabular-nums text-right">{formatDuration(t.duration)}</span>
                 <button
                   onClick={() => openPlaylistPicker(t)}
                   className="text-text-muted opacity-0 group-hover:opacity-100 hover:text-accent transition-all"
@@ -1257,6 +1279,13 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
     if (!album) return [];
     return tracksToQueue(tracks, album);
   }, [tracks, album]);
+  const playTrackNow = (trackId: string) => {
+    const idx = albumQueue.findIndex(p => p.id === trackId);
+    if (idx >= 0) {
+      playQueue(albumQueue);
+      usePlayerStore.getState().playAt(idx);
+    }
+  };
 
   if (loading) {
     return <div className="flex-1 flex items-center justify-center"><Loader2 size={20} className="animate-spin text-text-muted" /></div>;
@@ -1267,13 +1296,6 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
 
   const totalMs = tracks.reduce((s, t) => s + (t.duration ?? 0), 0);
   const totalMin = Math.round(totalMs / 60000);
-  const playTrackNow = useCallback((trackId: string) => {
-    const idx = albumQueue.findIndex(p => p.id === trackId);
-    if (idx >= 0) {
-      playQueue(albumQueue);
-      usePlayerStore.getState().playAt(idx);
-    }
-  }, [albumQueue, playQueue]);
 
   return (
     <div className="flex-1 overflow-y-auto">
