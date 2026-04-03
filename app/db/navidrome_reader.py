@@ -111,20 +111,55 @@ def sync_library() -> dict:
         conn.execute("CREATE TEMP TABLE IF NOT EXISTS _seen_tracks  (id TEXT PRIMARY KEY)")
 
         all_artists = client.get_artists()
+        # Artist payloads from /getArtists are the cheapest source of owner metadata.
+        # Keep them indexed so album/track owner IDs can be upserted without extra API
+        # requests in the common path.
+        artist_by_id: dict[str, dict] = {
+            str(a["id"]): a for a in all_artists if a.get("id")
+        }
 
-        for i, nav_artist in enumerate(all_artists):
-            artist_id = nav_artist["id"]
-            artist_name = nav_artist.get("name", "")
-            cover_art = nav_artist.get("coverArt") or None
-            mbid = nav_artist.get("musicBrainzId") or None
-            genres_list = [g["name"] for g in nav_artist.get("genres", []) if g.get("name")]
-            genres_json = json.dumps(genres_list) if genres_list else None
+        def _to_id(value) -> str:
+            return str(value).strip() if value is not None and str(value).strip() else ""
+
+        def _upsert_artist_row(
+            owner_id: str,
+            name_hint: str = "",
+            cover_hint: str | None = None,
+            mbid_hint: str | None = None,
+            genres_hint: list[str] | None = None,
+        ) -> None:
+            """
+            Ensure a lib_artists row exists for any album/track owner ID.
+
+            Navidrome frequently exposes collaboration entities where album/track owner
+            differs from the outer artist loop. We upsert by owner ID so ownership stays
+            stable regardless of traversal order.
+            """
+            if not owner_id:
+                return
+
+            payload = artist_by_id.get(owner_id) or {}
+            owner_name = (
+                payload.get("name")
+                or name_hint
+                or owner_id
+            )
+            owner_cover = payload.get("coverArt") or cover_hint or None
+            owner_mbid = payload.get("musicBrainzId") or mbid_hint or None
+
+            payload_genres = [g["name"] for g in payload.get("genres", []) if g.get("name")]
+            if payload_genres:
+                owner_genres_json = json.dumps(payload_genres)
+            elif genres_hint:
+                owner_genres_json = json.dumps([g for g in genres_hint if g])
+            else:
+                owner_genres_json = None
 
             conn.execute(
                 "INSERT OR IGNORE INTO lib_artists "
                 "(id, name, name_lower, source_platform, updated_at) "
                 "VALUES (?, ?, ?, 'navidrome', CURRENT_TIMESTAMP)",
-                (artist_id, artist_name, _normalize_name(artist_name)),
+                (owner_id, owner_name, _normalize_name(owner_name)),
             )
             conn.execute(
                 "UPDATE lib_artists SET name = ?, name_lower = ?, "
@@ -134,11 +169,29 @@ def sync_library() -> dict:
                 "musicbrainz_id = COALESCE(?, musicbrainz_id), "
                 "genres_json_navidrome = COALESCE(?, genres_json_navidrome) "
                 "WHERE id = ?",
-                (artist_name, _normalize_name(artist_name),
-                 cover_art, mbid, genres_json,
-                 artist_id),
+                (owner_name, _normalize_name(owner_name),
+                 owner_cover, owner_mbid, owner_genres_json,
+                 owner_id),
             )
-            conn.execute("INSERT OR IGNORE INTO _seen_artists (id) VALUES (?)", (artist_id,))
+            conn.execute("INSERT OR IGNORE INTO _seen_artists (id) VALUES (?)", (owner_id,))
+
+        for i, nav_artist in enumerate(all_artists):
+            artist_id = _to_id(nav_artist.get("id"))
+            if not artist_id:
+                logger.debug("navidrome_reader: skipped artist row with empty id: %r", nav_artist)
+                continue
+            artist_name = nav_artist.get("name", "")
+            cover_art = nav_artist.get("coverArt") or None
+            mbid = nav_artist.get("musicBrainzId") or None
+            genres_list = [g["name"] for g in nav_artist.get("genres", []) if g.get("name")]
+
+            _upsert_artist_row(
+                artist_id,
+                name_hint=artist_name,
+                cover_hint=cover_art,
+                mbid_hint=mbid,
+                genres_hint=genres_list,
+            )
             artist_count += 1
 
             try:
@@ -148,7 +201,9 @@ def sync_library() -> dict:
                 continue
 
             for nav_album in artist_detail.get("album", []):
-                album_id = nav_album["id"]
+                album_id = _to_id(nav_album.get("id"))
+                if not album_id:
+                    continue
                 album_title = nav_album.get("name", "")
                 album_year = nav_album.get("year") or None
 
@@ -162,24 +217,43 @@ def sync_library() -> dict:
                 album_mbid = album_detail.get("musicBrainzId") or None
                 album_genres = [g["name"] for g in album_detail.get("genres", []) if g.get("name")]
                 album_genres_json = json.dumps(album_genres) if album_genres else None
+                # Owner precedence for album rows:
+                # 1) album payload owner id
+                # 2) listing payload owner id
+                # 3) outer traversal artist id
+                album_owner_id = (
+                    _to_id(album_detail.get("artistId"))
+                    or _to_id(album_detail.get("albumArtistId"))
+                    or _to_id(nav_album.get("artistId"))
+                    or _to_id(nav_album.get("albumArtistId"))
+                    or artist_id
+                )
+                album_owner_name = (
+                    album_detail.get("artist")
+                    or album_detail.get("albumArtist")
+                    or nav_album.get("artist")
+                    or nav_album.get("albumArtist")
+                    or artist_name
+                )
+                _upsert_artist_row(album_owner_id, name_hint=album_owner_name)
 
                 conn.execute(
                     "INSERT OR IGNORE INTO lib_albums "
                     "(id, artist_id, title, local_title, title_lower, year, "
                     "source_platform, updated_at) "
                     "VALUES (?, ?, ?, ?, ?, ?, 'navidrome', CURRENT_TIMESTAMP)",
-                    (album_id, artist_id, album_title, album_title,
+                    (album_id, album_owner_id, album_title, album_title,
                      _normalize_name(album_title), album_year),
                 )
                 conn.execute(
-                    "UPDATE lib_albums SET title = ?, local_title = ?, title_lower = ?, "
+                    "UPDATE lib_albums SET artist_id = ?, title = ?, local_title = ?, title_lower = ?, "
                     "year = COALESCE(?, year), source_platform = 'navidrome', "
                     "updated_at = CURRENT_TIMESTAMP, removed_at = NULL, "
                     "thumb_url_navidrome = COALESCE(?, thumb_url_navidrome), "
                     "musicbrainz_id = COALESCE(?, musicbrainz_id), "
                     "genres_json_navidrome = COALESCE(?, genres_json_navidrome) "
                     "WHERE id = ?",
-                    (album_title, album_title, _normalize_name(album_title), album_year,
+                    (album_owner_id, album_title, album_title, _normalize_name(album_title), album_year,
                      album_cover, album_mbid, album_genres_json,
                      album_id),
                 )
@@ -187,7 +261,9 @@ def sync_library() -> dict:
                 album_count += 1
 
                 for song in album_detail.get("song", []):
-                    track_id = song["id"]
+                    track_id = _to_id(song.get("id"))
+                    if not track_id:
+                        continue
                     track_title = song.get("title", "")
                     track_number = song.get("track") or None
                     disc_number = song.get("discNumber") or None
@@ -198,6 +274,26 @@ def sync_library() -> dict:
                     file_size = song.get("size") or None
                     play_count = song.get("playCount") or None
                     track_mbid = song.get("musicBrainzId") or None
+                    # Owner precedence for track rows:
+                    # 1) song payload artist id
+                    # 2) album owner id
+                    # 3) outer traversal artist id
+                    track_owner_id = (
+                        _to_id(song.get("artistId"))
+                        or _to_id(song.get("artist_id"))
+                        or album_owner_id
+                        or artist_id
+                    )
+                    track_owner_name = (
+                        song.get("artist")
+                        or song.get("albumArtist")
+                        or album_owner_name
+                        or artist_name
+                    )
+                    # getAlbum() should only return songs for the current album.
+                    # Keep album ownership anchored to the current album context.
+                    track_album_id = album_id
+                    _upsert_artist_row(track_owner_id, name_hint=track_owner_name)
 
                     # Rating: Navidrome 0-5 → normalize to 0-10
                     raw_rating = song.get("userRating")
@@ -222,7 +318,7 @@ def sync_library() -> dict:
                         "disc_number, duration, file_path, file_size, rating, play_count, "
                         "source_platform, updated_at) "
                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'navidrome', CURRENT_TIMESTAMP)",
-                        (track_id, album_id, artist_id, track_title, track_title.lower(),
+                        (track_id, track_album_id, track_owner_id, track_title, track_title.lower(),
                          track_number, disc_number, duration_ms, file_path, file_size,
                          rating, play_count),
                     )
@@ -231,7 +327,7 @@ def sync_library() -> dict:
                     # same pattern as plex_reader.py. If Navidrome returns NULL (unrated), that
                     # is the correct value for this platform's data.
                     conn.execute(
-                        "UPDATE lib_tracks SET title = ?, title_lower = ?, "
+                        "UPDATE lib_tracks SET album_id = ?, artist_id = ?, title = ?, title_lower = ?, "
                         "track_number = ?, disc_number = ?, duration = ?, "
                         "file_path = ?, file_size = ?, "
                         "rating = ?, play_count = ?, "
@@ -247,7 +343,8 @@ def sync_library() -> dict:
                         "replay_gain_album_peak = COALESCE(?, replay_gain_album_peak), "
                         "musicbrainz_id = COALESCE(?, musicbrainz_id) "
                         "WHERE id = ?",
-                        (track_title, track_title.lower(), track_number, disc_number,
+                        (track_album_id, track_owner_id, track_title, track_title.lower(),
+                         track_number, disc_number,
                          duration_ms, file_path, file_size, rating, play_count,
                          sample_rate, bit_depth, channel_count, bpm,
                          rg_track, rg_album, rg_track_peak, rg_album_peak,
