@@ -180,9 +180,11 @@ def library_artist_detail(artist_id: str):
                    COALESCE(la.original_release_date_musicbrainz, la.release_date_itunes,
                             la.year || '-01-01') AS release_date,
                    la.genre_itunes AS genre,
-                   COALESCE(la.thumb_url_deezer, la.thumb_url_plex) AS thumb_url,
+                   COALESCE(ia.image_url, la.thumb_url_deezer, la.thumb_url_plex) AS thumb_url,
                    la.lastfm_tags_json
             FROM lib_albums la
+            LEFT JOIN image_cache ia
+                   ON ia.entity_type = 'album' AND ia.entity_key = la.id
             LEFT JOIN (
                 SELECT album_id, COUNT(*) AS cnt
                 FROM lib_tracks WHERE removed_at IS NULL
@@ -526,4 +528,3 @@ def library_release_groups(artist_id: str):
             (artist_id,),
         ).fetchall()
     return {"status": "ok", "groups": [dict(g) for g in rows]}
-

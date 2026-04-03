@@ -4,7 +4,9 @@ albums.py - Album-focused library routes.
 Extracted from library_browse.py to reduce route-module sprawl while keeping
 all API paths stable.
 """
-from fastapi import APIRouter, Depends, Query
+from typing import Any, Optional
+
+from fastapi import APIRouter, Body, Depends, Query
 from fastapi.responses import JSONResponse
 
 from app.db import rythmx_store
@@ -55,11 +57,13 @@ def library_albums(
                    COALESCE(al.original_release_date_musicbrainz, al.release_date_itunes,
                             al.year || '-01-01') AS release_date,
                    al.genre_itunes AS genre,
-                   COALESCE(al.thumb_url_deezer, al.thumb_url_plex) AS thumb_url,
+                   COALESCE(ia.image_url, al.thumb_url_deezer, al.thumb_url_plex) AS thumb_url,
                    al.lastfm_tags_json,
                    ar.name AS artist_name
             FROM lib_albums al
             JOIN lib_artists ar ON ar.id = al.artist_id
+            LEFT JOIN image_cache ia
+                   ON ia.entity_type = 'album' AND ia.entity_key = al.id
             WHERE {where_clause}
             ORDER BY ar.name COLLATE NOCASE, al.year DESC
             LIMIT ? OFFSET ?
@@ -82,11 +86,13 @@ def library_album_detail(album_id: str):
                    COALESCE(al.original_release_date_musicbrainz, al.release_date_itunes,
                             al.year || '-01-01') AS release_date,
                    al.genre_itunes AS genre,
-                   COALESCE(al.thumb_url_deezer, al.thumb_url_plex) AS thumb_url,
+                   COALESCE(ia.image_url, al.thumb_url_deezer, al.thumb_url_plex) AS thumb_url,
                    al.lastfm_tags_json,
                    ar.name AS artist_name
             FROM lib_albums al
             JOIN lib_artists ar ON ar.id = al.artist_id
+            LEFT JOIN image_cache ia
+                   ON ia.entity_type = 'album' AND ia.entity_key = al.id
             WHERE al.id = ? AND al.removed_at IS NULL
             """,
             (album_id,),
@@ -116,3 +122,30 @@ def library_album_detail(album_id: str):
         "tracks": [dict(r) for r in tracks],
     }
 
+
+@router.post("/library/albums/{album_id}/cover")
+def library_album_set_cover(
+    album_id: str,
+    data: Optional[dict[str, Any]] = Body(default=None),
+):
+    """Store a custom cover URL for an album in the image cache."""
+    data = data or {}
+    cover_url = str(data.get("cover_url", "")).strip()
+    if not cover_url or not cover_url.startswith("http"):
+        return JSONResponse(
+            {"status": "error", "message": "cover_url must be a valid http(s) URL"},
+            status_code=400,
+        )
+
+    with rythmx_store._connect() as conn:
+        row = conn.execute(
+            "SELECT id FROM lib_albums WHERE id = ? AND removed_at IS NULL",
+            (album_id,),
+        ).fetchone()
+    if not row:
+        return JSONResponse(
+            {"status": "error", "message": "Album not found"}, status_code=404
+        )
+
+    rythmx_store.set_image_cache("album", album_id, cover_url)
+    return {"status": "ok"}

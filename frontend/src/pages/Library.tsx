@@ -495,22 +495,35 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
 
   const handlePlaySimilar = useCallback(async (similarArtist: SimilarArtist) => {
     if (!similarArtist.library_id) return;
-    const res = await libraryBrowseApi.getTracks({ artist_id: similarArtist.library_id, per_page: 500 });
-    const tracks: PlayerTrack[] = res.tracks.map(t => ({
-      id: t.id,
-      title: t.title,
-      artist: similarArtist.name,
-      album: t.album_title ?? '',
-      duration: t.duration,
-      thumb_url: null,
-      source_platform: 'navidrome',
-      codec: t.codec,
-      bitrate: t.bitrate,
-      bit_depth: t.bit_depth,
-      sample_rate: t.sample_rate,
-    }));
-    if (tracks.length) enqueueNext(tracks);
-  }, [enqueueNext]);
+    try {
+      const res = await libraryBrowseApi.getTracks({ artist_id: similarArtist.library_id, per_page: 500 });
+      const tracks: PlayerTrack[] = res.tracks.map(t => ({
+        id: t.id,
+        title: t.title,
+        artist: similarArtist.name,
+        album: t.album_title ?? '',
+        duration: t.duration,
+        thumb_url: null,
+        source_platform: 'navidrome',
+        codec: t.codec,
+        bitrate: t.bitrate,
+        bit_depth: t.bit_depth,
+        sample_rate: t.sample_rate,
+      }));
+      if (!tracks.length) {
+        toastError(`No playable tracks found for "${similarArtist.name}"`);
+        return;
+      }
+      const { currentTrack, queue } = usePlayerStore.getState();
+      if (!currentTrack || queue.length === 0) {
+        playQueue(tracks);
+      } else {
+        enqueueNext(tracks);
+      }
+    } catch (err) {
+      toastError(err instanceof Error ? err.message : 'Failed to start similar artist radio');
+    }
+  }, [enqueueNext, playQueue, toastError]);
 
   const handleSaveCover = useCallback(async () => {
     if (!coverInput.trim() || !data) return;
@@ -758,7 +771,7 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
                         onClick={() => handlePlaySimilar(s)}
                         className="p-1 text-text-muted hover:text-accent transition-colors"
                         aria-label={`Play ${s.name} radio`}
-                        title="Add to queue"
+                        title="Play similar radio"
                       >
                         <ListPlus size={13} />
                       </button>
@@ -989,6 +1002,10 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [ratings, setRatings] = useState<Record<string, number>>({});
+  const [coverEditing, setCoverEditing] = useState(false);
+  const [coverInput, setCoverInput] = useState('');
+  const [coverSaving, setCoverSaving] = useState(false);
+  const [albumImageUrl, setAlbumImageUrl] = useState<string | null>(null);
   const [playlistOptions, setPlaylistOptions] = useState<LibPlaylist[]>([]);
   const [playlistPickerOpen, setPlaylistPickerOpen] = useState(false);
   const [playlistPickerLoading, setPlaylistPickerLoading] = useState(false);
@@ -1025,6 +1042,7 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
         const init: Record<string, number> = {};
         res.tracks.forEach(t => { init[t.id] = t.rating; });
         setRatings(init);
+        setAlbumImageUrl(res.album.thumb_url ?? null);
       })
       .catch(err => setError(err instanceof Error ? err.message : 'Failed to load album'))
       .finally(() => setLoading(false));
@@ -1034,6 +1052,23 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
     setRatings(prev => ({ ...prev, [trackId]: rating }));
     try { await libraryBrowseApi.rateTrack(trackId, rating); } catch { /* optimistic - silently ignore */ }
   }, []);
+
+  const handleSaveCover = useCallback(async () => {
+    const nextUrl = coverInput.trim();
+    if (!nextUrl || !data) return;
+    setCoverSaving(true);
+    try {
+      await libraryBrowseApi.setAlbumCover(data.album.id, nextUrl);
+      setAlbumImageUrl(nextUrl);
+      setCoverEditing(false);
+      setCoverInput('');
+      toastSuccess('Album cover updated');
+    } catch (err) {
+      toastError(err instanceof Error ? err.message : 'Failed to update album cover');
+    } finally {
+      setCoverSaving(false);
+    }
+  }, [coverInput, data, toastSuccess, toastError]);
 
   const openPlaylistPicker = useCallback(async (track: LibTrack) => {
     setPlaylistTrack(track);
@@ -1114,8 +1149,17 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
 
       {/* Hero */}
       <div className="px-8 pb-6 flex gap-8">
-        <div className="w-48 h-48 flex-shrink-0 bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center border border-[#222]">
-          <AlbumImage title={album.title} artist={album.artist_name} size={56} thumbUrl={album.thumb_url} />
+        <div className="relative w-48 h-48 flex-shrink-0 group/cover">
+          <div className="w-full h-full bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center border border-[#222]">
+            <AlbumImage title={album.title} artist={album.artist_name} size={56} thumbUrl={albumImageUrl ?? album.thumb_url} />
+          </div>
+          <button
+            onClick={() => { setCoverEditing(v => !v); setCoverInput(''); }}
+            className="absolute bottom-1.5 right-1.5 bg-black/70 hover:bg-black/90 text-text-muted hover:text-white rounded p-1 opacity-0 group-hover/cover:opacity-100 transition-all"
+            aria-label="Edit album cover"
+          >
+            <Camera size={13} />
+          </button>
         </div>
         <div className="flex flex-col justify-center min-w-0 flex-1">
           <Link
@@ -1149,6 +1193,36 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
               <ListPlus size={12} /> Queue
             </button>
           </div>
+          {coverEditing && (
+            <div className="flex items-center gap-2 mt-2">
+              <input
+                type="url"
+                value={coverInput}
+                onChange={e => setCoverInput(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') handleSaveCover();
+                  if (e.key === 'Escape') { setCoverEditing(false); setCoverInput(''); }
+                }}
+                placeholder="Paste album image URL..."
+                className="flex-1 bg-[#111] border border-[#333] rounded px-2 py-1 text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent font-mono"
+                autoFocus
+              />
+              <button
+                onClick={handleSaveCover}
+                disabled={coverSaving || !coverInput.trim()}
+                className="flex items-center gap-1 px-2 py-1 bg-accent hover:bg-accent/80 disabled:opacity-40 rounded text-black text-xs font-semibold transition-colors"
+              >
+                <Check size={12} />
+                Save
+              </button>
+              <button
+                onClick={() => { setCoverEditing(false); setCoverInput(''); }}
+                className="px-2 py-1 border border-[#333] hover:border-[#555] rounded text-text-muted text-xs font-mono transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
           <div className="flex items-center gap-2 mt-2">
             <ConfidenceBadge value={album.match_confidence} />
             <SourceChip backend={album.source_platform} />

@@ -285,6 +285,11 @@ export const libraryBrowseApi = {
       method: 'POST',
       body: JSON.stringify({ cover_url: coverUrl }),
     }),
+  setAlbumCover: (albumId: string, coverUrl: string) =>
+    request<{ status: string }>(`/library/albums/${encodeURIComponent(albumId)}/cover`, {
+      method: 'POST',
+      body: JSON.stringify({ cover_url: coverUrl }),
+    }),
   rateTrack: (id: string, rating: number) =>
     request<{ status: string; track_id: string; rating: number }>(`/library/tracks/${encodeURIComponent(id)}/rating`, {
       method: 'PATCH',
