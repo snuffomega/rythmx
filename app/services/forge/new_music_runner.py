@@ -311,7 +311,8 @@ def fetch_releases_for_neighbors(
         albums = music_client.get_artist_albums_deezer(deezer_id)
         for album in albums:
             rel_date = album.get("release_date", "") or ""
-            if rel_date and rel_date < cutoff_date:
+            # Skip albums with no release date OR older than the cutoff window
+            if not rel_date or rel_date < cutoff_date:
                 continue
 
             record_type = (album.get("record_type") or "album").lower()
@@ -407,6 +408,12 @@ def run_new_music_pipeline(config_override: dict | None = None) -> dict:
     release_kinds = cfg["nm_release_kinds"]
     ignore_keywords = cfg["nm_ignore_keywords"]
     ignore_artists = cfg["nm_ignore_artists"]
+
+    # Clear stale results from previous runs (Tier 2 — rebuildable)
+    with _connect() as conn:
+        conn.execute("DELETE FROM forge_discovered_releases")
+        conn.execute("DELETE FROM forge_discovered_artists")
+    logger.info("new_music: cleared stale forge_discovered tables")
 
     # Step 1: seed artists from listening history
     seeds = get_seed_artists(period, min_scrobbles)
