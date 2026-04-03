@@ -1,8 +1,4 @@
--- 035_musicbrainz_album_date.sql
--- Adds MusicBrainz Release Group ID and original release date to lib_albums.
--- Both columns are populated by the Stage 3 rich_musicbrainz_album worker.
--- Migration is idempotent — ALTER TABLE is a no-op if column already exists
--- (the runner catches and ignores "duplicate column name" errors).
-
-ALTER TABLE lib_albums ADD COLUMN musicbrainz_release_group_id TEXT;
-ALTER TABLE lib_albums ADD COLUMN original_release_date_musicbrainz TEXT;
+-- 035: MusicBrainz release group ID + original release date on lib_albums
+-- Folded into 000_genesis.sql. No-op on fresh installs.
+-- Retained for applied_at tracking on existing dev containers.
+SELECT 1;

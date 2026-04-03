@@ -39,8 +39,10 @@ CREATE TABLE IF NOT EXISTS lib_artists (
     begin_area_musicbrainz TEXT,                  -- MusicBrainz begin area (city/origin)
     formed_year_musicbrainz INTEGER,             -- MusicBrainz life-span begin year
     -- Per-source artwork (In-Kind Rule #1)
-    image_url_fanart     TEXT,                    -- Fanart.tv artist photo
-    image_url_deezer     TEXT,                    -- Deezer picture_xl fallback
+    image_url_fanart      TEXT,                   -- Fanart.tv artist photo
+    image_url_deezer      TEXT,                   -- Deezer picture_xl fallback
+    thumb_url_navidrome   TEXT,                   -- Navidrome cover art
+    genres_json_navidrome TEXT,                   -- JSON array from Navidrome file tags
     -- Computed
     missing_count        INTEGER DEFAULT 0,      -- Precomputed missing release count
     -- Platform metadata
@@ -56,7 +58,6 @@ CREATE INDEX IF NOT EXISTS idx_lib_artists_deezer_artist_id
     ON lib_artists(deezer_artist_id) WHERE deezer_artist_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_lib_artists_lastfm_mbid
     ON lib_artists(lastfm_mbid) WHERE lastfm_mbid IS NOT NULL;
--- Added mig 027: MusicBrainz ID lookups for Stage 2b + Stage 3
 CREATE INDEX IF NOT EXISTS idx_lib_artists_musicbrainz_id
     ON lib_artists(musicbrainz_id) WHERE musicbrainz_id IS NOT NULL;
 
@@ -87,6 +88,12 @@ CREATE TABLE IF NOT EXISTS lib_albums (
     -- Per-source artwork (In-Kind Rule #1)
     thumb_url_plex          TEXT,                -- Plex relative .thumb path
     thumb_url_deezer        TEXT,                -- Deezer CDN URL
+    thumb_url_navidrome     TEXT,                -- Navidrome cover art
+    genres_json_navidrome   TEXT,                -- JSON array from Navidrome file tags
+    -- MusicBrainz
+    musicbrainz_id                    TEXT,
+    musicbrainz_release_group_id      TEXT,
+    original_release_date_musicbrainz TEXT,
     -- Plex-specific metadata
     label_plex              TEXT,
     plex_release_date       TEXT,
@@ -104,6 +111,8 @@ CREATE INDEX IF NOT EXISTS idx_lib_albums_itunes
     ON lib_albums(itunes_album_id);
 CREATE INDEX IF NOT EXISTS idx_lib_albums_deezer
     ON lib_albums(deezer_id);
+CREATE INDEX IF NOT EXISTS idx_lib_albums_musicbrainz_id
+    ON lib_albums(musicbrainz_id) WHERE musicbrainz_id IS NOT NULL;
 
 -- -------------------------------------------------------------------------
 
@@ -124,6 +133,23 @@ CREATE TABLE IF NOT EXISTS lib_tracks (
     itunes_track_id   TEXT,
     -- Per-source rich data (In-Kind Rule #1)
     tempo_deezer      REAL,                       -- BPM from Deezer (manual only)
+    tempo_navidrome   REAL,                       -- BPM from Navidrome file tags
+    -- Audio quality (Navidrome/OpenSubsonic)
+    sample_rate             INTEGER,              -- Hz
+    bit_depth               INTEGER,              -- bits per sample
+    channel_count           INTEGER,
+    replay_gain_track       REAL,
+    replay_gain_album       REAL,
+    replay_gain_track_peak  REAL,
+    replay_gain_album_peak  REAL,
+    bitrate                 INTEGER,              -- kbps (e.g. 320)
+    codec                   TEXT,                 -- FLAC | MP3 | AAC | OGG | OPUS
+    container               TEXT,                 -- flac | mp3 | m4a | ogg | opus
+    -- MusicBrainz
+    musicbrainz_id          TEXT,
+    -- Embedded tag data
+    embedded_lyrics         TEXT,                 -- plain text, HTML-stripped
+    tag_genre               TEXT,                 -- first TCON/GENRE tag value
     -- User/platform data
     match_confidence  INTEGER DEFAULT 0,
     rating            INTEGER DEFAULT 0,          -- 0–10 normalized
@@ -137,9 +163,35 @@ CREATE TABLE IF NOT EXISTS lib_tracks (
     updated_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(file_path, file_size)
 );
--- Added mig 027: Deezer BPM worker lookups (manual-only Stage 3)
 CREATE INDEX IF NOT EXISTS idx_lib_tracks_deezer_id
     ON lib_tracks(deezer_id) WHERE deezer_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_lib_tracks_musicbrainz_id
+    ON lib_tracks(musicbrainz_id) WHERE musicbrainz_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_lib_tracks_codec_null
+    ON lib_tracks(id) WHERE codec IS NULL;
+
+-- -------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS lib_playlists (
+    id               TEXT PRIMARY KEY,
+    name             TEXT NOT NULL,
+    source_platform  TEXT NOT NULL,  -- navidrome | plex
+    cover_url        TEXT,
+    track_count      INTEGER DEFAULT 0,
+    duration_ms      INTEGER DEFAULT 0,
+    updated_at       TEXT,
+    synced_at        TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS lib_playlist_tracks (
+    playlist_id  TEXT NOT NULL REFERENCES lib_playlists(id) ON DELETE CASCADE,
+    track_id     TEXT NOT NULL REFERENCES lib_tracks(id) ON DELETE CASCADE,
+    position     INTEGER NOT NULL,
+    PRIMARY KEY (playlist_id, position)
+);
+
+CREATE INDEX IF NOT EXISTS idx_lib_playlist_tracks_track
+    ON lib_playlist_tracks(track_id);
 
 -- -------------------------------------------------------------------------
 

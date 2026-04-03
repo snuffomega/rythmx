@@ -1,16 +1,4 @@
--- 032: Forge discovered releases — Tier 2 (rebuildable, TTL 7 days)
--- Recent releases from discovered artists for Top Releases surface
--- See: local-notes/FORGE-PROPOSAL-V2.md Section 5 (Runner Design)
-
-CREATE TABLE IF NOT EXISTS forge_discovered_releases (
-    id              TEXT PRIMARY KEY,
-    artist_deezer_id TEXT NOT NULL,
-    title           TEXT NOT NULL,
-    record_type     TEXT,
-    release_date    TEXT,
-    cover_url       TEXT,
-    fetched_at      TEXT DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_forge_discovered_releases_artist
-    ON forge_discovered_releases(artist_deezer_id);
+-- 032: Forge discovered releases (forge_discovered_releases)
+-- All definitions backfilled into 000_genesis.sql. No-op on fresh installs.
+-- Retained for applied_at tracking on existing dev containers.
+SELECT 1;
