@@ -82,7 +82,7 @@ function StarRating({ rating, onChange }: { rating: number; onChange: (n: number
           className="p-0.5 transition-all active:scale-90"
         >
           <Star
-            size={12}
+            size={18}
             className={`transition-colors ${n <= (hover || rating) ? 'text-accent' : 'text-[#2e2e2e]'}`}
             fill={n <= (hover || rating) ? 'currentColor' : 'none'}
           />
@@ -749,8 +749,11 @@ export function VinylPlayerScreen({
                             <GripVertical size={13} />
                           </button>
                           <button
+                            draggable
+                            onDragStart={(event) => handleQueueDragStart(event, i)}
+                            onDragEnd={clearQueueDragState}
                             onClick={() => { usePlayerStore.getState().playAt(i); setShowQueue(false); setQueueExpanded(false); clearQueueDragState(); }}
-                            className="flex-1 min-w-0 text-left flex items-center gap-2.5"
+                            className="flex-1 min-w-0 text-left flex items-center gap-2.5 cursor-pointer hover:cursor-grab active:cursor-grabbing"
                           >
                             <span className="font-mono text-[10px] text-text-muted w-5 flex-shrink-0 text-right">
                               {i === queueIndex && isPlaying ? '>' : i + 1}
@@ -908,8 +911,11 @@ export function VinylPlayerScreen({
                             <GripVertical size={13} />
                           </button>
                           <button
+                            draggable
+                            onDragStart={(event) => handleQueueDragStart(event, i)}
+                            onDragEnd={clearQueueDragState}
                             onClick={() => { usePlayerStore.getState().playAt(i); setShowQueue(false); setQueueExpanded(false); clearQueueDragState(); }}
-                            className="flex-1 min-w-0 text-left flex items-center gap-2.5"
+                            className="flex-1 min-w-0 text-left flex items-center gap-2.5 cursor-pointer hover:cursor-grab active:cursor-grabbing"
                           >
                             <span className="font-mono text-[10px] text-text-muted w-5 flex-shrink-0 text-right">
                               {i === queueIndex && isPlaying ? '>' : i + 1}
