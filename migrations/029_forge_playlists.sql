@@ -1,4 +1,5 @@
--- 029: Forge playlists — Tier 3 (permanent, user intent, never auto-purged)
+-- sqlfluff:dialect:sqlite
+-- 029: Forge playlists - Tier 3 (permanent, user intent, never auto-purged)
 -- See: local-notes/FORGE-PROPOSAL-V2.md Section 7 (Persistence Framework)
 
 CREATE TABLE IF NOT EXISTS forge_playlists (
