@@ -434,9 +434,15 @@ CREATE TABLE IF NOT EXISTS image_cache (
     entity_type   TEXT NOT NULL,
     entity_key    TEXT NOT NULL,
     image_url     TEXT DEFAULT '',
+    local_path    TEXT,
+    content_hash  TEXT,
+    artwork_source TEXT,
     last_accessed TEXT DEFAULT (datetime('now')),
     PRIMARY KEY (entity_type, entity_key)
 );
+
+CREATE INDEX IF NOT EXISTS idx_image_cache_content_hash
+    ON image_cache(content_hash) WHERE content_hash IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS taste_cache (
     artist_name  TEXT PRIMARY KEY,

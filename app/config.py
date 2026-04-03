@@ -160,6 +160,11 @@ WS_ALLOWED_ORIGINS: list[str] = [
 # When not set, all features depending on local files are silently skipped.
 MUSIC_DIR = _optional("MUSIC_DIR") or None  # normalize "" → None
 
+# --- Local artwork store directory ---
+# Content-addressed artwork originals + thumbnail cache root.
+# Subdirectories (created on startup): originals/, cache/
+ARTWORK_DIR = os.path.abspath(_optional("ARTWORK_DIR", "./data/artwork/"))
+
 # --- Fanart.tv (optional) ---
 # Free API key from https://fanart.tv/get-an-api-key/
 # When set, artist images use real band photos from Fanart.tv.
@@ -324,6 +329,7 @@ def log_config_summary():
         ("SPOTIFY_CLIENT_ID", SPOTIFY_CLIENT_ID),
         ("FANART_API_KEY", FANART_API_KEY),
         ("MUSIC_DIR", MUSIC_DIR or "NOT SET (file-aware features disabled)"),
+        ("ARTWORK_DIR", ARTWORK_DIR),
         ("SCHEDULER_ENABLED", SCHEDULER_ENABLED),
         ("CATALOG_PRIMARY", CATALOG_PRIMARY),
     ]
