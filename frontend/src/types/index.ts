@@ -234,6 +234,8 @@ export interface LibTrack {
   bitrate?: number | null;
   codec?: string | null;
   container?: string | null;
+  embedded_lyrics?: string | null;
+  tag_genre?: string | null;
   album_title?: string;
   artist_name?: string;
 }

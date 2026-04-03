@@ -68,12 +68,15 @@ _EXT_CONTAINER: dict[str, str] = {
 
 def _extract_tags(filepath: str) -> dict | None:
     """
-    Open a music file with mutagen and extract bitrate / codec / container.
+    Open a music file with mutagen and extract bitrate / codec / container
+    plus replay_gain_track / embedded_lyrics / tag_genre.
 
-    Returns a dict with keys: bitrate (int kbps), codec (str), container (str).
+    Returns a dict with keys: bitrate (int kbps), codec (str), container (str),
+    replay_gain_track (float | None), embedded_lyrics (str | None), tag_genre (str | None).
     Returns None if the file is unreadable or mutagen cannot parse it.
     """
     import mutagen
+    import mutagen.id3
 
     try:
         audio = mutagen.File(filepath, easy=False)
@@ -107,14 +110,88 @@ def _extract_tags(filepath: str) -> dict | None:
     if container is None and ext:
         container = ext.lstrip(".").lower()
 
-    return {"bitrate": bitrate, "codec": codec, "container": container}
+    # --- replay_gain_track (float, e.g. -2.72) ---
+    replay_gain_track: float | None = None
+    try:
+        rg_raw: str | None = None
+        tags = getattr(audio, "tags", audio)  # ID3 stores tags in audio.tags; Vorbis in audio
+        if tags is not None:
+            # ID3: TXXX frame with description REPLAYGAIN_TRACK_GAIN
+            for key in ("TXXX:REPLAYGAIN_TRACK_GAIN", "TXXX:replaygain_track_gain"):
+                frame = tags.get(key)
+                if frame is not None:
+                    text_list = getattr(frame, "text", None)
+                    if text_list:
+                        rg_raw = str(text_list[0]).strip()
+                    break
+            if rg_raw is None:
+                # Vorbis comment: replaygain_track_gain = "-2.72 dB"
+                values = audio.get("replaygain_track_gain", []) if hasattr(audio, "get") else []
+                if values:
+                    rg_raw = str(values[0]).strip()
+        if rg_raw:
+            # Strip " dB" suffix if present and parse float
+            replay_gain_track = float(rg_raw.lower().replace("db", "").strip())
+    except Exception:
+        replay_gain_track = None
+
+    # --- embedded_lyrics (plain text) ---
+    embedded_lyrics: str | None = None
+    try:
+        tags = getattr(audio, "tags", audio)
+        if tags is not None:
+            # ID3: USLT frame — iterate because language suffix varies (e.g. USLT::eng)
+            for key, frame in (tags.items() if hasattr(tags, "items") else []):
+                if key.startswith("USLT"):
+                    text = getattr(frame, "text", None)
+                    if text:
+                        embedded_lyrics = str(text).strip() or None
+                    break
+        if embedded_lyrics is None:
+            # Vorbis comment: lyrics or unsyncedlyrics
+            for vkey in ("lyrics", "unsyncedlyrics"):
+                values = audio.get(vkey, []) if hasattr(audio, "get") else []
+                if values:
+                    embedded_lyrics = str(values[0]).strip() or None
+                    break
+    except Exception:
+        embedded_lyrics = None
+
+    # --- tag_genre (first genre string) ---
+    tag_genre: str | None = None
+    try:
+        tags = getattr(audio, "tags", audio)
+        if tags is not None:
+            # ID3: TCON frame
+            frame = tags.get("TCON") if hasattr(tags, "get") else None
+            if frame is not None:
+                text_list = getattr(frame, "text", None)
+                if text_list:
+                    tag_genre = str(text_list[0]).strip() or None
+        if tag_genre is None:
+            # Vorbis comment
+            values = audio.get("genre", []) if hasattr(audio, "get") else []
+            if values:
+                tag_genre = str(values[0]).strip() or None
+    except Exception:
+        tag_genre = None
+
+    return {
+        "bitrate": bitrate,
+        "codec": codec,
+        "container": container,
+        "replay_gain_track": replay_gain_track,
+        "embedded_lyrics": embedded_lyrics,
+        "tag_genre": tag_genre,
+    }
 
 
 def enrich_tags(batch_size: int = 50, stop_event=None, on_progress=None) -> dict:
     """
     Stage 1.1 — tag enrichment pass.
 
-    Reads bitrate, codec, container from local music files using mutagen.
+    Reads bitrate, codec, container, replay_gain_track, embedded_lyrics,
+    and tag_genre from local music files using mutagen.
     Only processes Navidrome tracks (source_platform = 'navidrome') where
     codec IS NULL and file_path IS NOT NULL.
 
@@ -193,6 +270,9 @@ def enrich_tags(batch_size: int = 50, stop_event=None, on_progress=None) -> dict
             tags["bitrate"],
             tags["codec"],
             tags["container"],
+            tags["replay_gain_track"],
+            tags["embedded_lyrics"],
+            tags["tag_genre"],
             track_id,
         ))
 
@@ -239,7 +319,8 @@ def enrich_tags(batch_size: int = 50, stop_event=None, on_progress=None) -> dict
 
 def _flush_batch(batch: list[tuple]) -> None:
     """
-    Write a batch of (bitrate, codec, container, track_id) rows to lib_tracks.
+    Write a batch of (bitrate, codec, container, replay_gain_track,
+    embedded_lyrics, tag_genre, track_id) rows to lib_tracks.
 
     COALESCE guards ensure existing non-NULL values are never overwritten.
     """
@@ -249,9 +330,12 @@ def _flush_batch(batch: list[tuple]) -> None:
                 """
                 UPDATE lib_tracks
                 SET
-                    bitrate   = COALESCE(?, bitrate),
-                    codec     = COALESCE(?, codec),
-                    container = COALESCE(?, container),
+                    bitrate           = COALESCE(?, bitrate),
+                    codec             = COALESCE(?, codec),
+                    container         = COALESCE(?, container),
+                    replay_gain_track = COALESCE(?, replay_gain_track),
+                    embedded_lyrics   = COALESCE(?, embedded_lyrics),
+                    tag_genre         = COALESCE(?, tag_genre),
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,

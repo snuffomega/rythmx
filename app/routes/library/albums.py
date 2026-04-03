@@ -108,7 +108,8 @@ def library_album_detail(album_id: str):
             SELECT id, album_id, artist_id, title,
                    track_number, disc_number, duration,
                    rating, play_count, tempo_deezer AS tempo,
-                   sample_rate, bit_depth, channel_count, replay_gain_track
+                   sample_rate, bit_depth, channel_count, replay_gain_track,
+                   bitrate, codec, container, embedded_lyrics, tag_genre
             FROM lib_tracks
             WHERE album_id = ? AND removed_at IS NULL
             ORDER BY disc_number, track_number

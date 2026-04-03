@@ -202,6 +202,7 @@ def library_artist_detail(artist_id: str):
                    t.track_number, t.disc_number, t.duration,
                    t.rating, t.play_count, t.tempo_deezer AS tempo,
                    t.sample_rate, t.bit_depth, t.channel_count, t.replay_gain_track,
+                   t.bitrate, t.codec, t.container, t.embedded_lyrics, t.tag_genre,
                    al.title AS album_title
             FROM lib_tracks t
             JOIN lib_albums al ON al.id = t.album_id
