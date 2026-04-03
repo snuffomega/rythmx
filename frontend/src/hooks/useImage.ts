@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { ImageType, ImageResolveResponse } from '../types';
 import { getApiKey } from '../services/api';
+import { getImageUrl } from '../utils/imageUrl';
 
 // Module-level JS cache — survives page/tab switches without re-fetching.
 // Keys: "type:name:artist" (lowercased). Values: resolved image URL.
@@ -58,7 +59,11 @@ function _queueImageResolveBatch(
           const byId = new Map<string, ImageResolveResponse>();
           for (const item of (data.items ?? [])) {
             const itemId = String(item.id ?? '');
-            byId.set(itemId, { image_url: item.image_url, pending: item.pending });
+            byId.set(itemId, {
+              image_url: item.image_url,
+              content_hash: item.content_hash,
+              pending: item.pending,
+            });
           }
 
           for (const entry of entries) {
@@ -105,8 +110,11 @@ export function useImage(
         .then(data => {
           if (cancelled) return;
           if (data.image_url) {
-            _resolved.set(cacheKey, data.image_url);
-            setImageUrl(data.image_url);
+            const resolved = data.content_hash
+              ? getImageUrl(data.image_url, data.content_hash)
+              : data.image_url;
+            _resolved.set(cacheKey, resolved);
+            setImageUrl(resolved);
           } else if (data.pending && attempt < 4) {
             // Background fetch in progress — retry with backoff: 3s, 6s, 12s, 24s
             retryTimer = setTimeout(() => fetchImage(attempt + 1), 3000 * (attempt + 1));

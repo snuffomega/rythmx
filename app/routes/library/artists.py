@@ -104,7 +104,8 @@ def library_artists(
                    a.listener_count_lastfm AS listener_count,
                    a.play_count_lastfm AS global_play_count,
                    a.missing_count,
-                   COALESCE(a.image_url_fanart, a.image_url_deezer) AS image_url,
+                   COALESCE(ia.image_url, a.image_url_fanart, a.image_url_deezer) AS image_url,
+                   ia.content_hash AS image_hash,
                    COUNT(al.id) AS album_count,
                    CASE
                        WHEN lower(a.name) LIKE 'the %' THEN substr(a.name, 5)
@@ -113,6 +114,8 @@ def library_artists(
                        ELSE a.name
                    END AS sort_name
             FROM lib_artists a
+            LEFT JOIN image_cache ia
+                   ON ia.entity_type = 'artist' AND ia.entity_key = a.id
             LEFT JOIN lib_albums al
                    ON al.artist_id = a.id AND al.removed_at IS NULL
             WHERE {where_clause}
@@ -144,7 +147,8 @@ def library_artist_detail(artist_id: str):
                    a.popularity_spotify AS popularity,
                    a.listener_count_lastfm AS listener_count,
                    a.play_count_lastfm AS global_play_count,
-                   COALESCE(a.image_url_fanart, a.image_url_deezer) AS image_url,
+                   COALESCE(ia.image_url, a.image_url_fanart, a.image_url_deezer) AS image_url,
+                   ia.content_hash AS image_hash,
                    COUNT(al.id) AS album_count,
                    a.bio_lastfm,
                    a.fans_deezer,
@@ -153,6 +157,8 @@ def library_artist_detail(artist_id: str):
                    a.begin_area_musicbrainz,
                    a.formed_year_musicbrainz
             FROM lib_artists a
+            LEFT JOIN image_cache ia
+                   ON ia.entity_type = 'artist' AND ia.entity_key = a.id
             LEFT JOIN lib_albums al
                    ON al.artist_id = a.id AND al.removed_at IS NULL
             WHERE a.id = ? AND a.removed_at IS NULL
@@ -181,6 +187,7 @@ def library_artist_detail(artist_id: str):
                             la.year || '-01-01') AS release_date,
                    la.genre_itunes AS genre,
                    COALESCE(ia.image_url, la.thumb_url_deezer, la.thumb_url_plex) AS thumb_url,
+                   ia.content_hash AS thumb_hash,
                    la.lastfm_tags_json
             FROM lib_albums la
             LEFT JOIN image_cache ia
@@ -410,7 +417,14 @@ def library_artist_set_cover(
             {"status": "error", "message": "Artist not found"}, status_code=404
         )
 
-    rythmx_store.set_image_cache("artist", artist_id, cover_url)
+    rythmx_store.set_image_cache_entry(
+        "artist",
+        artist_id,
+        cover_url,
+        local_path=None,
+        content_hash=None,
+        artwork_source=None,
+    )
     return {"status": "ok"}
 
 

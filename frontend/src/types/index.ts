@@ -58,6 +58,7 @@ export type ImageType = 'artist' | 'album' | 'track';
 
 export interface ImageResolveResponse {
   image_url?: string;
+  content_hash?: string;
   pending?: boolean;
 }
 
@@ -186,6 +187,7 @@ export interface LibArtist {
   listener_count: number | null;
   global_play_count: number | null;
   image_url: string | null;
+  image_hash?: string | null;
   bio_lastfm: string | null;
   fans_deezer: number | null;
   similar_artists_json: string | null;
@@ -213,6 +215,7 @@ export interface LibAlbum {
   release_date: string | null;
   genre: string | null;
   thumb_url: string | null;
+  thumb_hash?: string | null;
   lastfm_tags_json: string | null;
 }
 
@@ -377,7 +380,7 @@ export interface EnrichmentPipelineStatus {
   workers: Partial<Record<
     'library' | 'itunes_artist' | 'deezer_artist' | 'itunes' | 'deezer' |
     'itunes_rich' | 'deezer_rich' | 'spotify_id' | 'spotify_genres' |
-    'lastfm_id' | 'lastfm_tags' | 'lastfm_stats' | 'artist_art',
+    'lastfm_id' | 'lastfm_tags' | 'lastfm_stats' | 'artist_art' | 'album_art',
     EnrichmentWorkerStatus
   >>;
 }

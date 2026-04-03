@@ -58,6 +58,7 @@ def library_albums(
                             al.year || '-01-01') AS release_date,
                    al.genre_itunes AS genre,
                    COALESCE(ia.image_url, al.thumb_url_deezer, al.thumb_url_plex) AS thumb_url,
+                   ia.content_hash AS thumb_hash,
                    al.lastfm_tags_json,
                    ar.name AS artist_name
             FROM lib_albums al
@@ -87,6 +88,7 @@ def library_album_detail(album_id: str):
                             al.year || '-01-01') AS release_date,
                    al.genre_itunes AS genre,
                    COALESCE(ia.image_url, al.thumb_url_deezer, al.thumb_url_plex) AS thumb_url,
+                   ia.content_hash AS thumb_hash,
                    al.lastfm_tags_json,
                    ar.name AS artist_name
             FROM lib_albums al
@@ -148,5 +150,12 @@ def library_album_set_cover(
             {"status": "error", "message": "Album not found"}, status_code=404
         )
 
-    rythmx_store.set_image_cache("album", album_id, cover_url)
+    rythmx_store.set_image_cache_entry(
+        "album",
+        album_id,
+        cover_url,
+        local_path=None,
+        content_hash=None,
+        artwork_source=None,
+    )
     return {"status": "ok"}

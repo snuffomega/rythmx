@@ -123,21 +123,79 @@ function StarRating({ value, onChange, size = 14, readonly = false }: StarRating
 // ArtistImage — thin wrapper so each card gets its own hook instance
 // ---------------------------------------------------------------------------
 
-function ArtistImage({ name, size, imageUrl }: { name: string; size: number; imageUrl?: string | null }) {
+function ArtistImage({
+  name,
+  size,
+  imageUrl,
+  imageHash,
+}: {
+  name: string;
+  size: number;
+  imageUrl?: string | null;
+  imageHash?: string | null;
+}) {
   const [errored, setErrored] = useState(false);
-  const hasDirectUrl = imageUrl && imageUrl.startsWith('http');
-  const resolvedUrl = useImage('artist', name, '', !!hasDirectUrl);
-  const src = hasDirectUrl ? imageUrl : resolvedUrl;
-  if (src && !errored) return <img src={getImageUrl(src)} alt={name} className="w-full h-full object-cover" onError={() => setErrored(true)} />;
+  const hasDirectUrl = !!(imageUrl && imageUrl.startsWith('http'));
+  const hasHash = !!imageHash;
+  const resolvedUrl = useImage('artist', name, '', hasDirectUrl || hasHash);
+  const rawSrc = hasHash ? (imageUrl ?? '') : (hasDirectUrl ? imageUrl : resolvedUrl);
+  const src = getImageUrl(rawSrc, imageHash);
+  const cdnFallback = hasDirectUrl ? (imageUrl ?? '') : '';
+  if (src && !errored) {
+    return (
+      <img
+        src={src}
+        alt={name}
+        className="w-full h-full object-cover"
+        onError={(e) => {
+          if (imageHash && cdnFallback && e.currentTarget.src !== cdnFallback) {
+            e.currentTarget.src = cdnFallback;
+            return;
+          }
+          setErrored(true);
+        }}
+      />
+    );
+  }
   return <User size={size} className="text-text-muted" />;
 }
 
-function AlbumImage({ title, artist, size, thumbUrl }: { title: string; artist: string; size: number; thumbUrl?: string | null }) {
+function AlbumImage({
+  title,
+  artist,
+  size,
+  thumbUrl,
+  thumbHash,
+}: {
+  title: string;
+  artist: string;
+  size: number;
+  thumbUrl?: string | null;
+  thumbHash?: string | null;
+}) {
   const [errored, setErrored] = useState(false);
-  const hasDirectUrl = thumbUrl && thumbUrl.startsWith('http');
-  const resolvedUrl = useImage('album', title, artist, !!hasDirectUrl);
-  const src = hasDirectUrl ? thumbUrl : resolvedUrl;
-  if (src && !errored) return <img src={getImageUrl(src)} alt={title} className="w-full h-full object-cover" onError={() => setErrored(true)} />;
+  const hasDirectUrl = !!(thumbUrl && thumbUrl.startsWith('http'));
+  const hasHash = !!thumbHash;
+  const resolvedUrl = useImage('album', title, artist, hasDirectUrl || hasHash);
+  const rawSrc = hasHash ? (thumbUrl ?? '') : (hasDirectUrl ? thumbUrl : resolvedUrl);
+  const src = getImageUrl(rawSrc, thumbHash);
+  const cdnFallback = hasDirectUrl ? (thumbUrl ?? '') : '';
+  if (src && !errored) {
+    return (
+      <img
+        src={src}
+        alt={title}
+        className="w-full h-full object-cover"
+        onError={(e) => {
+          if (thumbHash && cdnFallback && e.currentTarget.src !== cdnFallback) {
+            e.currentTarget.src = cdnFallback;
+            return;
+          }
+          setErrored(true);
+        }}
+      />
+    );
+  }
   return <Disc size={size} className="text-text-muted" />;
 }
 
@@ -194,7 +252,7 @@ function ArtistCard({ artist, viewMode, onShufflePlay }: ArtistCardProps) {
         className="text-left group hover:bg-[#111] rounded-sm p-2 transition-colors block"
       >
         <div className="relative aspect-square bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center mb-2 border border-[#222] group/art">
-          <ArtistImage name={artist.name} size={32} imageUrl={artist.image_url} />
+          <ArtistImage name={artist.name} size={32} imageUrl={artist.image_url} imageHash={artist.image_hash} />
           {showHoverPlay && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-0 group-hover/art:opacity-100 transition-opacity">
               <button
@@ -227,7 +285,7 @@ function ArtistCard({ artist, viewMode, onShufflePlay }: ArtistCardProps) {
       className="w-full flex items-center gap-3 px-2 py-2 hover:bg-[#111] transition-colors rounded-sm"
     >
       <div className="relative w-10 h-10 flex-shrink-0 bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center border border-[#222] group/art">
-        <ArtistImage name={artist.name} size={18} imageUrl={artist.image_url} />
+        <ArtistImage name={artist.name} size={18} imageUrl={artist.image_url} imageHash={artist.image_hash} />
         {showHoverPlay && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-0 group-hover/art:opacity-100 transition-opacity">
             <button
@@ -285,7 +343,7 @@ function AlbumCard({ album, viewMode, onHoverPlay }: AlbumCardProps) {
         className="text-left group hover:bg-[#111] rounded-sm p-2 transition-colors block"
       >
         <div className="relative aspect-square bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center mb-2 border border-[#222] group/album">
-          <AlbumImage title={album.title} artist={album.artist_name} size={32} thumbUrl={album.thumb_url} />
+          <AlbumImage title={album.title} artist={album.artist_name} size={32} thumbUrl={album.thumb_url} thumbHash={album.thumb_hash} />
           {showHoverPlay && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-0 group-hover/album:opacity-100 transition-opacity">
               <button
@@ -312,7 +370,7 @@ function AlbumCard({ album, viewMode, onHoverPlay }: AlbumCardProps) {
       className="w-full flex items-center gap-3 px-2 py-2 hover:bg-[#111] transition-colors rounded-sm"
     >
       <div className="relative w-10 h-10 flex-shrink-0 bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center border border-[#222] group/album">
-        <AlbumImage title={album.title} artist={album.artist_name} size={18} thumbUrl={album.thumb_url} />
+        <AlbumImage title={album.title} artist={album.artist_name} size={18} thumbUrl={album.thumb_url} thumbHash={album.thumb_hash} />
         {showHoverPlay && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-0 group-hover/album:opacity-100 transition-opacity">
             <button
