@@ -11,6 +11,7 @@ from app.routes import acquisition
 from app.routes import forge
 from app.routes import library_enrich
 from app.routes import library_playlists
+from app.routes import library_stream
 from app.routes.library import albums, artists, audit, releases, tracks
 
 
@@ -39,6 +40,32 @@ class _FakeConn:
 
     def __exit__(self, exc_type, exc, tb):
         return False
+
+
+class _FakeRequest:
+    def __init__(self, headers: dict[str, str] | None = None):
+        self.headers = headers or {}
+
+
+class _FakeNavidromeClient:
+    def get_stream_url(self, song_id: str) -> str:
+        return f"https://navidrome.local/stream/{song_id}"
+
+
+class _FakeUpstreamResponse:
+    def __init__(self, status_code: int = 200, headers: dict[str, str] | None = None):
+        self.status_code = status_code
+        self.headers = headers or {"Content-Type": "audio/mpeg", "Content-Length": "4"}
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def iter_content(self, chunk_size: int = 65536):
+        _ = chunk_size
+        yield b"data"
+
+    def close(self) -> None:
+        return None
 
 
 def test_acquisition_check_now_success(monkeypatch):
@@ -865,3 +892,75 @@ def test_forge_sync_load_no_queue_build(monkeypatch):
     assert result["queue_build"] is False
     assert result["build"] is None
     assert calls["create_called"] is False
+
+
+def test_library_stream_navidrome_forwards_range_and_returns_partial(monkeypatch):
+    captured: dict[str, object] = {"url": None, "headers": None}
+
+    def _fake_get(url, headers=None, stream=None, timeout=None):
+        captured["url"] = url
+        captured["headers"] = headers
+        assert stream is True
+        assert timeout == 30
+        return _FakeUpstreamResponse(
+            status_code=206,
+            headers={
+                "Content-Type": "audio/flac",
+                "Content-Length": "4",
+                "Content-Range": "bytes 0-3/1000",
+            },
+        )
+
+    monkeypatch.setattr(library_stream, "_verify_key", lambda _k: None)
+    monkeypatch.setattr(
+        library_stream,
+        "_get_track",
+        lambda _track_id: {"id": "tr-1", "source_platform": "navidrome", "file_path": None},
+    )
+    monkeypatch.setattr("app.db.navidrome_reader._get_client", lambda: _FakeNavidromeClient())
+    monkeypatch.setattr("requests.get", _fake_get)
+
+    response = library_stream.stream_track(
+        "tr-1",
+        _FakeRequest(headers={"range": "bytes=0-3"}),
+        api_key="test",
+    )
+
+    assert response.status_code == 206
+    assert response.media_type == "audio/flac"
+    assert response.headers["accept-ranges"] == "bytes"
+    assert response.headers["content-range"] == "bytes 0-3/1000"
+    assert response.headers["content-length"] == "4"
+    assert captured["url"] == "https://navidrome.local/stream/tr-1"
+    assert captured["headers"] == {"Range": "bytes=0-3"}
+
+
+def test_library_stream_plex_returns_redirect(monkeypatch):
+    class _FakePlexTrack:
+        @staticmethod
+        def getStreamURL() -> str:
+            return "https://plex.local/stream/track.mp3"
+
+    class _FakePlexServer:
+        def __init__(self, url: str, token: str):
+            assert url == "http://plex.example"
+            assert token == "plex-token"
+
+        @staticmethod
+        def fetchItem(track_id: int):
+            assert track_id == 123
+            return _FakePlexTrack()
+
+    monkeypatch.setattr(library_stream, "_verify_key", lambda _k: None)
+    monkeypatch.setattr(
+        library_stream,
+        "_get_track",
+        lambda _track_id: {"id": "123", "source_platform": "plex", "file_path": None},
+    )
+    monkeypatch.setattr("app.config.PLEX_URL", "http://plex.example")
+    monkeypatch.setattr("app.config.PLEX_TOKEN", "plex-token")
+    monkeypatch.setattr("plexapi.server.PlexServer", _FakePlexServer)
+
+    response = library_stream.stream_track("123", _FakeRequest(), api_key="test")
+    assert response.status_code == 302
+    assert response.headers["location"] == "https://plex.local/stream/track.mp3"
