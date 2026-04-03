@@ -20,7 +20,7 @@ import {
   Play, Pause, SkipBack,
   Shuffle, Repeat, Repeat1, Settings,
   Disc, Star, Heart, ListMusic, Mic2,
-  ChevronDown, List, ListPlus, Volume2, X, Maximize2, Minimize2, MoreHorizontal, Trash2,
+  ChevronDown, List, ListPlus, Volume2, X, Maximize2, Minimize2, MoreHorizontal, Trash2, GripVertical,
 } from 'lucide-react';
 import { useNavigate } from '@tanstack/react-router';
 import { usePlayerStore, type PlayerTrack } from '../stores/usePlayerStore';
@@ -117,6 +117,10 @@ export function VinylPlayerScreen({
   const [showQueue,  setShowQueue]  = useState(false);
   const [queueExpanded, setQueueExpanded] = useState(false);
   const [queueMenuIndex, setQueueMenuIndex] = useState<number | null>(null);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dropIndex, setDropIndex] = useState<number | null>(null);
+  const [coverDirection, setCoverDirection] = useState<1 | -1>(1);
+  const [coverTransitionActive, setCoverTransitionActive] = useState(false);
   const [showVolume, setShowVolume] = useState(false);
   const [artistNavLoading, setArtistNavLoading] = useState(false);
   const [albumNavLoading, setAlbumNavLoading] = useState(false);
@@ -137,6 +141,7 @@ export function VinylPlayerScreen({
     toggleShuffle, toggleRepeat,
     setVolume: storeSetVolume,
   } = usePlayerStore();
+  const previousQueueIndexRef = useRef(queueIndex);
 
   const prevTrackItem = queueIndex > 0 ? queue[queueIndex - 1] : null;
   const nextTrackItem = (() => {
@@ -146,6 +151,7 @@ export function VinylPlayerScreen({
   })();
 
   const progressPct = duration > 0 ? (position / duration) * 100 : 0;
+  const coverOffset = coverTransitionActive ? coverDirection * 18 : 0;
 
   const openPlaylistPicker = useCallback(async (track: { id: string; title: string }) => {
     setPlaylistTrack(track);
@@ -268,10 +274,44 @@ export function VinylPlayerScreen({
     setQueueMenuIndex(null);
   }
 
+  function clearQueueDragState() {
+    setDragIndex(null);
+    setDropIndex(null);
+  }
+
+  function handleQueueDragStart(event: React.DragEvent<HTMLElement>, index: number) {
+    setQueueMenuIndex(null);
+    setDragIndex(index);
+    setDropIndex(index);
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', String(index));
+  }
+
+  function handleQueueDragOver(event: React.DragEvent<HTMLElement>, index: number) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    if (dropIndex !== index) {
+      setDropIndex(index);
+    }
+  }
+
+  function handleQueueDrop(event: React.DragEvent<HTMLElement>, index: number) {
+    event.preventDefault();
+    if (dragIndex === null) {
+      clearQueueDragState();
+      return;
+    }
+    if (dragIndex !== index) {
+      usePlayerStore.getState().moveQueueItem(dragIndex, index);
+    }
+    clearQueueDragState();
+  }
+
   function handleSettings() {
     setShowQueue(false);
     setQueueExpanded(false);
     setQueueMenuIndex(null);
+    clearQueueDragState();
     onMinimize();
     navigate({ to: '/settings' });
   }
@@ -280,8 +320,32 @@ export function VinylPlayerScreen({
     setShowQueue(false);
     setQueueExpanded(false);
     setQueueMenuIndex(null);
+    clearQueueDragState();
     onMinimize();
   }
+
+  useEffect(() => {
+    const previousIndex = previousQueueIndexRef.current;
+    if (queueIndex < 0 || queue.length < 2 || previousIndex === queueIndex) {
+      previousQueueIndexRef.current = queueIndex;
+      return;
+    }
+
+    let direction: 1 | -1 = queueIndex > previousIndex ? 1 : -1;
+    if (repeatMode === 'all') {
+      if (previousIndex === queue.length - 1 && queueIndex === 0) {
+        direction = 1;
+      } else if (previousIndex === 0 && queueIndex === queue.length - 1) {
+        direction = -1;
+      }
+    }
+
+    setCoverDirection(direction);
+    setCoverTransitionActive(true);
+    const timer = window.setTimeout(() => setCoverTransitionActive(false), 240);
+    previousQueueIndexRef.current = queueIndex;
+    return () => window.clearTimeout(timer);
+  }, [queueIndex, queue.length, repeatMode]);
 
   useEffect(() => {
     if (!showQueue) return;
@@ -290,6 +354,7 @@ export function VinylPlayerScreen({
         setShowQueue(false);
         setQueueExpanded(false);
         setQueueMenuIndex(null);
+        clearQueueDragState();
       }
     };
     document.addEventListener('keydown', onKeyDown);
@@ -304,6 +369,7 @@ export function VinylPlayerScreen({
       if (queueButtonRef.current?.contains(target)) return;
       setShowQueue(false);
       setQueueMenuIndex(null);
+      clearQueueDragState();
     };
     document.addEventListener('mousedown', onMouseDown);
     return () => document.removeEventListener('mousedown', onMouseDown);
@@ -347,11 +413,11 @@ export function VinylPlayerScreen({
                          disabled:cursor-default transition-all active:scale-95"
               style={{
                 width: 'clamp(90px, 11vw, 130px)', height: 'clamp(90px, 11vw, 130px)',
-                transform:  'rotateY(28deg) translateX(-8px) scale(0.85)',
-                opacity:    prevTrackItem ? 0.50 : 0.08,
+                transform:  `translateX(${-8 - (coverOffset * 0.55)}px) rotateY(28deg) scale(0.85)`,
+                opacity:    prevTrackItem ? (coverTransitionActive ? 0.62 : 0.50) : 0.08,
                 border:     '1px solid rgba(255,255,255,0.07)',
                 boxShadow:  '-6px 10px 28px rgba(0,0,0,0.70)',
-                transition: 'opacity 0.25s, transform 0.15s',
+                transition: 'opacity 0.24s ease-out, transform 0.24s ease-out',
               }}
             >
               <ArtCard key={prevTrackItem?.id ?? 'empty-prev'} track={prevTrackItem} size="sm" />
@@ -362,8 +428,11 @@ export function VinylPlayerScreen({
               className="flex-shrink-0 rounded-2xl overflow-hidden relative"
               style={{
                 width: 'clamp(280px, 42vw, 460px)', height: 'clamp(280px, 42vw, 460px)',
+                transform: `translateX(${coverOffset}px) scale(${coverTransitionActive ? 0.985 : 1})`,
+                opacity: coverTransitionActive ? 0.88 : 1,
                 border:     '1.5px solid rgba(255,255,255,0.07)',
                 boxShadow:  '0 28px 70px rgba(0,0,0,0.90), 0 8px 20px rgba(0,0,0,0.70), inset 0 1px 0 rgba(255,255,255,0.05)',
+                transition: 'opacity 0.24s ease-out, transform 0.24s ease-out',
               }}
             >
               <ArtCard key={currentTrack?.id ?? 'empty-curr'} track={currentTrack} size="lg" />
@@ -382,11 +451,11 @@ export function VinylPlayerScreen({
                          disabled:cursor-default transition-all active:scale-95"
               style={{
                 width: 'clamp(118px, 14vw, 170px)', height: 'clamp(118px, 14vw, 170px)',
-                transform:  'rotateY(-28deg) translateX(8px) scale(0.90)',
-                opacity:    nextTrackItem ? 0.58 : 0.08,
+                transform:  `translateX(${8 - (coverOffset * 0.55)}px) rotateY(-28deg) scale(0.90)`,
+                opacity:    nextTrackItem ? (coverTransitionActive ? 0.70 : 0.58) : 0.08,
                 border:     '1px solid rgba(255,255,255,0.08)',
                 boxShadow:  '6px 10px 28px rgba(0,0,0,0.70)',
-                transition: 'opacity 0.25s, transform 0.15s',
+                transition: 'opacity 0.24s ease-out, transform 0.24s ease-out',
               }}
             >
               <ArtCard key={nextTrackItem?.id ?? 'empty-next'} track={nextTrackItem} size="sm" />
@@ -573,7 +642,13 @@ export function VinylPlayerScreen({
           {/* Right — volume + queue */}
           <div className="flex items-center justify-end gap-1">
             <button
-              onClick={() => { setShowVolume(v => !v); setShowQueue(false); setQueueExpanded(false); setQueueMenuIndex(null); }}
+              onClick={() => {
+                setShowVolume(v => !v);
+                setShowQueue(false);
+                setQueueExpanded(false);
+                setQueueMenuIndex(null);
+                clearQueueDragState();
+              }}
               aria-label="Volume"
               className={`p-2.5 rounded-lg transition-all active:scale-90 ${showVolume ? 'text-accent' : 'text-text-muted hover:text-text-secondary'}`}
             >
@@ -586,6 +661,9 @@ export function VinylPlayerScreen({
                 setQueueExpanded(false);
                 setQueueMenuIndex(null);
                 setShowQueue((open) => {
+                  if (open) {
+                    clearQueueDragState();
+                  }
                   return !open;
                 });
               }}
@@ -625,14 +703,14 @@ export function VinylPlayerScreen({
                   </button>
                   {queue.length > 0 && (
                     <button
-                      onClick={() => { usePlayerStore.getState().clearQueue(); setQueueMenuIndex(null); }}
+                      onClick={() => { usePlayerStore.getState().clearQueue(); setQueueMenuIndex(null); clearQueueDragState(); }}
                       className="text-[10px] font-mono text-text-muted hover:text-text-secondary transition-colors"
                     >
                       Clear
                     </button>
                   )}
                   <button
-                    onClick={() => { setShowQueue(false); setQueueExpanded(false); setQueueMenuIndex(null); }}
+                    onClick={() => { setShowQueue(false); setQueueExpanded(false); setQueueMenuIndex(null); clearQueueDragState(); }}
                     aria-label="Close queue"
                     className="p-1 text-text-muted hover:text-text-primary transition-colors"
                   >
@@ -649,9 +727,29 @@ export function VinylPlayerScreen({
                   <ul>
                     {queue.map((track, i) => (
                       <li key={`${track.id}-${i}`}>
-                        <div className="group relative px-4 py-2.5 flex items-center gap-2.5 hover:bg-[#111] transition-colors">
+                        <div
+                          onDragOver={(event) => handleQueueDragOver(event, i)}
+                          onDrop={(event) => handleQueueDrop(event, i)}
+                          className={`group relative px-4 py-2.5 flex items-center gap-2.5 transition-colors ${
+                            dropIndex === i && dragIndex !== null && dragIndex !== i
+                              ? 'bg-[#151515] ring-1 ring-accent/40'
+                              : 'hover:bg-[#111]'
+                          }`}
+                        >
                           <button
-                            onClick={() => { usePlayerStore.getState().playAt(i); setShowQueue(false); setQueueExpanded(false); }}
+                            draggable
+                            onDragStart={(event) => handleQueueDragStart(event, i)}
+                            onDragEnd={clearQueueDragState}
+                            className={`text-text-muted hover:text-text-secondary transition-colors ${
+                              dragIndex === i ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                            }`}
+                            title="Drag to reorder"
+                            aria-label={`Drag ${track.title} to reorder`}
+                          >
+                            <GripVertical size={13} />
+                          </button>
+                          <button
+                            onClick={() => { usePlayerStore.getState().playAt(i); setShowQueue(false); setQueueExpanded(false); clearQueueDragState(); }}
                             className="flex-1 min-w-0 text-left flex items-center gap-2.5"
                           >
                             <span className="font-mono text-[10px] text-text-muted w-5 flex-shrink-0 text-right">
@@ -696,7 +794,7 @@ export function VinylPlayerScreen({
                           {queueMenuIndex === i && (
                             <div className="absolute right-3 top-full mt-1 w-40 bg-[#0f0f0f] border border-[#222] rounded-md shadow-xl z-40">
                               <button
-                                onClick={() => { usePlayerStore.getState().playAt(i); setQueueMenuIndex(null); setShowQueue(false); setQueueExpanded(false); }}
+                                onClick={() => { usePlayerStore.getState().playAt(i); setQueueMenuIndex(null); setShowQueue(false); setQueueExpanded(false); clearQueueDragState(); }}
                                 className="w-full px-3 py-1.5 text-left text-[11px] text-text-secondary hover:bg-[#161616] transition-colors"
                               >
                                 Play now
@@ -742,7 +840,7 @@ export function VinylPlayerScreen({
         {showQueue && queueExpanded && (
           <div
             className="fixed inset-0 z-30 bg-black/35 flex items-end justify-center px-4 pb-8"
-            onClick={() => { setShowQueue(false); setQueueExpanded(false); setQueueMenuIndex(null); }}
+            onClick={() => { setShowQueue(false); setQueueExpanded(false); setQueueMenuIndex(null); clearQueueDragState(); }}
           >
             <div
               className="w-full max-w-[720px] border border-[#1e1e1e] rounded-xl overflow-hidden bg-[#0a0a0a] shadow-2xl
@@ -755,7 +853,7 @@ export function VinylPlayerScreen({
                 </span>
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => { setQueueMenuIndex(null); setQueueExpanded(false); }}
+                    onClick={() => { setQueueMenuIndex(null); setQueueExpanded(false); clearQueueDragState(); }}
                     className="p-1 text-text-muted hover:text-text-primary transition-colors"
                     title="Collapse queue"
                     aria-label="Collapse queue"
@@ -764,14 +862,14 @@ export function VinylPlayerScreen({
                   </button>
                   {queue.length > 0 && (
                     <button
-                      onClick={() => { usePlayerStore.getState().clearQueue(); setQueueMenuIndex(null); }}
+                      onClick={() => { usePlayerStore.getState().clearQueue(); setQueueMenuIndex(null); clearQueueDragState(); }}
                       className="text-[10px] font-mono text-text-muted hover:text-text-secondary transition-colors"
                     >
                       Clear
                     </button>
                   )}
                   <button
-                    onClick={() => { setShowQueue(false); setQueueExpanded(false); setQueueMenuIndex(null); }}
+                    onClick={() => { setShowQueue(false); setQueueExpanded(false); setQueueMenuIndex(null); clearQueueDragState(); }}
                     aria-label="Close queue"
                     className="p-1 text-text-muted hover:text-text-primary transition-colors"
                   >
@@ -788,9 +886,29 @@ export function VinylPlayerScreen({
                   <ul>
                     {queue.map((track, i) => (
                       <li key={`${track.id}-${i}`}>
-                        <div className="group relative px-4 py-2.5 flex items-center gap-2.5 hover:bg-[#111] transition-colors">
+                        <div
+                          onDragOver={(event) => handleQueueDragOver(event, i)}
+                          onDrop={(event) => handleQueueDrop(event, i)}
+                          className={`group relative px-4 py-2.5 flex items-center gap-2.5 transition-colors ${
+                            dropIndex === i && dragIndex !== null && dragIndex !== i
+                              ? 'bg-[#151515] ring-1 ring-accent/40'
+                              : 'hover:bg-[#111]'
+                          }`}
+                        >
                           <button
-                            onClick={() => { usePlayerStore.getState().playAt(i); setShowQueue(false); setQueueExpanded(false); }}
+                            draggable
+                            onDragStart={(event) => handleQueueDragStart(event, i)}
+                            onDragEnd={clearQueueDragState}
+                            className={`text-text-muted hover:text-text-secondary transition-colors ${
+                              dragIndex === i ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                            }`}
+                            title="Drag to reorder"
+                            aria-label={`Drag ${track.title} to reorder`}
+                          >
+                            <GripVertical size={13} />
+                          </button>
+                          <button
+                            onClick={() => { usePlayerStore.getState().playAt(i); setShowQueue(false); setQueueExpanded(false); clearQueueDragState(); }}
                             className="flex-1 min-w-0 text-left flex items-center gap-2.5"
                           >
                             <span className="font-mono text-[10px] text-text-muted w-5 flex-shrink-0 text-right">
@@ -835,7 +953,7 @@ export function VinylPlayerScreen({
                           {queueMenuIndex === i && (
                             <div className="absolute right-3 top-full mt-1 w-40 bg-[#0f0f0f] border border-[#222] rounded-md shadow-xl z-40">
                               <button
-                                onClick={() => { usePlayerStore.getState().playAt(i); setQueueMenuIndex(null); setShowQueue(false); setQueueExpanded(false); }}
+                                onClick={() => { usePlayerStore.getState().playAt(i); setQueueMenuIndex(null); setShowQueue(false); setQueueExpanded(false); clearQueueDragState(); }}
                                 className="w-full px-3 py-1.5 text-left text-[11px] text-text-secondary hover:bg-[#161616] transition-colors"
                               >
                                 Play now
