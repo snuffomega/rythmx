@@ -15,17 +15,20 @@
  * Artwork fix: useImage lives inside ArtCard; parent passes key={track?.id}
  * so React remounts on skip → fresh image every track change.
  */
-import { useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import {
   Play, Pause, SkipBack, SkipForward,
   Shuffle, Repeat, LayoutList, Settings,
   Disc, Star, Heart, ListMusic, Mic2,
-  ChevronDown, List, Volume2,
+  ChevronDown, List, ListPlus, Volume2,
 } from 'lucide-react';
 import { useNavigate } from '@tanstack/react-router';
 import { usePlayerStore, type PlayerTrack } from '../stores/usePlayerStore';
 import { useImage } from '../hooks/useImage';
 import { AudioQualityBadge } from './common';
+import { libraryPlaylistsApi } from '../services/api';
+import { useToastStore } from '../stores/useToastStore';
+import type { LibPlaylist } from '../types';
 
 interface VinylPlayerScreenProps {
   isPlaying: boolean;
@@ -95,12 +98,21 @@ export function VinylPlayerScreen({
   isPlaying, onPlayPause, onMinimize, onSeek, onVolumeChange,
 }: VinylPlayerScreenProps) {
   const navigate    = useNavigate();
+  const toastSuccess = useToastStore(s => s.success);
+  const toastError = useToastStore(s => s.error);
   const progressRef = useRef<HTMLDivElement>(null);
 
   const [starRating, setStarRating] = useState(0);
   const [liked,      setLiked]      = useState(false);
   const [showQueue,  setShowQueue]  = useState(false);
   const [showVolume, setShowVolume] = useState(false);
+  const [playlistOptions, setPlaylistOptions] = useState<LibPlaylist[]>([]);
+  const [playlistPickerOpen, setPlaylistPickerOpen] = useState(false);
+  const [playlistPickerLoading, setPlaylistPickerLoading] = useState(false);
+  const [playlistPickerSaving, setPlaylistPickerSaving] = useState(false);
+  const [playlistPickerError, setPlaylistPickerError] = useState<string | null>(null);
+  const [playlistTrack, setPlaylistTrack] = useState<{ id: string; title: string } | null>(null);
+  const [selectedPlaylistId, setSelectedPlaylistId] = useState('');
 
   const {
     currentTrack, queue, queueIndex,
@@ -120,6 +132,59 @@ export function VinylPlayerScreen({
   })();
 
   const progressPct = duration > 0 ? (position / duration) * 100 : 0;
+
+  const openPlaylistPicker = useCallback(async (track: { id: string; title: string }) => {
+    setPlaylistTrack(track);
+    setPlaylistPickerOpen(true);
+    setPlaylistPickerLoading(true);
+    setPlaylistPickerSaving(false);
+    setPlaylistPickerError(null);
+    try {
+      const list = await libraryPlaylistsApi.list();
+      setPlaylistOptions(list);
+      setSelectedPlaylistId(list[0]?.id ?? '');
+      if (list.length === 0) {
+        setPlaylistPickerError('No playlists found. Sync or create one in Library > Playlists first.');
+      }
+    } catch (err) {
+      setPlaylistOptions([]);
+      setSelectedPlaylistId('');
+      setPlaylistPickerError(err instanceof Error ? err.message : 'Failed to load playlists');
+    } finally {
+      setPlaylistPickerLoading(false);
+    }
+  }, []);
+
+  const closePlaylistPicker = useCallback(() => {
+    setPlaylistPickerOpen(false);
+    setPlaylistPickerLoading(false);
+    setPlaylistPickerSaving(false);
+    setPlaylistPickerError(null);
+    setPlaylistTrack(null);
+    setSelectedPlaylistId('');
+  }, []);
+
+  const confirmAddToPlaylist = useCallback(async () => {
+    if (!playlistTrack || !selectedPlaylistId) {
+      return;
+    }
+    setPlaylistPickerSaving(true);
+    setPlaylistPickerError(null);
+    try {
+      const result = await libraryPlaylistsApi.addTracks(selectedPlaylistId, [playlistTrack.id]);
+      const selected = playlistOptions.find(p => p.id === selectedPlaylistId);
+      toastSuccess(
+        `Added "${playlistTrack.title}" to "${selected?.name ?? selectedPlaylistId}" (${result.track_count} tracks)`
+      );
+      closePlaylistPicker();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to add track to playlist';
+      setPlaylistPickerError(msg);
+      toastError(msg);
+    } finally {
+      setPlaylistPickerSaving(false);
+    }
+  }, [playlistTrack, selectedPlaylistId, playlistOptions, toastSuccess, toastError, closePlaylistPicker]);
 
   function handleProgressClick(e: React.MouseEvent<HTMLDivElement>) {
     if (!progressRef.current || duration <= 0) return;
@@ -433,26 +498,106 @@ export function VinylPlayerScreen({
                 <ul>
                   {queue.map((track, i) => (
                     <li key={`${track.id}-${i}`}>
-                      <button
-                        onClick={() => { usePlayerStore.getState().playAt(i); setShowQueue(false); }}
-                        className="w-full text-left px-4 py-2.5 flex items-center gap-2.5 hover:bg-[#111] transition-colors"
-                      >
-                        <span className="font-mono text-[10px] text-text-muted w-5 flex-shrink-0 text-right">
-                          {i === queueIndex && isPlaying ? '▶' : i + 1}
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          <p className={`text-[12px] truncate leading-tight ${i === queueIndex ? 'text-accent' : 'text-text-primary'}`}>
-                            {track.title}
-                          </p>
-                          <p className="font-mono text-[10px] text-text-muted truncate leading-tight">
-                            {track.artist}
-                          </p>
-                        </div>
-                      </button>
+                      <div className="group px-4 py-2.5 flex items-center gap-2.5 hover:bg-[#111] transition-colors">
+                        <button
+                          onClick={() => { usePlayerStore.getState().playAt(i); setShowQueue(false); }}
+                          className="flex-1 min-w-0 text-left flex items-center gap-2.5"
+                        >
+                          <span className="font-mono text-[10px] text-text-muted w-5 flex-shrink-0 text-right">
+                            {i === queueIndex && isPlaying ? '▶' : i + 1}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <p className={`text-[12px] truncate leading-tight ${i === queueIndex ? 'text-accent' : 'text-text-primary'}`}>
+                              {track.title}
+                            </p>
+                            <p className="font-mono text-[10px] text-text-muted truncate leading-tight">
+                              {track.artist}
+                            </p>
+                          </div>
+                        </button>
+                        <button
+                          onClick={() => openPlaylistPicker(track)}
+                          className="text-text-muted opacity-0 group-hover:opacity-100 hover:text-accent transition-all"
+                          title="Add to playlist"
+                          aria-label={`Add ${track.title} to playlist`}
+                        >
+                          <ListPlus size={13} />
+                        </button>
+                      </div>
                     </li>
                   ))}
                 </ul>
               )}
+            </div>
+          </div>
+        )}
+
+        {playlistPickerOpen && (
+          <div className="fixed inset-0 z-40 bg-black/60 flex items-center justify-center p-4">
+            <div className="w-full max-w-md bg-[#0d0d0d] border border-[#2a2a2a] p-4">
+              <h3 className="text-sm font-semibold text-text-primary">Add To Playlist</h3>
+              <p className="text-xs text-text-muted mt-1 truncate">
+                {playlistTrack ? `Track: ${playlistTrack.title}` : 'Select a playlist'}
+              </p>
+
+              {playlistPickerLoading ? (
+                <div className="flex items-center gap-2 text-xs text-text-muted mt-4">
+                  <Disc size={12} className="animate-spin" />
+                  Loading playlists...
+                </div>
+              ) : (
+                <>
+                  <div className="mt-4">
+                    <label className="block text-[10px] font-mono text-text-muted uppercase tracking-wider mb-1.5">
+                      Playlist
+                    </label>
+                    <select
+                      value={selectedPlaylistId}
+                      onChange={e => setSelectedPlaylistId(e.target.value)}
+                      className="w-full bg-[#111] border border-[#2a2a2a] text-text-primary text-sm px-3 py-2 focus:outline-none focus:border-accent"
+                      disabled={playlistOptions.length === 0 || playlistPickerSaving}
+                    >
+                      {playlistOptions.length === 0 ? (
+                        <option value="">No playlists available</option>
+                      ) : (
+                        playlistOptions.map(pl => (
+                          <option key={pl.id} value={pl.id}>
+                            {pl.name} ({pl.track_count} tracks)
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  </div>
+
+                  {playlistPickerError && (
+                    <p className="text-xs text-danger mt-3">{playlistPickerError}</p>
+                  )}
+                </>
+              )}
+
+              <div className="mt-4 flex items-center justify-end gap-2">
+                <button
+                  onClick={closePlaylistPicker}
+                  disabled={playlistPickerSaving}
+                  className="px-3 py-1.5 text-xs border border-[#333] text-text-muted hover:text-text-primary transition-colors disabled:opacity-40"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => navigate({ to: '/library/playlists' })}
+                  disabled={playlistPickerSaving}
+                  className="px-3 py-1.5 text-xs border border-[#333] text-text-muted hover:text-text-primary transition-colors disabled:opacity-40"
+                >
+                  Open Playlists
+                </button>
+                <button
+                  onClick={confirmAddToPlaylist}
+                  disabled={playlistPickerLoading || playlistPickerSaving || !playlistTrack || !selectedPlaylistId}
+                  className="px-3 py-1.5 text-xs bg-accent text-black hover:bg-accent/80 transition-colors disabled:opacity-40"
+                >
+                  {playlistPickerSaving ? 'Adding...' : 'Add'}
+                </button>
+              </div>
             </div>
           </div>
         )}
