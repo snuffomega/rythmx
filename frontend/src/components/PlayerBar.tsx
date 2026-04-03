@@ -3,9 +3,9 @@
  */
 import {
   Play, Pause, SkipBack, SkipForward,
-  Volume2, Repeat, Shuffle, ListPlus, Maximize2, Disc, Star,
+  Volume2, Repeat, Shuffle, List, Maximize2, Disc, Star, X,
 } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { usePlayerStore } from '../stores/usePlayerStore';
 import { useImage } from '../hooks/useImage';
@@ -35,9 +35,11 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
   const [artistNavLoading, setArtistNavLoading] = useState(false);
   const [ratingByTrack, setRatingByTrack] = useState<Record<string, number>>({});
   const [hoverRating, setHoverRating] = useState(0);
+  const [showQueue, setShowQueue] = useState(false);
   const {
     currentTrack,
     queue,
+    queueIndex,
     formattedPosition,
     formattedDuration,
     position,
@@ -51,6 +53,8 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
 
   const progressRef = useRef<HTMLDivElement>(null);
   const volumeRef = useRef<HTMLDivElement>(null);
+  const queueButtonRef = useRef<HTMLButtonElement>(null);
+  const queuePanelRef = useRef<HTMLDivElement>(null);
 
   const progressPct = duration > 0 ? (position / duration) * 100 : 0;
   const currentRating = currentTrack ? ratingByTrack[currentTrack.id] ?? 0 : 0;
@@ -98,6 +102,30 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
     }
   }
 
+  function handleExpand() {
+    setShowQueue(false);
+    onExpand();
+  }
+
+  useEffect(() => {
+    if (!showQueue) return;
+    const onMouseDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (queuePanelRef.current?.contains(target)) return;
+      if (queueButtonRef.current?.contains(target)) return;
+      setShowQueue(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setShowQueue(false);
+    };
+    document.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [showQueue]);
+
   return (
     <div className="fixed bottom-0 left-0 right-0 z-30 h-[96px] bg-[#0a0a0a] border-t border-[#1a1a1a]">
       <div
@@ -108,10 +136,10 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
         <div className="absolute top-0 left-0 h-full bg-accent" style={{ width: `${progressPct}%` }} />
       </div>
 
-      <div className="h-full pt-[8px] pl-[72px] pr-6 flex items-center gap-6">
+      <div className="h-full pt-[8px] pl-[72px] pr-6 relative flex items-center">
         <div className="flex items-center gap-4 w-[360px] min-w-0">
           <button
-            onClick={onExpand}
+            onClick={handleExpand}
             disabled={!currentTrack}
             className="rounded-sm transition-all hover:brightness-110 active:scale-95 disabled:opacity-60 disabled:cursor-default"
             aria-label="Open large player"
@@ -138,7 +166,7 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
           </div>
         </div>
 
-        <div className="flex-1 flex items-center justify-center gap-5">
+        <div className="absolute left-1/2 -translate-x-1/2 flex items-center justify-center gap-5">
           <div className="w-[124px] flex flex-col items-center justify-center">
             <div className="h-[18px] flex items-center gap-0.5" onMouseLeave={() => setHoverRating(0)}>
               {[1, 2, 3, 4, 5].map((star) => (
@@ -201,17 +229,23 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
           </div>
         </div>
 
-        <div className="flex items-center gap-3 w-[240px] justify-end">
+        <div className="ml-auto relative flex items-center gap-3 w-[360px] justify-end">
           {queue.length > 0 && (
             <span className="font-mono text-[12px] text-text-muted tabular-nums">
-              {usePlayerStore.getState().queueIndex + 1}/{queue.length}
+              {queueIndex >= 0 ? queueIndex + 1 : 0}/{queue.length}
             </span>
           )}
-          <button className="text-text-muted hover:text-text-secondary transition-colors" aria-label="Queue" title="Queue">
-            <ListPlus size={18} />
+          <button
+            ref={queueButtonRef}
+            onClick={() => setShowQueue((open) => !open)}
+            className={`text-text-muted transition-colors ${showQueue ? 'text-accent' : 'hover:text-text-secondary'}`}
+            aria-label="Queue"
+            title="Queue"
+          >
+            <List size={18} />
           </button>
           <button
-            onClick={onExpand}
+            onClick={handleExpand}
             className="text-text-muted hover:text-text-secondary transition-colors"
             aria-label="Open large player"
             title="Open large player"
@@ -234,6 +268,66 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
               style={{ left: `${volume * 100}%`, marginLeft: '-5px' }}
             />
           </div>
+
+          {showQueue && (
+            <div
+              ref={queuePanelRef}
+              className="absolute bottom-full right-0 mb-3 w-[min(90vw,460px)] border border-[#1e1e1e] rounded-xl overflow-hidden bg-[#0a0a0a] shadow-2xl z-40"
+            >
+              <div className="flex items-center justify-between px-4 py-3 border-b border-[#1a1a1a]">
+                <span className="font-mono text-[11px] text-text-muted uppercase tracking-widest">
+                  Queue - {queue.length} track{queue.length !== 1 ? 's' : ''}
+                </span>
+                <div className="flex items-center gap-2">
+                  {queue.length > 0 && (
+                    <button
+                      onClick={() => usePlayerStore.getState().clearQueue()}
+                      className="text-[10px] font-mono text-text-muted hover:text-text-secondary transition-colors"
+                    >
+                      Clear
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setShowQueue(false)}
+                    aria-label="Close queue"
+                    className="p-1 text-text-muted hover:text-text-primary transition-colors"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              </div>
+              <div className="max-h-[36vh] overflow-y-auto">
+                {queue.length === 0 ? (
+                  <p className="text-[12px] text-text-muted font-mono text-center py-8 px-5 leading-relaxed">
+                    Queue empty<br />play something from your library
+                  </p>
+                ) : (
+                  <ul>
+                    {queue.map((track, i) => (
+                      <li key={`${track.id}-${i}`}>
+                        <button
+                          onClick={() => { usePlayerStore.getState().playAt(i); setShowQueue(false); }}
+                          className="w-full px-4 py-2.5 flex items-center gap-2.5 hover:bg-[#111] transition-colors text-left"
+                        >
+                          <span className="font-mono text-[10px] text-text-muted w-5 flex-shrink-0 text-right">
+                            {i === queueIndex && isPlaying ? '>' : i + 1}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <p className={`text-[12px] truncate leading-tight ${i === queueIndex ? 'text-accent' : 'text-text-primary'}`}>
+                              {track.title}
+                            </p>
+                            <p className="font-mono text-[10px] text-text-muted truncate leading-tight">
+                              {track.artist}
+                            </p>
+                          </div>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
