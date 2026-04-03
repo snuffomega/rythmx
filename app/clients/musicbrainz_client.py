@@ -169,3 +169,44 @@ def get_artist_release_groups(mbid: str, limit: int = 50) -> list[str]:
     except requests.RequestException as e:
         logger.error("MusicBrainz release-groups failed for '%s': %s", mbid, type(e).__name__)
         return []
+
+
+def browse_artist_release_groups(mbid: str, limit: int = 50) -> list[dict]:
+    """Fetch release groups for an artist, returning full detail for album enrichment.
+
+    Unlike get_artist_release_groups() (which returns title strings for overlap
+    validation), this returns dicts with id, title, and first-release-date so
+    callers can write musicbrainz_release_group_id and original_release_date.
+
+    Returns [{id, title, first_release_date}, ...] or [] on error.
+    """
+    rate_limiter.acquire("musicbrainz")
+    try:
+        resp = _session.get(
+            f"{_BASE_URL}/release-group",
+            params={
+                "artist": mbid,
+                "type": "album",
+                "limit": limit,
+                "fmt": "json",
+            },
+            timeout=15,
+        )
+        if resp.status_code == 429:
+            rate_limiter.record_429("musicbrainz")
+            return []
+        resp.raise_for_status()
+        data = resp.json()
+        rate_limiter.record_success("musicbrainz")
+
+        results = []
+        for rg in data.get("release-groups", []):
+            rg_id = rg.get("id", "")
+            title = rg.get("title", "")
+            first_date = rg.get("first-release-date", "") or None
+            if rg_id and title:
+                results.append({"id": rg_id, "title": title, "first_release_date": first_date})
+        return results
+    except requests.RequestException as e:
+        logger.error("MusicBrainz browse release-groups failed for '%s': %s", mbid, type(e).__name__)
+        return []
