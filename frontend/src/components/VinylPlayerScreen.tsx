@@ -20,7 +20,7 @@ import {
   Play, Pause, SkipBack,
   Shuffle, Repeat, Settings,
   Disc, Star, Heart, ListMusic, Mic2,
-  ChevronDown, List, ListPlus, Volume2, X,
+  ChevronDown, List, ListPlus, Volume2, X, Maximize2, Minimize2,
 } from 'lucide-react';
 import { useNavigate } from '@tanstack/react-router';
 import { usePlayerStore, type PlayerTrack } from '../stores/usePlayerStore';
@@ -101,10 +101,13 @@ export function VinylPlayerScreen({
   const toastSuccess = useToastStore(s => s.success);
   const toastError = useToastStore(s => s.error);
   const progressRef = useRef<HTMLDivElement>(null);
+  const queuePanelRef = useRef<HTMLDivElement>(null);
+  const queueButtonRef = useRef<HTMLButtonElement>(null);
 
   const [starRating, setStarRating] = useState(0);
   const [liked,      setLiked]      = useState(false);
   const [showQueue,  setShowQueue]  = useState(false);
+  const [queueExpanded, setQueueExpanded] = useState(false);
   const [showVolume, setShowVolume] = useState(false);
   const [playlistOptions, setPlaylistOptions] = useState<LibPlaylist[]>([]);
   const [playlistPickerOpen, setPlaylistPickerOpen] = useState(false);
@@ -200,12 +203,14 @@ export function VinylPlayerScreen({
 
   function handleSettings() {
     setShowQueue(false);
+    setQueueExpanded(false);
     onMinimize();
     navigate({ to: '/settings' });
   }
 
   function handleMinimize() {
     setShowQueue(false);
+    setQueueExpanded(false);
     onMinimize();
   }
 
@@ -219,6 +224,18 @@ export function VinylPlayerScreen({
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [showQueue]);
+
+  useEffect(() => {
+    if (!showQueue || queueExpanded) return;
+    const onMouseDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (queuePanelRef.current?.contains(target)) return;
+      if (queueButtonRef.current?.contains(target)) return;
+      setShowQueue(false);
+    };
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
+  }, [showQueue, queueExpanded]);
 
   return (
     // ── Outer canvas — full dark screen, content centered ─────────────────
@@ -313,8 +330,8 @@ export function VinylPlayerScreen({
           </p>
           <p className="font-mono text-[13px] text-text-secondary leading-tight mt-1 truncate">
             {currentTrack
-              ? `${currentTrack.artist}${currentTrack.album ? ` · ${currentTrack.album}` : ''}`
-              : '—'}
+              ? `${currentTrack.artist}${currentTrack.album ? ` - ${currentTrack.album}` : ''}`
+              : '-'}
           </p>
           <div className="mt-2 flex items-center justify-center gap-3 flex-wrap">
             <StarRating rating={starRating} onChange={setStarRating} />
@@ -395,10 +412,10 @@ export function VinylPlayerScreen({
             >
               <Heart size={17} fill={liked ? 'currentColor' : 'none'} />
             </button>
-            <button disabled title="Lyrics — coming soon" className="p-2 rounded-lg text-text-muted opacity-25 cursor-not-allowed">
+            <button disabled title="Lyrics - coming soon" className="p-2 rounded-lg text-text-muted opacity-25 cursor-not-allowed">
               <Mic2 size={17} />
             </button>
-            <button disabled title="Live — coming soon" className="p-2 rounded-lg text-text-muted opacity-25 cursor-not-allowed">
+            <button disabled title="Live - coming soon" className="p-2 rounded-lg text-text-muted opacity-25 cursor-not-allowed">
               <ListMusic size={17} />
             </button>
             <button
@@ -451,14 +468,21 @@ export function VinylPlayerScreen({
           {/* Right — volume + queue */}
           <div className="flex items-center justify-end gap-1">
             <button
-              onClick={() => { setShowVolume(v => !v); setShowQueue(false); }}
+              onClick={() => { setShowVolume(v => !v); setShowQueue(false); setQueueExpanded(false); }}
               aria-label="Volume"
               className={`p-2.5 rounded-lg transition-all active:scale-90 ${showVolume ? 'text-accent' : 'text-text-muted hover:text-text-secondary'}`}
             >
               <Volume2 size={21} />
             </button>
             <button
-              onClick={() => { setShowQueue(v => !v); setShowVolume(false); }}
+              ref={queueButtonRef}
+              onClick={() => {
+                setShowVolume(false);
+                setQueueExpanded(false);
+                setShowQueue((open) => {
+                  return !open;
+                });
+              }}
               aria-label="Toggle queue"
               className={`relative p-2.5 rounded-lg transition-all active:scale-90 ${showQueue ? 'text-accent' : 'text-text-muted hover:text-text-secondary'}`}
             >
@@ -473,13 +497,92 @@ export function VinylPlayerScreen({
             </button>
           </div>
 
+          {showQueue && !queueExpanded && (
+            <div
+              ref={queuePanelRef}
+              className="absolute top-full left-1/2 -translate-x-1/2 mt-4 w-[min(90vw,620px)]
+                         border border-[#1e1e1e] rounded-xl overflow-hidden bg-[#0a0a0a] shadow-2xl z-30"
+            >
+              <div className="flex items-center justify-between px-4 py-3 border-b border-[#1a1a1a]">
+                <span className="font-mono text-[11px] text-text-muted uppercase tracking-widest">
+                  Queue - {queue.length} track{queue.length !== 1 ? 's' : ''}
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setQueueExpanded(true)}
+                    className="p-1 text-text-muted hover:text-text-primary transition-colors"
+                    title="Expand queue"
+                    aria-label="Expand queue"
+                  >
+                    <Maximize2 size={14} />
+                  </button>
+                  {queue.length > 0 && (
+                    <button
+                      onClick={() => usePlayerStore.getState().clearQueue()}
+                      className="text-[10px] font-mono text-text-muted hover:text-text-secondary transition-colors"
+                    >
+                      Clear
+                    </button>
+                  )}
+                  <button
+                    onClick={() => { setShowQueue(false); setQueueExpanded(false); }}
+                    aria-label="Close queue"
+                    className="p-1 text-text-muted hover:text-text-primary transition-colors"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              </div>
+              <div className="max-h-[34vh] overflow-y-auto">
+                {queue.length === 0 ? (
+                  <p className="text-[12px] text-text-muted font-mono text-center py-8 px-5 leading-relaxed">
+                    Queue empty<br />play something from your library
+                  </p>
+                ) : (
+                  <ul>
+                    {queue.map((track, i) => (
+                      <li key={`${track.id}-${i}`}>
+                        <div className="group px-4 py-2.5 flex items-center gap-2.5 hover:bg-[#111] transition-colors">
+                          <button
+                            onClick={() => { usePlayerStore.getState().playAt(i); setShowQueue(false); setQueueExpanded(false); }}
+                            className="flex-1 min-w-0 text-left flex items-center gap-2.5"
+                          >
+                            <span className="font-mono text-[10px] text-text-muted w-5 flex-shrink-0 text-right">
+                              {i === queueIndex && isPlaying ? '>' : i + 1}
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              <p className={`text-[12px] truncate leading-tight ${i === queueIndex ? 'text-accent' : 'text-text-primary'}`}>
+                                {track.title}
+                              </p>
+                              <p className="font-mono text-[10px] text-text-muted truncate leading-tight">
+                                {track.artist}
+                              </p>
+                            </div>
+                          </button>
+                          <button
+                            onClick={() => openPlaylistPicker(track)}
+                            className="text-text-muted opacity-0 group-hover:opacity-100 hover:text-accent transition-all"
+                            title="Add to playlist"
+                            aria-label={`Add ${track.title} to playlist`}
+                          >
+                            <ListPlus size={13} />
+                          </button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          )}
+
         </div>
 
-        {/* Queue popup overlay */}
-        {showQueue && (
+        {/* Queue expanded overlay */}
+        {showQueue && queueExpanded && (
           <div
             className="fixed inset-0 z-30 bg-black/35 flex items-end justify-center px-4 pb-8"
-            onClick={() => setShowQueue(false)}
+            onClick={() => { setShowQueue(false); setQueueExpanded(false); }}
           >
             <div
               className="w-full max-w-[720px] border border-[#1e1e1e] rounded-xl overflow-hidden bg-[#0a0a0a] shadow-2xl"
@@ -490,6 +593,14 @@ export function VinylPlayerScreen({
                   Queue - {queue.length} track{queue.length !== 1 ? 's' : ''}
                 </span>
                 <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setQueueExpanded(false)}
+                    className="p-1 text-text-muted hover:text-text-primary transition-colors"
+                    title="Collapse queue"
+                    aria-label="Collapse queue"
+                  >
+                    <Minimize2 size={14} />
+                  </button>
                   {queue.length > 0 && (
                     <button
                       onClick={() => usePlayerStore.getState().clearQueue()}
@@ -499,7 +610,7 @@ export function VinylPlayerScreen({
                     </button>
                   )}
                   <button
-                    onClick={() => setShowQueue(false)}
+                    onClick={() => { setShowQueue(false); setQueueExpanded(false); }}
                     aria-label="Close queue"
                     className="p-1 text-text-muted hover:text-text-primary transition-colors"
                   >
@@ -518,7 +629,7 @@ export function VinylPlayerScreen({
                       <li key={`${track.id}-${i}`}>
                         <div className="group px-4 py-2.5 flex items-center gap-2.5 hover:bg-[#111] transition-colors">
                           <button
-                            onClick={() => { usePlayerStore.getState().playAt(i); setShowQueue(false); }}
+                            onClick={() => { usePlayerStore.getState().playAt(i); setShowQueue(false); setQueueExpanded(false); }}
                             className="flex-1 min-w-0 text-left flex items-center gap-2.5"
                           >
                             <span className="font-mono text-[10px] text-text-muted w-5 flex-shrink-0 text-right">
