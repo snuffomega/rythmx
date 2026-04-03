@@ -1,13 +1,12 @@
 """
 new_music_runner.py — New Music pipeline for the Forge.
 
-Discovers recent releases from artists similar to the user's listening history.
+Discovers recent releases from artists in the user's own listening history.
 
 Pipeline:
-  1. get_seed_artists()   — top artists from Last.fm or Plex play counts
-  2. expand_neighbors()   — 1-hop expansion via lib_artists.similar_artists_json
-  3. fetch_releases()     — Deezer albums for neighbor artists not in library
-  4. write_discovered()   — write to forge_discovered_artists + forge_discovered_releases
+  1. get_seed_artists()          — top artists from Last.fm or Plex play counts
+  2. fetch_releases_for_seeds()  — Deezer albums for those seed artists directly
+  3. write_discovered()          — write to forge_discovered_artists + forge_discovered_releases
 
 No ORM. All SQL uses ? placeholders.
 """
@@ -157,13 +156,18 @@ def get_seed_artists(period: str, min_scrobbles: int) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Step 2: Expand neighbors
+# Step 2 (EARMARKED — Custom Discovery engine)
 # ---------------------------------------------------------------------------
 
 def expand_neighbors(seed_names: list[str]) -> list[str]:
     """
     1-hop neighbor expansion via lib_artists.similar_artists_json.
     Returns a deduplicated list of neighbor artist names (lowercase) not in library.
+
+    EARMARKED: This is the core of the future Custom Discovery engine.
+    New Music uses seed artists directly — this function is NOT called from
+    run_new_music_pipeline(). Do not delete or repurpose until Custom Discovery
+    is implemented.
     """
     if not seed_names:
         return []
@@ -206,7 +210,7 @@ def expand_neighbors(seed_names: list[str]) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Step 3: Fetch releases for neighbors
+# Step 2: Fetch releases for seed artists
 # ---------------------------------------------------------------------------
 
 def _apply_kind_preference(artist_releases: list[dict], kinds_mode: str) -> list[dict]:
@@ -235,7 +239,8 @@ def fetch_releases_for_neighbors(
     ignore_artists: str,
 ) -> tuple[list[dict], list[dict]]:
     """
-    For each neighbor artist, resolve Deezer ID and fetch recent albums.
+    For each artist name, resolve Deezer ID and fetch recent albums.
+    Fast path: checks lib_artists.deezer_artist_id first to avoid redundant API searches.
     release_kinds: mode string — 'all' | 'album_preferred' | 'album'
     Returns: (discovered_artists, discovered_releases)
     """
@@ -244,6 +249,19 @@ def fetch_releases_for_neighbors(
     # Parse ignore lists
     ignore_kw = [kw.strip().lower() for kw in ignore_keywords.split(",") if kw.strip()]
     ignore_art = {a.strip().lower() for a in ignore_artists.split(",") if a.strip()}
+
+    # Fast path: pre-load stored Deezer IDs from lib_artists to skip redundant searches
+    stored_deezer_ids: dict[str, str] = {}
+    names_lower = [n.lower() for n in neighbor_names]
+    if names_lower:
+        placeholders = ",".join("?" for _ in names_lower)
+        with _connect() as conn:
+            rows = conn.execute(
+                f"SELECT name_lower, deezer_artist_id FROM lib_artists WHERE name_lower IN ({placeholders}) AND deezer_artist_id IS NOT NULL",
+                names_lower,
+            ).fetchall()
+        stored_deezer_ids = {r["name_lower"]: str(r["deezer_artist_id"]) for r in rows}
+        logger.info("new_music: fast-path resolved %d/%d artist IDs from lib_artists", len(stored_deezer_ids), len(names_lower))
 
     discovered_artists = []
     discovered_releases = []
@@ -256,26 +274,39 @@ def fetch_releases_for_neighbors(
         if name.lower() in ignore_art:
             continue
 
-        # Resolve Deezer artist ID
-        candidates = music_client.search_artist_candidates_deezer(name, limit=1)
-        if not candidates:
-            continue
-        artist = candidates[0]
-        deezer_id = str(artist.get("deezer_id") or artist.get("id", ""))
-        if not deezer_id or deezer_id in seen_artist_ids:
-            continue
-        seen_artist_ids.add(deezer_id)
+        # Resolve Deezer ID — fast path first, then API search fallback
+        stored_id = stored_deezer_ids.get(name.lower())
+        if stored_id and stored_id not in seen_artist_ids:
+            deezer_id = stored_id
+            display_name = name
+            seen_artist_ids.add(deezer_id)
+            discovered_artists.append({
+                "deezer_id": deezer_id,
+                "name": display_name,
+                "name_lower": display_name.lower(),
+                "image_url": None,
+                "fans_deezer": 0,
+            })
+        else:
+            # Fallback: resolve via Deezer name search
+            candidates = music_client.search_artist_candidates_deezer(name, limit=1)
+            if not candidates:
+                continue
+            artist = candidates[0]
+            deezer_id = str(artist.get("deezer_id") or artist.get("id", ""))
+            if not deezer_id or deezer_id in seen_artist_ids:
+                continue
+            display_name = artist.get("name", name)
+            seen_artist_ids.add(deezer_id)
+            discovered_artists.append({
+                "deezer_id": deezer_id,
+                "name": display_name,
+                "name_lower": display_name.lower(),
+                "image_url": artist.get("image_url") or artist.get("picture_medium") or None,
+                "fans_deezer": artist.get("nb_fan") or 0,
+            })
 
-        # Queue artist for storage
-        discovered_artists.append({
-            "deezer_id": deezer_id,
-            "name": artist.get("name", name),
-            "name_lower": artist.get("name", name).lower(),
-            "image_url": artist.get("image_url") or artist.get("picture_medium") or None,
-            "fans_deezer": artist.get("nb_fan") or 0,
-        })
-
-        # Fetch all albums in window first, then apply kind preference per artist
+        # Fetch all albums in window, then apply kind preference per artist
         artist_releases_in_window = []
         albums = music_client.get_artist_albums_deezer(deezer_id)
         for album in albums:
@@ -293,7 +324,7 @@ def fetch_releases_for_neighbors(
             artist_releases_in_window.append({
                 "id": str(album["id"]),
                 "artist_deezer_id": deezer_id,
-                "artist_name": artist.get("name", name),
+                "artist_name": display_name,
                 "title": title,
                 "record_type": record_type,
                 "release_date": rel_date or None,
@@ -377,28 +408,24 @@ def run_new_music_pipeline(config_override: dict | None = None) -> dict:
     ignore_keywords = cfg["nm_ignore_keywords"]
     ignore_artists = cfg["nm_ignore_artists"]
 
-    # Step 1
+    # Step 1: seed artists from listening history
     seeds = get_seed_artists(period, min_scrobbles)
     seed_names = [s["name"] for s in seeds]
 
-    # Step 2
-    neighbors = expand_neighbors(seed_names)
-
-    # Step 3
+    # Step 2: fetch recent releases from those seed artists directly
     artists, releases = fetch_releases_for_neighbors(
-        neighbors, lookback_days, match_mode, release_kinds, ignore_keywords, ignore_artists
+        seed_names, lookback_days, match_mode, release_kinds, ignore_keywords, ignore_artists
     )
 
-    # Step 4
+    # Step 3: persist to forge tables
     write_discovered(artists, releases)
 
     logger.info(
-        "new_music: pipeline complete — seeds=%d neighbors=%d artists_stored=%d releases_stored=%d",
-        len(seeds), len(neighbors), len(artists), len(releases)
+        "new_music: pipeline complete — seeds=%d artists_resolved=%d releases_stored=%d",
+        len(seeds), len(artists), len(releases)
     )
 
     return {
         "artists_checked": len(seeds),
-        "neighbors_found": len(neighbors),
         "releases_found": len(releases),
     }
