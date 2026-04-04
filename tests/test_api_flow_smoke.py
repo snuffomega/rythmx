@@ -790,6 +790,124 @@ def test_forge_build_fetch_disabled_and_missing(monkeypatch):
     assert missing_body["code"] == "FORGE_BUILD_NOT_FOUND"
 
 
+def test_forge_build_resync_contract(monkeypatch):
+    fake_build = {
+        "id": "build-1",
+        "name": "Sync Build",
+        "source": "sync",
+        "status": "ready",
+        "run_mode": "build",
+        "track_list": [{"track_id": "trk-1"}],
+        "summary": {
+            "source": "spotify",
+            "source_url": "https://open.spotify.com/playlist/abc",
+        },
+        "item_count": 1,
+        "created_at": "2026-04-02T20:00:00",
+        "updated_at": "2026-04-02T20:00:00",
+    }
+    fake_import = {
+        "status": "ok",
+        "track_count": 2,
+        "owned_count": 1,
+        "tracks": [
+            {
+                "track_name": "Track A",
+                "artist_name": "Artist A",
+                "album_name": "Album A",
+                "spotify_track_id": "sp-a",
+                "is_owned": True,
+                "plex_rating_key": "trk-a",
+            },
+            {
+                "track_name": "Track B",
+                "artist_name": "Artist B",
+                "album_name": "Album B",
+                "spotify_track_id": "sp-b",
+                "is_owned": False,
+                "plex_rating_key": None,
+            },
+        ],
+    }
+    fake_updated = {**fake_build, "item_count": 2}
+    calls = {"update": None}
+
+    monkeypatch.setattr(forge.rythmx_store, "get_forge_build", lambda build_id: fake_build if build_id == "build-1" else None)
+    monkeypatch.setattr(forge, "_import_sync_source", lambda source, source_url: fake_import)
+    monkeypatch.setattr(
+        forge.rythmx_store,
+        "update_forge_build",
+        lambda build_id, **kwargs: calls.__setitem__("update", {"build_id": build_id, **kwargs}) or fake_updated,
+    )
+
+    result = forge.forge_builds_resync("build-1")
+    assert result["status"] == "ok"
+    assert result["source"] == "spotify"
+    assert result["track_count"] == 2
+    assert result["owned_count"] == 1
+    assert result["missing_count"] == 1
+    assert calls["update"] is not None
+    assert calls["update"]["build_id"] == "build-1"
+    assert calls["update"]["status"] == "ready"
+    assert calls["update"]["run_mode"] == "build"
+    assert len(calls["update"]["track_list"]) == 2
+
+
+def test_forge_build_resync_validation_and_missing(monkeypatch):
+    not_sync = {
+        "id": "build-2",
+        "name": "Manual Build",
+        "source": "manual",
+        "status": "ready",
+        "run_mode": "build",
+        "track_list": [],
+        "summary": {},
+        "item_count": 0,
+        "created_at": "2026-04-02T20:00:00",
+        "updated_at": "2026-04-02T20:00:00",
+    }
+    missing_url = {
+        "id": "build-3",
+        "name": "Sync Build Missing URL",
+        "source": "sync",
+        "status": "ready",
+        "run_mode": "build",
+        "track_list": [],
+        "summary": {"source": "spotify"},
+        "item_count": 0,
+        "created_at": "2026-04-02T20:00:00",
+        "updated_at": "2026-04-02T20:00:00",
+    }
+
+    monkeypatch.setattr(
+        forge.rythmx_store,
+        "get_forge_build",
+        lambda build_id: (
+            not_sync if build_id == "build-2" else
+            missing_url if build_id == "build-3" else
+            None
+        ),
+    )
+
+    invalid_source = forge.forge_builds_resync("build-2")
+    assert isinstance(invalid_source, JSONResponse)
+    assert invalid_source.status_code == 400
+    invalid_body = json.loads(invalid_source.body.decode("utf-8"))
+    assert invalid_body["code"] == "FORGE_SYNC_RESYNC_INVALID_SOURCE"
+
+    missing_source_url = forge.forge_builds_resync("build-3")
+    assert isinstance(missing_source_url, JSONResponse)
+    assert missing_source_url.status_code == 400
+    missing_body = json.loads(missing_source_url.body.decode("utf-8"))
+    assert missing_body["code"] == "FORGE_SYNC_RESYNC_MISSING_URL"
+
+    missing = forge.forge_builds_resync("missing")
+    assert isinstance(missing, JSONResponse)
+    assert missing.status_code == 404
+    missing_lookup_body = json.loads(missing.body.decode("utf-8"))
+    assert missing_lookup_body["code"] == "FORGE_BUILD_NOT_FOUND"
+
+
 def test_forge_sync_load_validation_requires_source_url():
     result = forge.forge_sync_load({})
     assert isinstance(result, JSONResponse)

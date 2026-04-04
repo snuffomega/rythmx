@@ -442,6 +442,17 @@ export const forgeBuildsApi = {
     request<{ status: string; message: string }>(`/forge/builds/${encodeURIComponent(id)}/fetch`, {
       method: 'POST',
     }),
+  resync: (id: string) =>
+    request<{
+      status: string;
+      build: ForgeBuild;
+      source: string;
+      track_count: number;
+      owned_count: number;
+      missing_count: number;
+    }>(`/forge/builds/${encodeURIComponent(id)}/resync`, {
+      method: 'POST',
+    }),
 };
 
 export const forgeSyncApi = {

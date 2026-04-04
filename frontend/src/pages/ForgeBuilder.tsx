@@ -1,5 +1,5 @@
-ï»¿import { useEffect, useMemo, useState } from 'react';
-import { Download, Layers, Loader2, RefreshCw, Send, Trash2 } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Download, Layers, Loader2, RefreshCw, RotateCcw, Send, Trash2 } from 'lucide-react';
 import { useNavigate } from '@tanstack/react-router';
 import { useApi } from '../hooks/useApi';
 import { forgeBuildsApi, settingsApi } from '../services/api';
@@ -21,22 +21,49 @@ const STATUS_STYLES: Record<string, string> = {
   failed: 'text-danger border-danger/40',
 };
 
+function toStringValue(value: unknown): string {
+  if (value === null || value === undefined) return '—';
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (Array.isArray(value)) return `${value.length} items`;
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+function toBool(value: unknown): boolean {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value > 0;
+  if (typeof value === 'string') return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
+  return false;
+}
+
+function prettyKey(key: string): string {
+  return key
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, ch => ch.toUpperCase());
+}
+
 function BuildCard({
   build,
   selected,
   onSelect,
   onDelete,
   deleting,
+  onResync,
+  resyncing,
 }: {
   build: ForgeBuild;
   selected: boolean;
   onSelect: () => void;
   onDelete: () => void;
   deleting: boolean;
+  onResync: () => void;
+  resyncing: boolean;
 }) {
   const sourceLabel = SOURCE_LABELS[build.source] ?? build.source;
   const statusStyle = STATUS_STYLES[build.status] ?? 'text-text-muted border-[#2a2a2a]';
   const created = new Date(build.created_at).toLocaleString();
+  const syncSource =
+    build.source === 'sync' ? String((build.summary?.source as string | undefined) || '').toLowerCase() : '';
 
   return (
     <div
@@ -49,6 +76,11 @@ function BuildCard({
           <p className="text-text-primary text-sm font-semibold truncate">{build.name}</p>
           <div className="flex items-center gap-2 mt-1 flex-wrap">
             <span className="text-[10px] text-[#555] uppercase tracking-wide">{sourceLabel}</span>
+            {syncSource && (
+              <span className="text-[10px] border border-[#2a2a2a] px-1.5 py-0.5 uppercase tracking-wide text-[#aaa]">
+                {syncSource}
+              </span>
+            )}
             <span className={`text-[10px] border px-1.5 py-0.5 uppercase tracking-wide ${statusStyle}`}>
               {build.status}
             </span>
@@ -57,14 +89,28 @@ function BuildCard({
             {build.item_count} item{build.item_count === 1 ? '' : 's'} | {created}
           </p>
         </button>
-        <button
-          onClick={onDelete}
-          disabled={deleting}
-          className="text-[#2a2a2a] hover:text-danger transition-colors p-1"
-          aria-label="Delete build"
-        >
-          {deleting ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
-        </button>
+        <div className="flex items-center gap-1">
+          {build.source === 'sync' && (
+            <button
+              onClick={onResync}
+              disabled={resyncing}
+              className="text-[#2a2a2a] hover:text-accent transition-colors p-1 disabled:opacity-40"
+              aria-label="Re-sync build"
+              title="Re-sync build"
+            >
+              {resyncing ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />}
+            </button>
+          )}
+          <button
+            onClick={onDelete}
+            disabled={deleting}
+            className="text-[#2a2a2a] hover:text-danger transition-colors p-1"
+            aria-label="Delete build"
+            title="Delete build"
+          >
+            {deleting ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -80,10 +126,10 @@ export function ForgeBuilder() {
   const [publishingId, setPublishingId] = useState<string | null>(null);
   const [fetchingId, setFetchingId] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [resyncingId, setResyncingId] = useState<string | null>(null);
 
   const [editName, setEditName] = useState('');
   const [editStatus, setEditStatus] = useState<ForgeBuild['status']>('ready');
-  const [editSummary, setEditSummary] = useState('{}');
 
   const { data: builds, loading, error, refetch } = useApi(() => forgeBuildsApi.list(undefined, 200));
   const { data: appSettings } = useApi(() => settingsApi.get());
@@ -99,12 +145,10 @@ export function ForgeBuilder() {
     if (!selectedBuild) {
       setEditName('');
       setEditStatus('ready');
-      setEditSummary('{}');
       return;
     }
     setEditName(selectedBuild.name || '');
     setEditStatus(selectedBuild.status);
-    setEditSummary(JSON.stringify(selectedBuild.summary ?? {}, null, 2));
   }, [selectedBuild?.id, selectedBuild?.updated_at]);
 
   const extractErrorMessage = (err: unknown, fallback: string) => {
@@ -147,7 +191,7 @@ export function ForgeBuilder() {
       refetch();
       navigate({ to: '/library/playlists' });
     } catch (err) {
-      toastError(extractErrorMessage(err, 'Failed to publish build'));
+      toastError(extractErrorMessage(err, 'Failed to run build'));
     } finally {
       setPublishingId(null);
     }
@@ -159,45 +203,43 @@ export function ForgeBuilder() {
       const result = await forgeBuildsApi.fetch(build.id);
       toastSuccess(result.message || 'Fetch started');
     } catch (err) {
-      toastError(extractErrorMessage(err, 'Failed to start fetch'));
+      toastError(extractErrorMessage(err, 'Failed to start build fetch'));
     } finally {
       setFetchingId(null);
     }
   };
 
-  const originalSummaryText = selectedBuild
-    ? JSON.stringify(selectedBuild.summary ?? {}, null, 2)
-    : '{}';
+  const handleResync = async (build: ForgeBuild) => {
+    setResyncingId(build.id);
+    try {
+      const result = await forgeBuildsApi.resync(build.id);
+      toastSuccess(
+        `Re-synced ${result.track_count} tracks (${result.owned_count} owned, ${result.missing_count} missing)`
+      );
+      refetch();
+    } catch (err) {
+      toastError(extractErrorMessage(err, 'Failed to re-sync build'));
+    } finally {
+      setResyncingId(null);
+    }
+  };
+
   const normalizedName = editName.trim();
   const isDirty = !!selectedBuild && (
     normalizedName !== (selectedBuild.name || '').trim() ||
-    editStatus !== selectedBuild.status ||
-    editSummary.trim() !== originalSummaryText.trim()
+    editStatus !== selectedBuild.status
   );
 
   const handleSave = async (build: ForgeBuild) => {
-    let parsedSummary: Record<string, unknown>;
-    try {
-      parsedSummary = JSON.parse(editSummary || '{}') as Record<string, unknown>;
-      if (!parsedSummary || Array.isArray(parsedSummary) || typeof parsedSummary !== 'object') {
-        throw new Error('Summary must be a JSON object');
-      }
-    } catch {
-      toastError('Summary must be valid JSON object syntax');
-      return;
-    }
-
     setSavingId(build.id);
     try {
       const updated = await forgeBuildsApi.update(build.id, {
         name: normalizedName || build.name,
         status: editStatus,
-        summary: parsedSummary,
       });
       toastSuccess(`Saved "${updated.name}"`);
       setEditName(updated.name || '');
       setEditStatus(updated.status);
-      setEditSummary(JSON.stringify(updated.summary ?? {}, null, 2));
       refetch();
     } catch (err) {
       toastError(extractErrorMessage(err, 'Failed to save build'));
@@ -205,6 +247,40 @@ export function ForgeBuilder() {
       setSavingId(null);
     }
   };
+
+  const summaryRows = useMemo(() => {
+    if (!selectedBuild) return [] as Array<{ key: string; label: string; value: string }>;
+    const summary = selectedBuild.summary ?? {};
+
+    const preferredOrder = [
+      'source',
+      'track_count',
+      'owned_count',
+      'missing_count',
+      'artists_checked',
+      'releases_found',
+      'artists_found',
+      'seed_period',
+      'max_tracks',
+      'closeness',
+      'source_url',
+    ];
+
+    const known = preferredOrder
+      .filter(key => key in summary)
+      .map(key => ({ key, label: prettyKey(key), value: toStringValue(summary[key]) }));
+
+    const extras = Object.entries(summary)
+      .filter(([k]) => !preferredOrder.includes(k))
+      .map(([key, value]) => ({ key, label: prettyKey(key), value: toStringValue(value) }));
+
+    return [...known, ...extras];
+  }, [selectedBuild]);
+
+  const itemPreview = useMemo(() => {
+    if (!selectedBuild) return [] as Array<Record<string, unknown>>;
+    return (selectedBuild.track_list ?? []).slice(0, 50) as Array<Record<string, unknown>>;
+  }, [selectedBuild]);
 
   return (
     <div className="space-y-6">
@@ -246,8 +322,8 @@ export function ForgeBuilder() {
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-4">
-          <div className="space-y-3">
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-4">
+          <div className="space-y-3 lg:max-h-[calc(100vh-260px)] lg:overflow-y-auto lg:pr-1">
             {orderedBuilds.map(build => (
               <BuildCard
                 key={build.id}
@@ -256,11 +332,13 @@ export function ForgeBuilder() {
                 onSelect={() => setSelectedId(build.id)}
                 onDelete={() => handleDelete(build)}
                 deleting={deletingId === build.id}
+                onResync={() => handleResync(build)}
+                resyncing={resyncingId === build.id}
               />
             ))}
           </div>
 
-          <div className="bg-[#0e0e0e] border border-[#1a1a1a] p-4">
+          <div className="bg-[#0e0e0e] border border-[#1a1a1a] p-4 lg:max-h-[calc(100vh-260px)] lg:overflow-y-auto">
             {!selectedBuild ? (
               <p className="text-[#444] text-sm">Select a build to inspect details.</p>
             ) : (
@@ -297,16 +375,6 @@ export function ForgeBuilder() {
                     </select>
                   </div>
 
-                  <div>
-                    <p className="text-text-muted text-xs uppercase tracking-wide mb-1.5">Summary (JSON Object)</p>
-                    <textarea
-                      value={editSummary}
-                      onChange={e => setEditSummary(e.target.value)}
-                      rows={8}
-                      className="w-full bg-[#111] border border-[#2a2a2a] text-text-primary text-xs font-mono px-3 py-2 focus:outline-none focus:border-accent"
-                    />
-                  </div>
-
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => handleSave(selectedBuild)}
@@ -320,7 +388,21 @@ export function ForgeBuilder() {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  {selectedBuild.source === 'sync' && (
+                    <button
+                      onClick={() => handleResync(selectedBuild)}
+                      disabled={resyncingId === selectedBuild.id}
+                      className="btn-secondary inline-flex items-center gap-2 text-xs w-fit"
+                    >
+                      {resyncingId === selectedBuild.id ? (
+                        <Loader2 size={12} className="animate-spin" />
+                      ) : (
+                        <RotateCcw size={12} />
+                      )}
+                      Re-sync Source
+                    </button>
+                  )}
                   {fetchEnabled && (
                     <button
                       onClick={() => handleFetch(selectedBuild)}
@@ -332,7 +414,7 @@ export function ForgeBuilder() {
                       ) : (
                         <Download size={12} />
                       )}
-                      Fetch
+                      Build & Fetch
                     </button>
                   )}
                   <button
@@ -345,24 +427,111 @@ export function ForgeBuilder() {
                     ) : (
                       <Send size={12} />
                     )}
-                    Publish
+                    Build & Run
                   </button>
+                  {resyncingId === selectedBuild.id && (
+                    <span className="text-[#777] text-[11px]">Re-syncing source and refreshing items...</span>
+                  )}
                 </div>
 
                 <div>
-                  <p className="text-text-muted text-xs uppercase tracking-wide mb-2">Saved Summary</p>
-                  <pre className="text-[11px] text-[#666] bg-[#0b0b0b] border border-[#1a1a1a] p-3 overflow-auto max-h-40">
-{JSON.stringify(selectedBuild.summary ?? {}, null, 2)}
-                  </pre>
+                  <p className="text-text-muted text-xs uppercase tracking-wide mb-2">Build Summary</p>
+                  {summaryRows.length === 0 ? (
+                    <div className="text-[12px] text-[#555] bg-[#0b0b0b] border border-[#1a1a1a] p-3">No summary data</div>
+                  ) : (
+                    <div className="bg-[#0b0b0b] border border-[#1a1a1a] p-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {summaryRows.map(row => (
+                        <div key={row.key} className="text-[12px]">
+                          <p className="text-[#666] uppercase tracking-wide text-[10px]">{row.label}</p>
+                          <p className="text-text-primary break-all">{row.value}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 <div>
                   <p className="text-text-muted text-xs uppercase tracking-wide mb-2">Items ({selectedBuild.item_count})</p>
-                  <pre className="text-[11px] text-[#666] bg-[#0b0b0b] border border-[#1a1a1a] p-3 overflow-auto max-h-72">
-{JSON.stringify((selectedBuild.track_list ?? []).slice(0, 30), null, 2)}
-                  </pre>
-                  {selectedBuild.item_count > 30 && (
-                    <p className="text-[#444] text-[11px] mt-2">Showing first 30 items.</p>
+                  {itemPreview.length === 0 ? (
+                    <div className="text-[12px] text-[#555] bg-[#0b0b0b] border border-[#1a1a1a] p-3">No items</div>
+                  ) : selectedBuild.source === 'sync' ? (
+                    <div className="bg-[#0b0b0b] border border-[#1a1a1a] overflow-auto max-h-72">
+                      <table className="min-w-full text-xs">
+                        <thead className="bg-[#111] text-[#777] uppercase tracking-wide">
+                          <tr>
+                            <th className="text-left px-3 py-2">Track</th>
+                            <th className="text-left px-3 py-2">Artist</th>
+                            <th className="text-left px-3 py-2">Album</th>
+                            <th className="text-left px-3 py-2">Owned</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {itemPreview.map((item, idx) => (
+                            <tr key={`${idx}-${String(item.track_id ?? item.spotify_track_id ?? item.track_name ?? '')}`} className="border-t border-[#1a1a1a]">
+                              <td className="px-3 py-2 text-text-primary">{toStringValue(item.track_name)}</td>
+                              <td className="px-3 py-2 text-[#aaa]">{toStringValue(item.artist_name)}</td>
+                              <td className="px-3 py-2 text-[#aaa]">{toStringValue(item.album_name)}</td>
+                              <td className="px-3 py-2 text-[#aaa]">{toBool(item.is_owned) ? 'Yes' : 'No'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : selectedBuild.source === 'new_music' ? (
+                    <div className="bg-[#0b0b0b] border border-[#1a1a1a] overflow-auto max-h-72">
+                      <table className="min-w-full text-xs">
+                        <thead className="bg-[#111] text-[#777] uppercase tracking-wide">
+                          <tr>
+                            <th className="text-left px-3 py-2">Artist</th>
+                            <th className="text-left px-3 py-2">Release</th>
+                            <th className="text-left px-3 py-2">Type</th>
+                            <th className="text-left px-3 py-2">Date</th>
+                            <th className="text-left px-3 py-2">In Library</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {itemPreview.map((item, idx) => (
+                            <tr key={`${idx}-${String(item.id ?? item.title ?? '')}`} className="border-t border-[#1a1a1a]">
+                              <td className="px-3 py-2 text-[#aaa]">{toStringValue(item.artist_name)}</td>
+                              <td className="px-3 py-2 text-text-primary">{toStringValue(item.title)}</td>
+                              <td className="px-3 py-2 text-[#aaa]">{toStringValue(item.record_type)}</td>
+                              <td className="px-3 py-2 text-[#aaa]">{toStringValue(item.release_date)}</td>
+                              <td className="px-3 py-2 text-[#aaa]">{toBool(item.in_library) ? 'Yes' : 'No'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : selectedBuild.source === 'custom_discovery' ? (
+                    <div className="bg-[#0b0b0b] border border-[#1a1a1a] overflow-auto max-h-72">
+                      <table className="min-w-full text-xs">
+                        <thead className="bg-[#111] text-[#777] uppercase tracking-wide">
+                          <tr>
+                            <th className="text-left px-3 py-2">Artist</th>
+                            <th className="text-left px-3 py-2">Reason</th>
+                            <th className="text-left px-3 py-2">Similarity</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {itemPreview.map((item, idx) => (
+                            <tr key={`${idx}-${String(item.artist ?? '')}`} className="border-t border-[#1a1a1a]">
+                              <td className="px-3 py-2 text-text-primary">{toStringValue(item.artist)}</td>
+                              <td className="px-3 py-2 text-[#aaa]">{toStringValue(item.reason)}</td>
+                              <td className="px-3 py-2 text-[#aaa]">{toStringValue(item.similarity)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="bg-[#0b0b0b] border border-[#1a1a1a] p-3 max-h-72 overflow-auto space-y-2">
+                      {itemPreview.map((item, idx) => (
+                        <p key={idx} className="text-[12px] text-[#aaa] break-all">{JSON.stringify(item)}</p>
+                      ))}
+                    </div>
+                  )}
+                  {selectedBuild.item_count > itemPreview.length && (
+                    <p className="text-[#444] text-[11px] mt-2">Showing first {itemPreview.length} items.</p>
                   )}
                 </div>
               </div>
@@ -373,4 +542,3 @@ export function ForgeBuilder() {
     </div>
   );
 }
-

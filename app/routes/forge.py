@@ -299,6 +299,7 @@ def nm_run(data: Optional[dict[str, Any]] = Body(default=None)):
     return {
         "status": "ok",
         "artists_checked": summary.get("artists_checked", 0),
+        "neighbors_found": summary.get("neighbors_found", 0),
         "releases_found": summary.get("releases_found", 0),
         "releases": releases,
         "filtered_releases": summary.get("filtered_releases", []),
@@ -628,6 +629,80 @@ def forge_builds_publish(build_id: str, data: Optional[dict[str, Any]] = Body(de
     }
 
 
+@router.post("/forge/builds/{build_id}/resync")
+def forge_builds_resync(build_id: str):
+    build = rythmx_store.get_forge_build(build_id)
+    if not build:
+        return _error("Build not found", status_code=404, code="FORGE_BUILD_NOT_FOUND")
+
+    if str(build.get("source") or "").strip().lower() != "sync":
+        return _error(
+            "Only sync builds can be re-synced.",
+            status_code=400,
+            code="FORGE_SYNC_RESYNC_INVALID_SOURCE",
+        )
+
+    summary = build.get("summary") if isinstance(build.get("summary"), dict) else {}
+    source_url = str(summary.get("source_url") or "").strip()
+    if not source_url:
+        return _error(
+            "Build summary is missing source_url; unable to re-sync.",
+            status_code=400,
+            code="FORGE_SYNC_RESYNC_MISSING_URL",
+        )
+
+    source = str(summary.get("source") or "").strip().lower() or _detect_sync_source(source_url)
+    if source not in {"spotify", "lastfm", "deezer"}:
+        return _error(
+            "Unable to detect source from saved build summary.",
+            status_code=400,
+            code="FORGE_SYNC_UNSUPPORTED_SOURCE",
+        )
+
+    result = _import_sync_source(source, source_url)
+    if result.get("status") != "ok":
+        return _error(
+            str(result.get("message") or "Sync re-load failed"),
+            status_code=400,
+            code="FORGE_SYNC_LOAD_FAILED",
+        )
+
+    shaped_tracks = [_shape_sync_track(t) for t in (result.get("tracks") or [])]
+    total = int(result.get("track_count") or len(shaped_tracks))
+    owned = int(result.get("owned_count") or sum(1 for t in shaped_tracks if t.get("is_owned")))
+    missing = max(0, total - owned)
+
+    updated_summary = dict(summary)
+    updated_summary.update(
+        {
+            "source": source,
+            "source_url": source_url,
+            "track_count": total,
+            "owned_count": owned,
+            "missing_count": missing,
+        }
+    )
+
+    updated = rythmx_store.update_forge_build(
+        build_id,
+        status="ready",
+        run_mode="build",
+        track_list=shaped_tracks,
+        summary=updated_summary,
+    )
+    if not updated:
+        return _error("Build not found", status_code=404, code="FORGE_BUILD_NOT_FOUND")
+
+    return {
+        "status": "ok",
+        "build": updated,
+        "source": source,
+        "track_count": total,
+        "owned_count": owned,
+        "missing_count": missing,
+    }
+
+
 @router.post("/forge/builds/{build_id}/fetch")
 def forge_builds_fetch(build_id: str):
     build = rythmx_store.get_forge_build(build_id)
@@ -647,4 +722,3 @@ def forge_builds_fetch(build_id: str):
         status_code=501,
         code="FORGE_FETCH_NOT_IMPLEMENTED",
     )
-
