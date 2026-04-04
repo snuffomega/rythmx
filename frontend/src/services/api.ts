@@ -308,12 +308,26 @@ export const libraryBrowseApi = {
     ).toString();
     return request<AuditCandidatesResponse>(`/library/audit/candidates?${qs}`);
   },
-  confirmAuditItem: (body: { entity_type: string; entity_id: string; source: string; confirmed_id: string }) =>
+  confirmAuditItem: (body: {
+    entity_type: string;
+    entity_id: string;
+    source: string;
+    confirmed_id: string;
+    note?: string;
+    actor?: string;
+  }) =>
     request<{ status: string }>('/library/audit/confirm', {
       method: 'POST',
       body: JSON.stringify(body),
     }),
-  rejectAuditItem: (body: { entity_type: string; entity_id: string; source: string }) =>
+  rejectAuditItem: (body: {
+    entity_type: string;
+    entity_id: string;
+    source: string;
+    candidate_id?: string;
+    note?: string;
+    actor?: string;
+  }) =>
     request<{ status: string }>('/library/audit/reject', {
       method: 'POST',
       body: JSON.stringify(body),

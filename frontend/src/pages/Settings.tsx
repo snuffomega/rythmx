@@ -6,7 +6,7 @@ import { settingsApi, libraryApi, libraryBrowseApi, setApiKey, enrichmentApi } f
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useEnrichmentStore } from '../stores/useEnrichmentStore';
 import { useSettingsStore } from '../stores/useSettingsStore';
-import type { LibraryPlatform, EnrichmentWorkerStatus, Settings, AuditItem } from '../types';
+import type { LibraryPlatform, EnrichmentWorkerStatus, Settings, AuditItem, AuditCandidateItem } from '../types';
 
 const PLATFORM_LABELS: Record<string, string> = {
   plex: 'Plex',
@@ -434,6 +434,14 @@ export function SettingsPage({ toast }: SettingsPageProps) {
   const [auditReviewLoading, setAuditReviewLoading] = useState(false);
   const [auditReviewError, setAuditReviewError] = useState<string | null>(null);
   const [auditReviewItems, setAuditReviewItems] = useState<AuditItem[]>([]);
+  const [auditInlineAlbumId, setAuditInlineAlbumId] = useState<string | null>(null);
+  const [auditInlineLoading, setAuditInlineLoading] = useState(false);
+  const [auditInlineError, setAuditInlineError] = useState<string | null>(null);
+  const [auditInlineSaving, setAuditInlineSaving] = useState(false);
+  const [auditInlineCandidates, setAuditInlineCandidates] = useState<Record<string, {
+    itunes: AuditCandidateItem[];
+    deezer: AuditCandidateItem[];
+  }>>({});
   const [confirmClearHistory, setConfirmClearHistory] = useState(false);
   const [confirmResetDb, setConfirmResetDb] = useState(false);
   const [dangerOpen, setDangerOpen] = useState(false);
@@ -472,7 +480,7 @@ export function SettingsPage({ toast }: SettingsPageProps) {
       .catch(() => {});
   }, []);
 
-  const loadAuditReviewItems = async () => {
+  const loadAuditReviewItems = async (): Promise<AuditItem[]> => {
     setAuditReviewLoading(true);
     setAuditReviewError(null);
     try {
@@ -489,9 +497,11 @@ export function SettingsPage({ toast }: SettingsPageProps) {
       }
       setAuditReviewItems(allItems);
       setAuditTotal(total || allItems.length);
+      return allItems;
     } catch (err) {
       setAuditReviewError(err instanceof Error ? err.message : 'Failed to load review items');
       setAuditReviewItems([]);
+      return [];
     } finally {
       setAuditReviewLoading(false);
     }
@@ -499,7 +509,98 @@ export function SettingsPage({ toast }: SettingsPageProps) {
 
   const openAuditReviewModal = () => {
     setAuditReviewOpen(true);
+    setAuditInlineAlbumId(null);
+    setAuditInlineError(null);
     void loadAuditReviewItems();
+  };
+
+  const loadInlineCandidates = async (albumId: string) => {
+    setAuditInlineLoading(true);
+    setAuditInlineError(null);
+    try {
+      const [it, dz] = await Promise.all([
+        libraryBrowseApi.getAuditCandidates({ album_id: albumId, source: 'itunes', limit: 15 }),
+        libraryBrowseApi.getAuditCandidates({ album_id: albumId, source: 'deezer', limit: 15 }),
+      ]);
+      setAuditInlineCandidates(prev => ({
+        ...prev,
+        [albumId]: {
+          itunes: it.candidates ?? [],
+          deezer: dz.candidates ?? [],
+        },
+      }));
+    } catch (err) {
+      setAuditInlineError(err instanceof Error ? err.message : 'Failed to load candidates');
+    } finally {
+      setAuditInlineLoading(false);
+    }
+  };
+
+  const toggleInlineReview = (albumId: string) => {
+    if (auditInlineAlbumId === albumId) {
+      setAuditInlineAlbumId(null);
+      setAuditInlineError(null);
+      return;
+    }
+    setAuditInlineAlbumId(albumId);
+    setAuditInlineError(null);
+    if (!auditInlineCandidates[albumId]) {
+      void loadInlineCandidates(albumId);
+    }
+  };
+
+  const refreshAuditAfterAction = async (albumId: string) => {
+    const items = await loadAuditReviewItems();
+    const stillExists = items.some(i => i.album_id === albumId);
+    if (!stillExists) {
+      setAuditInlineAlbumId(null);
+      return;
+    }
+    await loadInlineCandidates(albumId);
+  };
+
+  const inlineConfirmCandidate = async (
+    item: AuditItem,
+    source: 'itunes' | 'deezer',
+    candidateId: string,
+  ) => {
+    setAuditInlineSaving(true);
+    setAuditInlineError(null);
+    try {
+      await libraryBrowseApi.confirmAuditItem({
+        entity_type: 'album',
+        entity_id: item.album_id,
+        source,
+        confirmed_id: candidateId,
+      });
+      toast.success(`${source === 'itunes' ? 'iTunes' : 'Deezer'} match confirmed`);
+      await refreshAuditAfterAction(item.album_id);
+    } catch (err) {
+      setAuditInlineError(err instanceof Error ? err.message : 'Failed to confirm candidate');
+    } finally {
+      setAuditInlineSaving(false);
+    }
+  };
+
+  const inlineRejectSource = async (
+    item: AuditItem,
+    source: 'itunes' | 'deezer',
+  ) => {
+    setAuditInlineSaving(true);
+    setAuditInlineError(null);
+    try {
+      await libraryBrowseApi.rejectAuditItem({
+        entity_type: 'album',
+        entity_id: item.album_id,
+        source,
+      });
+      toast.success(`${source === 'itunes' ? 'iTunes' : 'Deezer'} match rejected`);
+      await refreshAuditAfterAction(item.album_id);
+    } catch (err) {
+      setAuditInlineError(err instanceof Error ? err.message : 'Failed to reject source');
+    } finally {
+      setAuditInlineSaving(false);
+    }
   };
 
   const handlePlatformChange = async (p: LibraryPlatform) => {
@@ -748,7 +849,7 @@ export function SettingsPage({ toast }: SettingsPageProps) {
               <div>
                 <h3 className="text-sm font-semibold text-text-primary">Review Low-Confidence Matches</h3>
                 <p className="text-[11px] text-text-muted mt-0.5">
-                  Open any album to use Fix Match and confirm/reject candidates.
+                  Review inline here, or open any album to use the full Fix Match view.
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -760,7 +861,11 @@ export function SettingsPage({ toast }: SettingsPageProps) {
                   {auditReviewLoading ? 'Loading...' : 'Refresh'}
                 </button>
                 <button
-                  onClick={() => setAuditReviewOpen(false)}
+                  onClick={() => {
+                    setAuditReviewOpen(false);
+                    setAuditInlineAlbumId(null);
+                    setAuditInlineError(null);
+                  }}
                   className="btn-secondary text-xs"
                 >
                   Close
@@ -775,7 +880,7 @@ export function SettingsPage({ toast }: SettingsPageProps) {
             )}
 
             <div className="flex-1 overflow-y-auto">
-              <div className="grid grid-cols-[1.1fr_1.1fr_90px_120px_100px] gap-3 px-4 py-2 border-b border-[#1a1a1a] sticky top-0 bg-[#101010] z-10">
+              <div className="grid grid-cols-[1.1fr_1.1fr_90px_120px_170px] gap-3 px-4 py-2 border-b border-[#1a1a1a] sticky top-0 bg-[#101010] z-10">
                 <span className="font-mono text-[10px] text-text-muted uppercase tracking-wider">Artist</span>
                 <span className="font-mono text-[10px] text-text-muted uppercase tracking-wider">Album</span>
                 <span className="font-mono text-[10px] text-text-muted uppercase tracking-wider">Confidence</span>
@@ -798,25 +903,105 @@ export function SettingsPage({ toast }: SettingsPageProps) {
 
               {!auditReviewLoading && auditReviewItems.map(item => {
                 const ids = `${item.itunes_album_id ? 'iT' : ''}${item.itunes_album_id && item.deezer_id ? ' + ' : ''}${item.deezer_id ? 'DZ' : ''}` || 'none';
+                const isOpen = auditInlineAlbumId === item.album_id;
+                const candidates = auditInlineCandidates[item.album_id] ?? { itunes: [], deezer: [] };
                 return (
-                  <div
-                    key={`${item.album_id}:${item.artist_id}`}
-                    className="grid grid-cols-[1.1fr_1.1fr_90px_120px_100px] gap-3 px-4 py-2 border-b border-[#151515] items-center"
-                  >
-                    <span className="text-xs text-text-secondary truncate">{item.artist_name}</span>
-                    <span className="text-xs text-text-primary truncate">{item.album_title}</span>
-                    <span className="text-xs font-mono text-amber-400">{Math.round(item.match_confidence ?? 0)}%</span>
-                    <span className="text-[11px] font-mono text-text-muted">{ids}</span>
-                    <div className="text-right">
-                      <Link
-                        to="/library/album/$id"
-                        params={{ id: item.album_id }}
-                        onClick={() => setAuditReviewOpen(false)}
-                        className="inline-flex btn-secondary text-xs"
-                      >
-                        Review
-                      </Link>
+                  <div key={`${item.album_id}:${item.artist_id}`} className="border-b border-[#151515]">
+                    <div className="grid grid-cols-[1.1fr_1.1fr_90px_120px_170px] gap-3 px-4 py-2 items-center">
+                      <span className="text-xs text-text-secondary truncate">{item.artist_name}</span>
+                      <span className="text-xs text-text-primary truncate">{item.album_title}</span>
+                      <span className="text-xs font-mono text-amber-400">{Math.round(item.match_confidence ?? 0)}%</span>
+                      <span className="text-[11px] font-mono text-text-muted">{ids}</span>
+                      <div className="text-right flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => toggleInlineReview(item.album_id)}
+                          className="inline-flex btn-secondary text-xs"
+                        >
+                          {isOpen ? 'Hide' : 'Inline'}
+                        </button>
+                        <Link
+                          to="/library/album/$id"
+                          params={{ id: item.album_id }}
+                          onClick={() => setAuditReviewOpen(false)}
+                          className="inline-flex btn-secondary text-xs"
+                        >
+                          Open
+                        </Link>
+                      </div>
                     </div>
+                    {isOpen && (
+                      <div className="px-4 pb-3">
+                        {auditInlineError && (
+                          <p className="text-xs text-danger mb-2">{auditInlineError}</p>
+                        )}
+                        {auditInlineLoading ? (
+                          <div className="flex items-center text-xs text-text-muted py-3">
+                            <Loader2 size={12} className="animate-spin mr-2" />
+                            Loading candidates...
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                            {(['itunes', 'deezer'] as const).map(source => {
+                              const sourceLabel = source === 'itunes' ? 'iTunes' : 'Deezer';
+                              const currentId = source === 'itunes' ? item.itunes_album_id : item.deezer_id;
+                              return (
+                                <div key={`${item.album_id}:${source}`} className="border border-[#202020] bg-[#0f0f0f] p-2">
+                                  <div className="flex items-center justify-between gap-2 mb-2">
+                                    <span className="text-[11px] font-mono text-text-secondary uppercase tracking-wider">
+                                      {sourceLabel}
+                                    </span>
+                                    <button
+                                      onClick={() => void inlineRejectSource(item, source)}
+                                      disabled={auditInlineSaving}
+                                      className="btn-secondary text-[10px] disabled:opacity-40"
+                                    >
+                                      Reject current
+                                    </button>
+                                  </div>
+                                  <p className="text-[10px] font-mono text-text-muted mb-2 truncate">
+                                    current: {currentId || '(none)'}
+                                  </p>
+                                  <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                                    {candidates[source].length === 0 && (
+                                      <p className="text-xs text-text-muted">No candidates</p>
+                                    )}
+                                    {candidates[source].map(c => {
+                                      const isCurrent = !!currentId && String(currentId) === String(c.candidate_id);
+                                      return (
+                                        <div key={`${source}:${c.candidate_id}`} className="border border-[#242424] bg-[#111] px-2 py-1.5">
+                                          <div className="flex items-start justify-between gap-2">
+                                            <div className="min-w-0">
+                                              <p className="text-xs text-text-primary truncate">{c.candidate_title}</p>
+                                              <p className="text-[10px] font-mono text-text-muted">
+                                                {Math.round((c.candidate_score ?? 0) * 100)}% • tracks {c.track_count ?? '-'}
+                                              </p>
+                                            </div>
+                                            <div className="flex items-center gap-1">
+                                              {isCurrent && (
+                                                <span className="text-[9px] font-mono text-green-400 border border-green-400/30 px-1 py-0.5">
+                                                  current
+                                                </span>
+                                              )}
+                                              <button
+                                                onClick={() => void inlineConfirmCandidate(item, source, c.candidate_id)}
+                                                disabled={auditInlineSaving}
+                                                className="px-1.5 py-1 text-[10px] bg-accent text-black hover:bg-accent/80 transition-colors disabled:opacity-40"
+                                              >
+                                                Confirm
+                                              </button>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}
