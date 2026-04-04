@@ -457,6 +457,8 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
                         SET match_confidence = 0, needs_verification = 1,
                             updated_at = CURRENT_TIMESTAMP
                         WHERE id = ?
+                          AND itunes_album_id IS NULL
+                          AND deezer_id IS NULL
                         """,
                         (album_id,),
                     )
@@ -477,6 +479,8 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
                         SET needs_verification = 1,
                             updated_at = CURRENT_TIMESTAMP
                         WHERE id = ?
+                          AND itunes_album_id IS NULL
+                          AND deezer_id IS NULL
                         """,
                         (album_id,),
                     )
