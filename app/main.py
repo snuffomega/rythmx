@@ -75,9 +75,10 @@ class _AccessNoiseFilter(logging.Filter):
       - /assets/*
       - /static/*
       - *.svg, *.ico, *.png
+      - /api/v1/artwork/* 404 (expected when stale hashes are being repaired)
     """
 
-    _REQ_RE = re.compile(r'"[A-Z]+ ([^ ]+) HTTP/[^"]+"')
+    _REQ_RE = re.compile(r'"[A-Z]+ ([^ ]+) HTTP/[^"]+"(?: (\d{3}))?')
     _SUFFIXES = (".svg", ".ico", ".png")
 
     def filter(self, record: logging.LogRecord) -> bool:
@@ -87,11 +88,14 @@ class _AccessNoiseFilter(logging.Filter):
             return True
 
         path = m.group(1).split("?", 1)[0].lower()
+        status = (m.group(2) or "").strip()
         if path == "/health":
             return False
         if path.startswith("/assets/") or path.startswith("/static/"):
             return False
         if path.endswith(self._SUFFIXES):
+            return False
+        if path.startswith("/api/v1/artwork/") and status == "404":
             return False
         return True
 
@@ -194,6 +198,19 @@ async def lifespan(app: FastAPI):
     # --- Ensure local artwork storage dirs exist ---
     from app.services.artwork_store import ensure_artwork_dirs
     ensure_artwork_dirs()
+
+    # --- Repair stale artwork hashes on startup (hash exists, blob missing) ---
+    try:
+        from app.services.enrichment.artwork_repair import reset_missing_content_hashes
+        repair_result = reset_missing_content_hashes(entity_types=("album", "artist"))
+        if repair_result.get("reset", 0):
+            logger.info(
+                "Startup artwork hash repair: scanned=%d reset=%d",
+                repair_result.get("scanned", 0),
+                repair_result.get("reset", 0),
+            )
+    except Exception as exc:
+        logger.warning("Startup artwork hash repair skipped (non-fatal): %s", exc)
 
     # --- Ensure API key exists (auto-generate on first boot) ---
     if not rythmx_store.get_api_key():

@@ -57,6 +57,52 @@ _REMAINING_SQL = """
       AND (ic.content_hash IS NULL OR ic.content_hash = '')
 """
 
+_LOCAL_SYNC_CANDIDATE_SQL = """
+    SELECT al.id,
+           al.title,
+           ar.name AS artist_name,
+           al.source_platform,
+           al.thumb_url_deezer,
+           (SELECT t.file_path
+              FROM lib_tracks t
+             WHERE t.album_id = al.id
+               AND t.file_path IS NOT NULL
+               AND t.removed_at IS NULL
+             ORDER BY t.track_number
+             LIMIT 1) AS sample_file_path
+    FROM lib_albums al
+    JOIN lib_artists ar ON ar.id = al.artist_id
+    LEFT JOIN image_cache ic
+           ON ic.entity_type = 'album' AND ic.entity_key = al.id
+    WHERE al.removed_at IS NULL
+      AND al.source_platform = 'navidrome'
+      AND (ic.content_hash IS NULL OR ic.content_hash = '')
+      AND EXISTS (
+            SELECT 1
+            FROM lib_tracks t
+            WHERE t.album_id = al.id
+              AND t.file_path IS NOT NULL
+              AND t.removed_at IS NULL
+      )
+"""
+
+_LOCAL_SYNC_REMAINING_SQL = """
+    SELECT COUNT(*)
+    FROM lib_albums al
+    LEFT JOIN image_cache ic
+           ON ic.entity_type = 'album' AND ic.entity_key = al.id
+    WHERE al.removed_at IS NULL
+      AND al.source_platform = 'navidrome'
+      AND (ic.content_hash IS NULL OR ic.content_hash = '')
+      AND EXISTS (
+            SELECT 1
+            FROM lib_tracks t
+            WHERE t.album_id = al.id
+              AND t.file_path IS NOT NULL
+              AND t.removed_at IS NULL
+      )
+"""
+
 _session = requests.Session()
 _session.headers["User-Agent"] = "Rythmx/1.0"
 
@@ -148,6 +194,28 @@ def _extract_sidecar_art(file_path: str) -> bytes | None:
     return None
 
 
+def _extract_local_album_art(source_platform: str, sample_file_path: str | None) -> tuple[bytes | None, str]:
+    """
+    Return (payload, source) from local files for navidrome-backed albums.
+    """
+    if source_platform != "navidrome" or not config.MUSIC_DIR or not sample_file_path:
+        return None, ""
+
+    abs_path = os.path.join(config.MUSIC_DIR, str(sample_file_path).lstrip("/\\"))
+    if not os.path.isfile(abs_path):
+        return None, ""
+
+    payload = _extract_embedded_art(abs_path)
+    if payload:
+        return payload, "embedded"
+
+    payload = _extract_sidecar_art(abs_path)
+    if payload:
+        return payload, "embedded"
+
+    return None, ""
+
+
 def _itunes_artwork_url(itunes_album_id: str) -> str:
     if not itunes_album_id:
         return ""
@@ -223,16 +291,7 @@ def _process_item(conn, row):
 
     # Priority 1: local file artwork for navidrome-backed libraries.
     # Order inside tier-1: embedded APIC/PICTURE -> sidecar cover files.
-    if source_platform == "navidrome" and config.MUSIC_DIR and sample_file_path:
-        abs_path = os.path.join(config.MUSIC_DIR, str(sample_file_path).lstrip("/\\"))
-        if os.path.isfile(abs_path):
-            payload = _extract_embedded_art(abs_path)
-            if payload:
-                source = "embedded"
-            if payload is None:
-                payload = _extract_sidecar_art(abs_path)
-                if payload:
-                    source = "embedded"
+    payload, source = _extract_local_album_art(str(source_platform or ""), sample_file_path)
 
     # Priority 2: Deezer cover URL from Stage 2a promotion.
     if payload is None and thumb_url_deezer:
@@ -294,6 +353,56 @@ def enrich_album_art(batch_size=200, stop_event=None, on_progress=None):
         stop_event=stop_event,
         on_progress=on_progress,
     )
+
+
+def hydrate_local_album_art_after_sync(batch_size: int = 2000) -> dict:
+    """
+    Fast local-only pass used immediately after library sync.
+
+    This runs before full Stage 1.2 so embedded/sidecar art is available as early
+    as possible without waiting for remote artwork lookups.
+    """
+    if not config.MUSIC_DIR:
+        return {"processed": 0, "enriched": 0, "skipped": 0, "remaining": 0}
+
+    with _connect() as conn:
+        rows = conn.execute(
+            _LOCAL_SYNC_CANDIDATE_SQL + " LIMIT ?",
+            (batch_size,),
+        ).fetchall()
+
+        enriched = 0
+        skipped = 0
+        for row in rows:
+            album_id = str(row["id"])
+            source_platform = str(row["source_platform"] or "")
+            sample_file_path = row["sample_file_path"]
+            thumb_url_deezer = row["thumb_url_deezer"]
+
+            payload, source = _extract_local_album_art(source_platform, sample_file_path)
+            if not payload:
+                skipped += 1
+                continue
+
+            content_hash = ingest(payload)
+            _upsert_album_cache(
+                conn,
+                album_id=album_id,
+                image_url=str(thumb_url_deezer) if thumb_url_deezer else None,
+                content_hash=content_hash,
+                artwork_source=source,
+            )
+            enriched += 1
+
+        remaining = conn.execute(_LOCAL_SYNC_REMAINING_SQL).fetchone()[0]
+        conn.commit()
+
+    return {
+        "processed": len(rows),
+        "enriched": enriched,
+        "skipped": skipped,
+        "remaining": remaining,
+    }
 
 
 def prewarm_album_art_cache(size: int = 300, limit: int = 1000) -> dict:

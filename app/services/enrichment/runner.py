@@ -199,6 +199,24 @@ class PipelineRunner:
                 result["status"] = "stopped"
                 return result
 
+            # === Stage 1.15: Repair stale artwork hashes (missing originals) ===
+            self._set_phase("artwork_repair", on_phase)
+            try:
+                from app.services.enrichment.artwork_repair import reset_missing_content_hashes
+                repair_result = reset_missing_content_hashes(entity_types=("album", "artist"))
+                result["artwork_repair"] = repair_result
+                logger.info(
+                    "PipelineRunner: artwork_repair - scanned=%d reset=%d",
+                    repair_result.get("scanned", 0),
+                    repair_result.get("reset", 0),
+                )
+            except Exception as e:
+                logger.warning("PipelineRunner: artwork_repair failed: %s", e)
+
+            if self._stopped(stop_event):
+                result["status"] = "stopped"
+                return result
+
             # === Stage 1.2: Album Artwork Local Storage ===
             self._set_phase("album_art", on_phase)
             try:

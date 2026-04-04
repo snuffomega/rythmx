@@ -8,6 +8,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 
+from app.db.rythmx_store import _connect
 from app.services.artwork_store import get_thumb
 
 router = APIRouter()
@@ -26,6 +27,21 @@ def get_artwork(
     try:
         payload = get_thumb(content_hash, size=s)
     except FileNotFoundError:
+        # Self-heal stale hash rows to prevent repeated misses for the same key.
+        try:
+            with _connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE image_cache
+                       SET content_hash = NULL,
+                           local_path = NULL,
+                           last_accessed = datetime('now')
+                     WHERE content_hash = lower(?)
+                    """,
+                    (content_hash,),
+                )
+        except Exception:
+            pass
         raise HTTPException(status_code=404, detail={"status": "error", "message": "Artwork not found"})
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail={"status": "error", "message": str(exc)})

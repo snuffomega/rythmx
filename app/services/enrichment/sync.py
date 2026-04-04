@@ -20,6 +20,25 @@ def sync_library() -> dict:
     from app.db import get_library_reader
     result = get_library_reader().sync_library()
     _prune_old_releases()
+
+    # Local-only album artwork hydrate right after sync (navidrome + MUSIC_DIR).
+    # Full Stage 1.2 still runs afterward for remote fallback sources.
+    try:
+        from app.config import MUSIC_DIR
+        if MUSIC_DIR:
+            from app.services.enrichment.art_album import hydrate_local_album_art_after_sync
+            local_art = hydrate_local_album_art_after_sync(batch_size=2000)
+            result["local_album_art"] = local_art
+            logger.info(
+                "sync_library: local_album_art processed=%d enriched=%d skipped=%d remaining=%d",
+                local_art.get("processed", 0),
+                local_art.get("enriched", 0),
+                local_art.get("skipped", 0),
+                local_art.get("remaining", 0),
+            )
+    except Exception as exc:
+        logger.warning("sync_library: local album art hydrate skipped: %s", exc)
+
     return result
 
 
