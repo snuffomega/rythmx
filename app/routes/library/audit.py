@@ -271,6 +271,7 @@ def library_audit(
 
         album_ids = [r["album_id"] for r in rows]
         meta_map: dict[str, dict] = {}
+        manual_map: dict[str, dict[str, dict[str, Any]]] = {}
         if album_ids:
             placeholders = ",".join("?" * len(album_ids))
             meta_rows = conn.execute(
@@ -286,6 +287,25 @@ def library_audit(
                     "status": m["status"],
                     "confidence": m["confidence"],
                 }
+            # match_overrides may not exist on pre-migration DBs; degrade gracefully.
+            try:
+                mo_rows = conn.execute(
+                    f"""
+                    SELECT entity_id, source, state, locked, confirmed_id
+                    FROM match_overrides
+                    WHERE entity_type = 'album'
+                      AND entity_id IN ({placeholders})
+                    """,
+                    album_ids,
+                ).fetchall()
+                for mo in mo_rows:
+                    manual_map.setdefault(mo["entity_id"], {})[mo["source"]] = {
+                        "state": mo["state"],
+                        "locked": bool(mo["locked"]),
+                        "confirmed_id": mo["confirmed_id"],
+                    }
+            except Exception:
+                manual_map = {}
 
     items = []
     for r in rows:
@@ -299,6 +319,7 @@ def library_audit(
             "itunes_album_id": r["itunes_album_id"],
             "deezer_id": r["deezer_id"],
             "enrichment": meta_map.get(r["album_id"], {}),
+            "manual_overrides": manual_map.get(r["album_id"], {}),
         })
 
     return {"status": "ok", "items": items, "total": total, "page": page}

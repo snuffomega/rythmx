@@ -348,6 +348,11 @@ export interface AuditItem {
   itunes_album_id: string | null;
   deezer_id: string | null;
   enrichment: Record<string, AuditEnrichmentMeta>;
+  manual_overrides?: Record<string, {
+    state: 'confirmed' | 'rejected' | string;
+    locked: boolean;
+    confirmed_id?: string | null;
+  }>;
 }
 
 export interface AuditResponse {

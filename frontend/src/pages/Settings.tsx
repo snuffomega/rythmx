@@ -905,12 +905,26 @@ export function SettingsPage({ toast }: SettingsPageProps) {
                 const ids = `${item.itunes_album_id ? 'iT' : ''}${item.itunes_album_id && item.deezer_id ? ' + ' : ''}${item.deezer_id ? 'DZ' : ''}` || 'none';
                 const isOpen = auditInlineAlbumId === item.album_id;
                 const candidates = auditInlineCandidates[item.album_id] ?? { itunes: [], deezer: [] };
+                const manualOverrides = item.manual_overrides ?? {};
+                const lockedSources = Object.entries(manualOverrides).filter(([, v]) => Boolean(v?.locked));
+                const hasManualLock = lockedSources.length > 0;
+                const manualSummary = lockedSources.map(([k, v]) => `${k}:${v.state}`).join(', ');
                 return (
                   <div key={`${item.album_id}:${item.artist_id}`} className="border-b border-[#151515]">
                     <div className="grid grid-cols-[1.1fr_1.1fr_90px_120px_170px] gap-3 px-4 py-2 items-center">
                       <span className="text-xs text-text-secondary truncate">{item.artist_name}</span>
                       <span className="text-xs text-text-primary truncate">{item.album_title}</span>
-                      <span className="text-xs font-mono text-amber-400">{Math.round(item.match_confidence ?? 0)}%</span>
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="text-xs font-mono text-amber-400">{Math.round(item.match_confidence ?? 0)}%</span>
+                        {hasManualLock && (
+                          <span
+                            className="text-[9px] font-mono text-green-400 border border-green-400/30 px-1 py-0.5 truncate"
+                            title={`Manual: ${manualSummary}`}
+                          >
+                            manual
+                          </span>
+                        )}
+                      </div>
                       <span className="text-[11px] font-mono text-text-muted">{ids}</span>
                       <div className="text-right flex items-center justify-end gap-2">
                         <button
@@ -944,12 +958,20 @@ export function SettingsPage({ toast }: SettingsPageProps) {
                             {(['itunes', 'deezer'] as const).map(source => {
                               const sourceLabel = source === 'itunes' ? 'iTunes' : 'Deezer';
                               const currentId = source === 'itunes' ? item.itunes_album_id : item.deezer_id;
+                              const sourceManual = item.manual_overrides?.[source];
                               return (
                                 <div key={`${item.album_id}:${source}`} className="border border-[#202020] bg-[#0f0f0f] p-2">
                                   <div className="flex items-center justify-between gap-2 mb-2">
-                                    <span className="text-[11px] font-mono text-text-secondary uppercase tracking-wider">
-                                      {sourceLabel}
-                                    </span>
+                                    <div className="flex items-center gap-1.5 min-w-0">
+                                      <span className="text-[11px] font-mono text-text-secondary uppercase tracking-wider">
+                                        {sourceLabel}
+                                      </span>
+                                      {sourceManual?.locked && (
+                                        <span className="text-[9px] font-mono text-green-400 border border-green-400/30 px-1 py-0.5">
+                                          {sourceManual.state}
+                                        </span>
+                                      )}
+                                    </div>
                                     <button
                                       onClick={() => void inlineRejectSource(item, source)}
                                       disabled={auditInlineSaving}
