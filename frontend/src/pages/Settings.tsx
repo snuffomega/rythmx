@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
 import { CheckCircle, XCircle, Loader2, RefreshCw, Database, Radio, ChevronDown, ChevronUp, Key, Eye, EyeOff, Copy, Play, Square, Clock, Zap } from 'lucide-react';
+import { Link } from '@tanstack/react-router';
 import { useApi } from '../hooks/useApi';
 import { settingsApi, libraryApi, libraryBrowseApi, setApiKey, enrichmentApi } from '../services/api';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useEnrichmentStore } from '../stores/useEnrichmentStore';
 import { useSettingsStore } from '../stores/useSettingsStore';
-import type { LibraryPlatform, EnrichmentWorkerStatus, Settings } from '../types';
+import type { LibraryPlatform, EnrichmentWorkerStatus, Settings, AuditItem } from '../types';
 
 const PLATFORM_LABELS: Record<string, string> = {
   plex: 'Plex',
@@ -429,6 +430,10 @@ export function SettingsPage({ toast }: SettingsPageProps) {
 
   const [switchingBackend, setSwitchingBackend] = useState(false);
   const [auditTotal, setAuditTotal] = useState(0);
+  const [auditReviewOpen, setAuditReviewOpen] = useState(false);
+  const [auditReviewLoading, setAuditReviewLoading] = useState(false);
+  const [auditReviewError, setAuditReviewError] = useState<string | null>(null);
+  const [auditReviewItems, setAuditReviewItems] = useState<AuditItem[]>([]);
   const [confirmClearHistory, setConfirmClearHistory] = useState(false);
   const [confirmResetDb, setConfirmResetDb] = useState(false);
   const [dangerOpen, setDangerOpen] = useState(false);
@@ -466,6 +471,36 @@ export function SettingsPage({ toast }: SettingsPageProps) {
       .then(r => setAuditTotal(r.total))
       .catch(() => {});
   }, []);
+
+  const loadAuditReviewItems = async () => {
+    setAuditReviewLoading(true);
+    setAuditReviewError(null);
+    try {
+      const perPage = 200;
+      let page = 1;
+      let total = 0;
+      let allItems: AuditItem[] = [];
+      while (page <= 20) {
+        const res = await libraryBrowseApi.getAudit({ page, per_page: perPage });
+        if (page === 1) total = res.total ?? 0;
+        allItems = allItems.concat(res.items ?? []);
+        if ((res.items?.length ?? 0) < perPage || allItems.length >= total) break;
+        page += 1;
+      }
+      setAuditReviewItems(allItems);
+      setAuditTotal(total || allItems.length);
+    } catch (err) {
+      setAuditReviewError(err instanceof Error ? err.message : 'Failed to load review items');
+      setAuditReviewItems([]);
+    } finally {
+      setAuditReviewLoading(false);
+    }
+  };
+
+  const openAuditReviewModal = () => {
+    setAuditReviewOpen(true);
+    void loadAuditReviewItems();
+  };
 
   const handlePlatformChange = async (p: LibraryPlatform) => {
     setPlatform(p);
@@ -687,17 +722,108 @@ export function SettingsPage({ toast }: SettingsPageProps) {
 
         {auditTotal > 0 && (
           <div className="pt-2">
-            <p className="text-xs text-[#666]">
-              <span className="inline-flex items-center gap-1.5 text-amber-500 font-medium">
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block" />
-                {auditTotal} item{auditTotal !== 1 ? 's' : ''} need review
-              </span>
-              {' '}— low-confidence matches flagged for manual confirmation.{' '}
-              <span className="text-[#444]">Audit UI coming in Phase 13c.</span>
-            </p>
+            <div className="flex items-center justify-between gap-3 bg-[#0e0e0e] border border-[#1a1a1a] p-3">
+              <p className="text-xs text-[#666]">
+                <span className="inline-flex items-center gap-1.5 text-amber-500 font-medium">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block" />
+                  {auditTotal} item{auditTotal !== 1 ? 's' : ''} need review
+                </span>
+                {' '}— low-confidence matches flagged for manual confirmation.
+              </p>
+              <button
+                onClick={openAuditReviewModal}
+                className="btn-secondary text-xs"
+              >
+                Review
+              </button>
+            </div>
           </div>
         )}
       </section>
+
+      {auditReviewOpen && (
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+          <div className="w-full max-w-5xl max-h-[85vh] bg-[#0d0d0d] border border-[#2a2a2a] flex flex-col">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-[#1a1a1a]">
+              <div>
+                <h3 className="text-sm font-semibold text-text-primary">Review Low-Confidence Matches</h3>
+                <p className="text-[11px] text-text-muted mt-0.5">
+                  Open any album to use Fix Match and confirm/reject candidates.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => void loadAuditReviewItems()}
+                  disabled={auditReviewLoading}
+                  className="btn-secondary text-xs disabled:opacity-40"
+                >
+                  {auditReviewLoading ? 'Loading...' : 'Refresh'}
+                </button>
+                <button
+                  onClick={() => setAuditReviewOpen(false)}
+                  className="btn-secondary text-xs"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+
+            {auditReviewError && (
+              <div className="px-4 py-2 text-xs text-danger border-b border-[#1a1a1a]">
+                {auditReviewError}
+              </div>
+            )}
+
+            <div className="flex-1 overflow-y-auto">
+              <div className="grid grid-cols-[1.1fr_1.1fr_90px_120px_100px] gap-3 px-4 py-2 border-b border-[#1a1a1a] sticky top-0 bg-[#101010] z-10">
+                <span className="font-mono text-[10px] text-text-muted uppercase tracking-wider">Artist</span>
+                <span className="font-mono text-[10px] text-text-muted uppercase tracking-wider">Album</span>
+                <span className="font-mono text-[10px] text-text-muted uppercase tracking-wider">Confidence</span>
+                <span className="font-mono text-[10px] text-text-muted uppercase tracking-wider">IDs</span>
+                <span className="font-mono text-[10px] text-text-muted uppercase tracking-wider text-right">Action</span>
+              </div>
+
+              {auditReviewLoading && (
+                <div className="px-4 py-10 flex items-center justify-center text-text-muted text-xs">
+                  <Loader2 size={14} className="animate-spin mr-2" />
+                  Loading review queue...
+                </div>
+              )}
+
+              {!auditReviewLoading && auditReviewItems.length === 0 && (
+                <div className="px-4 py-10 text-center text-xs text-text-muted">
+                  No review items currently flagged.
+                </div>
+              )}
+
+              {!auditReviewLoading && auditReviewItems.map(item => {
+                const ids = `${item.itunes_album_id ? 'iT' : ''}${item.itunes_album_id && item.deezer_id ? ' + ' : ''}${item.deezer_id ? 'DZ' : ''}` || 'none';
+                return (
+                  <div
+                    key={`${item.album_id}:${item.artist_id}`}
+                    className="grid grid-cols-[1.1fr_1.1fr_90px_120px_100px] gap-3 px-4 py-2 border-b border-[#151515] items-center"
+                  >
+                    <span className="text-xs text-text-secondary truncate">{item.artist_name}</span>
+                    <span className="text-xs text-text-primary truncate">{item.album_title}</span>
+                    <span className="text-xs font-mono text-amber-400">{Math.round(item.match_confidence ?? 0)}%</span>
+                    <span className="text-[11px] font-mono text-text-muted">{ids}</span>
+                    <div className="text-right">
+                      <Link
+                        to="/library/album/$id"
+                        params={{ id: item.album_id }}
+                        onClick={() => setAuditReviewOpen(false)}
+                        className="inline-flex btn-secondary text-xs"
+                      >
+                        Review
+                      </Link>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
       <section className="border-t border-[#1a1a1a] pt-8">
         <h2 className="text-text-muted text-xs font-semibold uppercase tracking-widest mb-4">Security</h2>
