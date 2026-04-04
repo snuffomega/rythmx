@@ -55,6 +55,21 @@ def test_resolve_library_file_path_fallback_year_variant(tmp_path: Path):
     assert resolved == str(track)
 
 
+def test_resolve_library_file_path_fallback_track_filename_variant(tmp_path: Path):
+    track = tmp_path / "311" / "311 - Transistor" / "01 - Creature Feature.flac"
+    _touch(track)
+
+    resolved, mode = resolve_library_file_path(
+        str(tmp_path),
+        "311/Transistor/01-15 - Creature Feature.flac",
+        artist_name="311",
+        album_title="Transistor",
+    )
+
+    assert mode == "fallback"
+    assert resolved == str(track)
+
+
 def test_resolve_library_file_path_ambiguous_returns_none(tmp_path: Path):
     track_a = tmp_path / "311" / "Evolver" / "01 - Creatures.flac"
     track_b = tmp_path / "311" / "311 - Evolver" / "01 - Creatures.flac"
