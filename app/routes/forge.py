@@ -95,17 +95,26 @@ def _get_library_platform() -> str:
 
 
 def _extract_publish_track_ids(track_list: list[Any]) -> list[str]:
+    def _normalize_candidate(value: Any) -> str:
+        if isinstance(value, dict):
+            value = (
+                value.get("id")
+                or value.get("track_id")
+                or value.get("plex_rating_key")
+                or value.get("navidrome_track_id")
+            )
+        return str(value or "").strip()
+
     seen: set[str] = set()
     ordered: list[str] = []
     for item in track_list:
         if not isinstance(item, dict):
             continue
-        candidate = (
-            item.get("track_id")
-            or item.get("plex_rating_key")
-            or item.get("navidrome_track_id")
+        tid = (
+            _normalize_candidate(item.get("track_id"))
+            or _normalize_candidate(item.get("plex_rating_key"))
+            or _normalize_candidate(item.get("navidrome_track_id"))
         )
-        tid = str(candidate or "").strip()
         if not tid or tid in seen:
             continue
         seen.add(tid)
@@ -213,8 +222,21 @@ def _import_sync_source(source: str, source_url: str) -> dict:
 
 
 def _shape_sync_track(track: dict[str, Any]) -> dict[str, Any]:
+    raw_track_id = (
+        track.get("track_id")
+        or track.get("plex_rating_key")
+        or track.get("navidrome_track_id")
+    )
+    if isinstance(raw_track_id, dict):
+        raw_track_id = (
+            raw_track_id.get("id")
+            or raw_track_id.get("track_id")
+            or raw_track_id.get("plex_rating_key")
+            or raw_track_id.get("navidrome_track_id")
+        )
+
     return {
-        "track_id": track.get("plex_rating_key"),
+        "track_id": str(raw_track_id).strip() if raw_track_id is not None else None,
         "spotify_track_id": track.get("spotify_track_id", ""),
         "track_name": track.get("track_name", ""),
         "artist_name": track.get("artist_name", ""),

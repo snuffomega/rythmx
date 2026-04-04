@@ -533,8 +533,8 @@ def check_owned_deezer(deezer_track_id: str) -> str | None:
         return None
 
 
-def find_track_by_name(artist_name: str, track_title: str) -> dict | None:
-    """Find a track by artist name + track title. Returns first match or None."""
+def find_track_by_name(artist_name: str, track_title: str) -> str | None:
+    """Find a track by artist name + track title. Returns track ID or None."""
     try:
         with _connect() as conn:
             row = conn.execute(
@@ -544,9 +544,7 @@ def find_track_by_name(artist_name: str, track_title: str) -> dict | None:
                 "AND t.removed_at IS NULL LIMIT 1",
                 (artist_name, track_title),
             ).fetchone()
-            if row:
-                return {"id": row[0], "title": row[1], "album_id": row[2]}
-            return None
+            return str(row[0]) if row else None
     except Exception:
         return None
 

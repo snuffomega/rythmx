@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Download, Layers, Loader2, RefreshCw, RotateCcw, Send, Trash2 } from 'lucide-react';
+import { Download, Layers, Loader2, RefreshCw, RotateCcw, Send, Trash2, X } from 'lucide-react';
 import { useNavigate } from '@tanstack/react-router';
 import { useApi } from '../hooks/useApi';
 import { forgeBuildsApi, settingsApi } from '../services/api';
@@ -21,8 +21,14 @@ const STATUS_STYLES: Record<string, string> = {
   failed: 'text-danger border-danger/40',
 };
 
+const SYNC_SOURCE_STYLES: Record<string, string> = {
+  deezer: 'text-[#d2c3ff] border-[#8f69ff]/60 bg-[#8f69ff]/15',
+  spotify: 'text-[#8af2b3] border-[#1db954]/60 bg-[#1db954]/15',
+  lastfm: 'text-[#ffaca7] border-[#d51007]/60 bg-[#d51007]/15',
+};
+
 function toStringValue(value: unknown): string {
-  if (value === null || value === undefined) return '—';
+  if (value === null || value === undefined) return '-';
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
   if (Array.isArray(value)) return `${value.length} items`;
   if (typeof value === 'object') return JSON.stringify(value);
@@ -64,6 +70,7 @@ function BuildCard({
   const created = new Date(build.created_at).toLocaleString();
   const syncSource =
     build.source === 'sync' ? String((build.summary?.source as string | undefined) || '').toLowerCase() : '';
+  const syncSourceStyle = SYNC_SOURCE_STYLES[syncSource] ?? 'text-[#aaa] border-[#2a2a2a] bg-transparent';
 
   return (
     <div
@@ -77,7 +84,7 @@ function BuildCard({
           <div className="flex items-center gap-2 mt-1 flex-wrap">
             <span className="text-[10px] text-[#555] uppercase tracking-wide">{sourceLabel}</span>
             {syncSource && (
-              <span className="text-[10px] border border-[#2a2a2a] px-1.5 py-0.5 uppercase tracking-wide text-[#aaa]">
+              <span className={`text-[10px] border px-1.5 py-0.5 uppercase tracking-wide ${syncSourceStyle}`}>
                 {syncSource}
               </span>
             )}
@@ -127,6 +134,9 @@ export function ForgeBuilder() {
   const [fetchingId, setFetchingId] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [resyncingId, setResyncingId] = useState<string | null>(null);
+  const [itemsModalBuildId, setItemsModalBuildId] = useState<string | null>(null);
+  const [itemDraft, setItemDraft] = useState<Array<Record<string, unknown>>>([]);
+  const [savingItemsBuildId, setSavingItemsBuildId] = useState<string | null>(null);
 
   const [editName, setEditName] = useState('');
   const [editStatus, setEditStatus] = useState<ForgeBuild['status']>('ready');
@@ -139,6 +149,10 @@ export function ForgeBuilder() {
   const selectedBuild = useMemo(
     () => orderedBuilds.find(b => b.id === selectedId) ?? orderedBuilds[0] ?? null,
     [orderedBuilds, selectedId]
+  );
+  const itemsModalBuild = useMemo(
+    () => orderedBuilds.find(b => b.id === itemsModalBuildId) ?? null,
+    [orderedBuilds, itemsModalBuildId]
   );
 
   useEffect(() => {
@@ -279,8 +293,57 @@ export function ForgeBuilder() {
 
   const itemPreview = useMemo(() => {
     if (!selectedBuild) return [] as Array<Record<string, unknown>>;
-    return (selectedBuild.track_list ?? []).slice(0, 50) as Array<Record<string, unknown>>;
+    return (selectedBuild.track_list ?? []).slice(0, 60) as Array<Record<string, unknown>>;
   }, [selectedBuild]);
+
+  const itemsDirty = useMemo(() => {
+    if (!itemsModalBuild) return false;
+    const originalCount = (itemsModalBuild.track_list ?? []).length;
+    return itemDraft.length !== originalCount;
+  }, [itemsModalBuild, itemDraft.length]);
+
+  const openItemsModal = (build: ForgeBuild) => {
+    const current = (build.track_list ?? []) as Array<Record<string, unknown>>;
+    setItemDraft(current.map(item => ({ ...item })));
+    setItemsModalBuildId(build.id);
+  };
+
+  const closeItemsModal = () => {
+    setItemsModalBuildId(null);
+    setItemDraft([]);
+  };
+
+  const removeDraftItem = (index: number) => {
+    setItemDraft(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const saveItemsDraft = async () => {
+    if (!itemsModalBuild) return;
+
+    setSavingItemsBuildId(itemsModalBuild.id);
+    try {
+      const originalSummary = itemsModalBuild.summary ?? {};
+      const nextSummary: Record<string, unknown> = { ...originalSummary };
+      if (itemsModalBuild.source === 'sync') {
+        const ownedCount = itemDraft.reduce((acc, item) => acc + (toBool(item.is_owned) ? 1 : 0), 0);
+        nextSummary.track_count = itemDraft.length;
+        nextSummary.owned_count = ownedCount;
+        nextSummary.missing_count = Math.max(0, itemDraft.length - ownedCount);
+      }
+
+      const updated = await forgeBuildsApi.update(itemsModalBuild.id, {
+        track_list: itemDraft,
+        summary: nextSummary,
+      });
+      toastSuccess(`Saved ${updated.item_count} build item${updated.item_count === 1 ? '' : 's'}`);
+      closeItemsModal();
+      refetch();
+    } catch (err) {
+      toastError(extractErrorMessage(err, 'Failed to save build items'));
+    } finally {
+      setSavingItemsBuildId(null);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -427,7 +490,7 @@ export function ForgeBuilder() {
                     ) : (
                       <Send size={12} />
                     )}
-                    Build & Run
+                    Build & Save
                   </button>
                   {resyncingId === selectedBuild.id && (
                     <span className="text-[#777] text-[11px]">Re-syncing source and refreshing items...</span>
@@ -451,7 +514,18 @@ export function ForgeBuilder() {
                 </div>
 
                 <div>
-                  <p className="text-text-muted text-xs uppercase tracking-wide mb-2">Items ({selectedBuild.item_count})</p>
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <p className="text-text-muted text-xs uppercase tracking-wide">
+                      Items ({selectedBuild.item_count})
+                    </p>
+                    <button
+                      onClick={() => openItemsModal(selectedBuild)}
+                      className="btn-secondary text-[11px] px-2 py-1"
+                      disabled={selectedBuild.item_count === 0}
+                    >
+                      View All & Edit
+                    </button>
+                  </div>
                   {itemPreview.length === 0 ? (
                     <div className="text-[12px] text-[#555] bg-[#0b0b0b] border border-[#1a1a1a] p-3">No items</div>
                   ) : selectedBuild.source === 'sync' ? (
@@ -539,6 +613,147 @@ export function ForgeBuilder() {
           </div>
         </div>
       )}
+
+      {itemsModalBuild && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/70" onClick={closeItemsModal} />
+          <div className="relative w-full max-w-6xl max-h-[90vh] bg-[#101010] border border-[#262626] flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-[#1f1f1f]">
+              <div>
+                <p className="text-text-primary text-sm font-semibold">{itemsModalBuild.name}</p>
+                <p className="text-[#666] text-xs mt-1">
+                  {itemDraft.length} item{itemDraft.length === 1 ? '' : 's'} in build
+                </p>
+              </div>
+              <button
+                onClick={closeItemsModal}
+                className="text-[#888] hover:text-text-primary transition-colors"
+                aria-label="Close item editor"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="p-4 overflow-auto">
+              {itemDraft.length === 0 ? (
+                <div className="text-[12px] text-[#666] border border-[#1f1f1f] bg-[#0b0b0b] p-3">No items in this build.</div>
+              ) : itemsModalBuild.source === 'sync' ? (
+                <table className="min-w-full text-xs bg-[#0b0b0b] border border-[#1a1a1a]">
+                  <thead className="bg-[#111] text-[#777] uppercase tracking-wide">
+                    <tr>
+                      <th className="text-left px-3 py-2">Track</th>
+                      <th className="text-left px-3 py-2">Artist</th>
+                      <th className="text-left px-3 py-2">Album</th>
+                      <th className="text-left px-3 py-2">Owned</th>
+                      <th className="text-left px-3 py-2">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {itemDraft.map((item, idx) => (
+                      <tr key={`${idx}-${String(item.track_id ?? item.spotify_track_id ?? item.track_name ?? '')}`} className="border-t border-[#1a1a1a]">
+                        <td className="px-3 py-2 text-text-primary">{toStringValue(item.track_name)}</td>
+                        <td className="px-3 py-2 text-[#aaa]">{toStringValue(item.artist_name)}</td>
+                        <td className="px-3 py-2 text-[#aaa]">{toStringValue(item.album_name)}</td>
+                        <td className="px-3 py-2 text-[#aaa]">{toBool(item.is_owned) ? 'Yes' : 'No'}</td>
+                        <td className="px-3 py-2">
+                          <button onClick={() => removeDraftItem(idx)} className="text-danger hover:text-danger/80 text-[11px]">
+                            Remove
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : itemsModalBuild.source === 'new_music' ? (
+                <table className="min-w-full text-xs bg-[#0b0b0b] border border-[#1a1a1a]">
+                  <thead className="bg-[#111] text-[#777] uppercase tracking-wide">
+                    <tr>
+                      <th className="text-left px-3 py-2">Artist</th>
+                      <th className="text-left px-3 py-2">Release</th>
+                      <th className="text-left px-3 py-2">Type</th>
+                      <th className="text-left px-3 py-2">Date</th>
+                      <th className="text-left px-3 py-2">In Library</th>
+                      <th className="text-left px-3 py-2">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {itemDraft.map((item, idx) => (
+                      <tr key={`${idx}-${String(item.id ?? item.title ?? '')}`} className="border-t border-[#1a1a1a]">
+                        <td className="px-3 py-2 text-[#aaa]">{toStringValue(item.artist_name)}</td>
+                        <td className="px-3 py-2 text-text-primary">{toStringValue(item.title)}</td>
+                        <td className="px-3 py-2 text-[#aaa]">{toStringValue(item.record_type)}</td>
+                        <td className="px-3 py-2 text-[#aaa]">{toStringValue(item.release_date)}</td>
+                        <td className="px-3 py-2 text-[#aaa]">{toBool(item.in_library) ? 'Yes' : 'No'}</td>
+                        <td className="px-3 py-2">
+                          <button onClick={() => removeDraftItem(idx)} className="text-danger hover:text-danger/80 text-[11px]">
+                            Remove
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : itemsModalBuild.source === 'custom_discovery' ? (
+                <table className="min-w-full text-xs bg-[#0b0b0b] border border-[#1a1a1a]">
+                  <thead className="bg-[#111] text-[#777] uppercase tracking-wide">
+                    <tr>
+                      <th className="text-left px-3 py-2">Artist</th>
+                      <th className="text-left px-3 py-2">Reason</th>
+                      <th className="text-left px-3 py-2">Similarity</th>
+                      <th className="text-left px-3 py-2">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {itemDraft.map((item, idx) => (
+                      <tr key={`${idx}-${String(item.artist ?? '')}`} className="border-t border-[#1a1a1a]">
+                        <td className="px-3 py-2 text-text-primary">{toStringValue(item.artist)}</td>
+                        <td className="px-3 py-2 text-[#aaa]">{toStringValue(item.reason)}</td>
+                        <td className="px-3 py-2 text-[#aaa]">{toStringValue(item.similarity)}</td>
+                        <td className="px-3 py-2">
+                          <button onClick={() => removeDraftItem(idx)} className="text-danger hover:text-danger/80 text-[11px]">
+                            Remove
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <div className="space-y-2">
+                  {itemDraft.map((item, idx) => (
+                    <div key={idx} className="bg-[#0b0b0b] border border-[#1a1a1a] p-3 flex items-start justify-between gap-3">
+                      <p className="text-[12px] text-[#aaa] break-all">{JSON.stringify(item)}</p>
+                      <button onClick={() => removeDraftItem(idx)} className="text-danger hover:text-danger/80 text-[11px]">
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between gap-2 p-4 border-t border-[#1f1f1f]">
+              <p className="text-[11px] text-[#666]">
+                Remove any items you do not want in this build, then save.
+              </p>
+              <div className="flex items-center gap-2">
+                <button onClick={closeItemsModal} className="btn-secondary text-xs px-3 py-1.5">
+                  Close
+                </button>
+                <button
+                  onClick={saveItemsDraft}
+                  disabled={!itemsDirty || savingItemsBuildId === itemsModalBuild.id}
+                  className="btn-primary text-xs px-3 py-1.5 disabled:opacity-40 inline-flex items-center gap-2"
+                >
+                  {savingItemsBuildId === itemsModalBuild.id ? <Loader2 size={12} className="animate-spin" /> : null}
+                  Save Items
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+

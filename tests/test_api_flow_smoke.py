@@ -576,6 +576,18 @@ def test_forge_build_publish_contract(monkeypatch):
     }
 
 
+def test_forge_extract_publish_track_ids_handles_dict_candidates():
+    track_list = [
+        {"track_id": {"id": "trk-1"}},
+        {"plex_rating_key": "trk-2"},
+        {"track_id": {"track_id": "trk-1"}},
+        {"navidrome_track_id": {"id": "trk-3"}},
+        {"track_id": None},
+    ]
+    result = forge._extract_publish_track_ids(track_list)
+    assert result == ["trk-1", "trk-2", "trk-3"]
+
+
 def test_forge_publish_flow_visible_in_library_playlists(monkeypatch):
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row

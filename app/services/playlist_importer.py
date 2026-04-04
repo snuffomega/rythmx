@@ -21,6 +21,31 @@ from app import config
 logger = logging.getLogger(__name__)
 
 
+def _normalize_owned_track_id(match: object) -> str | None:
+    """
+    Normalize ownership lookups to a plain library track ID string.
+
+    Reader implementations are expected to return a string ID, but some return a
+    richer dict shape (for example {"id": "..."}). This helper keeps importer
+    output stable across platforms.
+    """
+    if match is None:
+        return None
+
+    if isinstance(match, dict):
+        candidate = (
+            match.get("id")
+            or match.get("track_id")
+            or match.get("plex_rating_key")
+            or match.get("navidrome_track_id")
+        )
+        tid = str(candidate or "").strip()
+        return tid or None
+
+    tid = str(match).strip()
+    return tid or None
+
+
 def _resolve_redirect_url(url: str) -> str:
     """Follow HTTP redirects and return the final URL; fallback to input URL on error."""
     try:
@@ -135,17 +160,21 @@ def import_from_spotify(playlist_url: str) -> dict:
     tracks = []
     owned_count = 0
     for rt in raw_tracks:
-        plex_key = None
+        library_track_id = None
 
         # Tier 1: exact Spotify track ID
         if rt["spotify_track_id"]:
-            plex_key = soulsync_reader.check_owned_exact(rt["spotify_track_id"])
+            library_track_id = _normalize_owned_track_id(
+                soulsync_reader.check_owned_exact(rt["spotify_track_id"])
+            )
 
         # Tier 2: artist name + track title text match
-        if not plex_key:
-            plex_key = soulsync_reader.find_track_by_name(rt["artist_name"], rt["track_name"])
+        if not library_track_id:
+            library_track_id = _normalize_owned_track_id(
+                soulsync_reader.find_track_by_name(rt["artist_name"], rt["track_name"])
+            )
 
-        is_owned = plex_key is not None
+        is_owned = library_track_id is not None
         if is_owned:
             owned_count += 1
 
@@ -155,7 +184,8 @@ def import_from_spotify(playlist_url: str) -> dict:
             "album_name": rt["album_name"],
             "spotify_track_id": rt["spotify_track_id"],
             "is_owned": is_owned,
-            "plex_rating_key": plex_key,
+            "track_id": library_track_id,
+            "plex_rating_key": library_track_id,
         })
 
     logger.info(
@@ -270,17 +300,21 @@ def import_from_lastfm(playlist_url: str) -> dict:
     tracks = []
     owned_count = 0
     for rt in raw_tracks:
-        plex_key = None
+        library_track_id = None
 
         # Tier 1: exact Spotify track ID (if embedded in JSPF identifier)
         if rt["spotify_track_id"]:
-            plex_key = soulsync_reader.check_owned_exact(rt["spotify_track_id"])
+            library_track_id = _normalize_owned_track_id(
+                soulsync_reader.check_owned_exact(rt["spotify_track_id"])
+            )
 
         # Tier 2: normalized artist + title text match (handles unicode apostrophes)
-        if not plex_key:
-            plex_key = soulsync_reader.find_track_by_name(rt["artist_name"], rt["track_name"])
+        if not library_track_id:
+            library_track_id = _normalize_owned_track_id(
+                soulsync_reader.find_track_by_name(rt["artist_name"], rt["track_name"])
+            )
 
-        is_owned = plex_key is not None
+        is_owned = library_track_id is not None
         if is_owned:
             owned_count += 1
 
@@ -290,7 +324,8 @@ def import_from_lastfm(playlist_url: str) -> dict:
             "album_name": rt["album_name"],
             "spotify_track_id": rt["spotify_track_id"],
             "is_owned": is_owned,
-            "plex_rating_key": plex_key,
+            "track_id": library_track_id,
+            "plex_rating_key": library_track_id,
         })
 
     logger.info(
@@ -390,18 +425,22 @@ def import_from_deezer(playlist_url: str) -> dict:
         album_name = (item.get("album") or {}).get("title", "")
         deezer_track_id = str(item.get("id", ""))
 
-        plex_key = None
+        library_track_id = None
 
         # Tier 1: exact Deezer track ID match (fast, no text ambiguity)
         # Only resolves when SoulSync has indexed the track via Deezer catalog (deezer_id populated).
         if deezer_track_id:
-            plex_key = soulsync_reader.check_owned_deezer(deezer_track_id)
+            library_track_id = _normalize_owned_track_id(
+                soulsync_reader.check_owned_deezer(deezer_track_id)
+            )
 
         # Tier 2: normalized artist + title text match (handles unicode apostrophes)
-        if not plex_key:
-            plex_key = soulsync_reader.find_track_by_name(artist_name, track_name)
+        if not library_track_id:
+            library_track_id = _normalize_owned_track_id(
+                soulsync_reader.find_track_by_name(artist_name, track_name)
+            )
 
-        is_owned = plex_key is not None
+        is_owned = library_track_id is not None
         if is_owned:
             owned_count += 1
 
@@ -411,7 +450,8 @@ def import_from_deezer(playlist_url: str) -> dict:
             "album_name": album_name,
             "spotify_track_id": "",
             "is_owned": is_owned,
-            "plex_rating_key": plex_key,
+            "track_id": library_track_id,
+            "plex_rating_key": library_track_id,
         })
 
     logger.info(
