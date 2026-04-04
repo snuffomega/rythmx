@@ -130,7 +130,7 @@ def get_artist_albums_deezer(artist_id: str) -> list[dict]:
             "id": str(album.get("id", "")),
             "title": album.get("title", ""),
             "record_type": album.get("record_type", "album"),
-            "track_count": album.get("nb_tracks") or 0,
+            "track_count": album.get("nb_tracks") or None,
             "artwork_url": album.get("cover_xl") or album.get("cover_medium") or "",
             "release_date": album.get("release_date", ""),
             "explicit": bool(album.get("explicit_lyrics")),
@@ -200,4 +200,3 @@ def get_album_tracks_deezer(deezer_album_id: str) -> list[dict]:
             }
         )
     return tracks
-

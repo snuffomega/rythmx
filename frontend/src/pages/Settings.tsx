@@ -986,7 +986,7 @@ export function SettingsPage({ toast }: SettingsPageProps) {
                                       <div className="min-w-0">
                                         <p className="text-xs text-text-primary truncate">{c.candidate_title}</p>
                                         <p className="text-[10px] font-mono text-text-muted">
-                                          {Math.round((c.candidate_score ?? 0) * 100)}% • tracks {c.track_count ?? '-'}
+                                          {Math.round((c.candidate_score ?? 0) * 100)}% • tracks {(c.track_count && c.track_count > 0) ? c.track_count : '?'}
                                         </p>
                                       </div>
                                       <div className="flex items-center gap-1">

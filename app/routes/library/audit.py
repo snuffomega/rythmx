@@ -182,24 +182,80 @@ def library_audit_candidates(
             (album_row["artist_id"], src, max(limit * 4, 20)),
         ).fetchall()
 
+        release_meta_by_id: dict[str, dict[str, Any]] = {}
+        candidate_ids = [str(r["album_id"] or "") for r in rows if str(r["album_id"] or "").strip()]
+        if candidate_ids:
+            placeholders = ",".join("?" * len(candidate_ids))
+            if src == "deezer":
+                release_rows = conn.execute(
+                    f"""
+                    SELECT deezer_album_id AS candidate_id,
+                           artist_name,
+                           COALESCE(release_date_deezer, release_date_itunes) AS release_date
+                    FROM lib_releases
+                    WHERE artist_id = ?
+                      AND deezer_album_id IN ({placeholders})
+                    """,
+                    (album_row["artist_id"], *candidate_ids),
+                ).fetchall()
+            else:
+                release_rows = conn.execute(
+                    f"""
+                    SELECT itunes_album_id AS candidate_id,
+                           artist_name,
+                           COALESCE(release_date_itunes, release_date_deezer) AS release_date
+                    FROM lib_releases
+                    WHERE artist_id = ?
+                      AND itunes_album_id IN ({placeholders})
+                    """,
+                    (album_row["artist_id"], *candidate_ids),
+                ).fetchall()
+            for rr in release_rows:
+                cid = str(rr["candidate_id"] or "")
+                if not cid:
+                    continue
+                release_date = str(rr["release_date"] or "").strip()
+                year = None
+                if len(release_date) >= 4 and release_date[:4].isdigit():
+                    year = int(release_date[:4])
+                release_meta_by_id[cid] = {
+                    "artist_name": rr["artist_name"] or album_row["artist_name"],
+                    "release_date": release_date or None,
+                    "year": year,
+                }
+
     requested_title = str(album_row["title"] or "")
     scored: list[dict[str, Any]] = []
     for row in rows:
         candidate_title = str(row["album_title"] or "")
+        candidate_id = str(row["album_id"] or "")
         score = float(match_album_title(requested_title, candidate_title))
+        rel_meta = release_meta_by_id.get(candidate_id, {})
+        track_count = row["track_count"]
+        if track_count is not None:
+            try:
+                track_count = int(track_count)
+                if track_count <= 0:
+                    track_count = None
+            except Exception:
+                track_count = None
         scored.append(
             {
-                "candidate_id": str(row["album_id"] or ""),
+                "candidate_id": candidate_id,
                 "candidate_title": candidate_title,
                 "candidate_score": round(score, 4),
                 "record_type": row["record_type"],
-                "track_count": row["track_count"],
+                "track_count": track_count,
                 "artwork_url": row["artwork_url"],
+                "source": src,
+                "artist_name": rel_meta.get("artist_name") or album_row["artist_name"],
+                "release_date": rel_meta.get("release_date"),
+                "year": rel_meta.get("year"),
                 "reasons": _candidate_reasons(
                     score=score,
                     candidate_title=candidate_title,
                     requested_title=requested_title,
-                    candidate_track_count=int(row["track_count"] or 0) if row["track_count"] is not None else None,
+                    candidate_track_count=track_count if track_count is not None else None,
                     album_track_count=album_track_count,
                 ),
             }

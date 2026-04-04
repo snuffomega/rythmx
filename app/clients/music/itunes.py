@@ -196,7 +196,7 @@ def get_artist_albums_itunes(itunes_artist_id: str) -> list[dict]:
             {
                 "id": str(item.get("collectionId", "")),
                 "title": item.get("collectionName", ""),
-                "track_count": item.get("trackCount") or 0,
+                "track_count": item.get("trackCount") or None,
                 "record_type": _derive_collection_type(item),
                 "artwork_url": raw_art.replace("100x100bb", "600x600bb") if raw_art else "",
                 "release_date": item.get("releaseDate", ""),
@@ -271,4 +271,3 @@ def get_album_tracks_itunes(itunes_album_id: str) -> list[dict]:
             }
         )
     return tracks
-
