@@ -43,9 +43,9 @@ function AlbumTile({
   wide?: boolean;
 }) {
   const { ref, inView } = useInView();
-  const hasDirectUrl = image && image.startsWith('http');
-  const resolvedImg = useImage('album', title, artist, !inView || !!hasDirectUrl);
-  const src = hasDirectUrl ? image : (image || resolvedImg);
+  const hasImage = Boolean(image);
+  const resolvedImg = useImage('album', title, artist, !inView || hasImage);
+  const src = image || resolvedImg;
   const w = wide ? 'w-48' : 'w-40';
   const h = wide ? 'h-48' : 'h-40';
   return (
@@ -77,9 +77,9 @@ function AlbumTile({
 
 function ArtistTile({ artist }: { artist: Artist }) {
   const { ref, inView } = useInView();
-  const hasDirectUrl = artist.image && artist.image.startsWith('http');
-  const resolvedImg = useImage('artist', artist.name, '', !inView || !!hasDirectUrl);
-  const src = hasDirectUrl ? artist.image : (artist.image || resolvedImg);
+  const hasImage = Boolean(artist.image);
+  const resolvedImg = useImage('artist', artist.name, '', !inView || hasImage);
+  const src = artist.image || resolvedImg;
   return (
     <div ref={ref} className="flex-shrink-0 w-36 snap-start text-center group cursor-pointer">
       <div
@@ -291,7 +291,13 @@ export function Discovery() {
         ) : (
           <HScrollShelf>
             {newReleases.map(item => (
-              <AlbumTile key={item.id} artist={item.artist_name} title={item.title} sub={item.release_date?.slice(0, 7) ?? ''} />
+              <AlbumTile
+                key={item.id}
+                artist={item.artist_name}
+                title={item.title}
+                image={item.cover_url ?? undefined}
+                sub={item.release_date?.slice(0, 7) ?? ''}
+              />
             ))}
           </HScrollShelf>
         )}

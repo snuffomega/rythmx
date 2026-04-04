@@ -206,9 +206,9 @@ interface CollageCardProps {
 function CollageCard({ item, rank, contentType, overlays, className = '' }: CollageCardProps) {
   const { ref, inView } = useInView();
   const entityType = contentType === 'artists' ? 'artist' : contentType === 'albums' ? 'album' : 'track';
-  const hasDirectUrl = item.image && item.image.startsWith('http');
-  const resolvedImage = useImage(entityType, item.name, item.artist ?? '', !inView || !!hasDirectUrl);
-  const src = hasDirectUrl ? item.image : (item.image || resolvedImage);
+  const hasImage = Boolean(item.image);
+  const resolvedImage = useImage(entityType, item.name, item.artist ?? '', !inView || hasImage);
+  const src = item.image || resolvedImage;
 
   const hasOverlay = (overlays.showArtist && item.artist) ||
     (overlays.showAlbum && contentType !== 'artists') ||

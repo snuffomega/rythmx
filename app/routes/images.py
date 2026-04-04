@@ -82,7 +82,7 @@ def images_resolve_batch(body: Optional[dict[str, Any]] = Body(default=None)):
             {"id": item_id, "image_url": image_url, "content_hash": content_hash, "pending": pending}
         )
 
-    logger.info("Resolved %d images.", len(results))
+    logger.debug("Resolved %d images.", len(results))
     return {"items": results}
 
 
