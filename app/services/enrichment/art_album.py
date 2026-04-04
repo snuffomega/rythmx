@@ -1,11 +1,9 @@
 """
 art_album.py - Stage 1.2 album artwork enrichment.
 
-Priority order:
-  1. Embedded artwork (APIC/PICTURE) for navidrome files when MUSIC_DIR is set
-  2. Deezer CDN artwork
-  3. iTunes lookup artwork
-  4. Plex thumb download (token available at Stage 1 time)
+Two independent passes:
+  enrich_album_art_local()  — Stage 1.2a: embedded/sidecar only, zero network
+  enrich_album_art_cdn()    — Stage 1.2b: Deezer/iTunes/Plex URLs, runs after Stage 2a
 
 Writes image_cache rows with content_hash/local_path/artwork_source.
 """
@@ -17,7 +15,6 @@ import os
 import requests
 
 from app import config
-from app.db import rythmx_store
 from app.db.rythmx_store import _connect
 from app.services.api_orchestrator import rate_limiter
 from app.services.artwork_store import get_original_path, get_thumb, get_thumb_cache_path, ingest
@@ -26,14 +23,12 @@ from app.services.local_path_resolver import resolve_library_file_path
 
 logger = logging.getLogger(__name__)
 
-_CANDIDATE_SQL = """
+_LOCAL_CANDIDATE_SQL = """
     SELECT al.id,
            al.title,
            ar.name AS artist_name,
            al.source_platform,
            al.thumb_url_deezer,
-           al.thumb_url_plex,
-           al.itunes_album_id,
            (SELECT t.file_path
               FROM lib_tracks t
              WHERE t.album_id = al.id
@@ -49,13 +44,66 @@ _CANDIDATE_SQL = """
       AND (ic.content_hash IS NULL OR ic.content_hash = '')
 """
 
-_REMAINING_SQL = """
+_LOCAL_REMAINING_SQL = """
     SELECT COUNT(*)
     FROM lib_albums al
     LEFT JOIN image_cache ic
            ON ic.entity_type = 'album' AND ic.entity_key = al.id
     WHERE al.removed_at IS NULL
       AND (ic.content_hash IS NULL OR ic.content_hash = '')
+"""
+
+_CDN_CANDIDATE_SQL = """
+    SELECT al.id,
+           al.title,
+           ar.name AS artist_name,
+           al.source_platform,
+           al.thumb_url_deezer,
+           al.thumb_url_plex,
+           al.itunes_album_id,
+           al.deezer_id,
+           (SELECT t.file_path
+              FROM lib_tracks t
+             WHERE t.album_id = al.id
+               AND t.file_path IS NOT NULL
+               AND t.removed_at IS NULL
+             ORDER BY t.track_number
+             LIMIT 1) AS sample_file_path
+    FROM lib_albums al
+    JOIN lib_artists ar ON ar.id = al.artist_id
+    LEFT JOIN image_cache ic
+           ON ic.entity_type = 'album' AND ic.entity_key = al.id
+    LEFT JOIN enrichment_meta em
+           ON em.source      = 'album_art_cdn'
+          AND em.entity_type = 'album'
+          AND em.entity_id   = al.id
+    WHERE al.removed_at IS NULL
+      AND (ic.content_hash IS NULL OR ic.content_hash = '')
+      AND (
+          em.status IS NULL
+          OR em.status = 'error'
+          OR (em.status = 'not_found'
+              AND (em.retry_after IS NULL OR em.retry_after <= date('now')))
+      )
+"""
+
+_CDN_REMAINING_SQL = """
+    SELECT COUNT(*)
+    FROM lib_albums al
+    LEFT JOIN image_cache ic
+           ON ic.entity_type = 'album' AND ic.entity_key = al.id
+    LEFT JOIN enrichment_meta em
+           ON em.source      = 'album_art_cdn'
+          AND em.entity_type = 'album'
+          AND em.entity_id   = al.id
+    WHERE al.removed_at IS NULL
+      AND (ic.content_hash IS NULL OR ic.content_hash = '')
+      AND (
+          em.status IS NULL
+          OR em.status = 'error'
+          OR (em.status = 'not_found'
+              AND (em.retry_after IS NULL OR em.retry_after <= date('now')))
+      )
 """
 
 _LOCAL_SYNC_CANDIDATE_SQL = """
@@ -289,22 +337,14 @@ def _upsert_album_cache(
     )
 
 
-def _process_item(conn, row):
+def _process_local_item(conn, row):
     album_id = str(row["id"])
     album_title = row["title"]
     artist_name = row["artist_name"]
     source_platform = row["source_platform"]
     thumb_url_deezer = row["thumb_url_deezer"]
-    thumb_url_plex = row["thumb_url_plex"]
-    itunes_album_id = row["itunes_album_id"]
     sample_file_path = row["sample_file_path"]
 
-    payload: bytes | None = None
-    source = ""
-    source_url: str | None = None
-
-    # Priority 1: local file artwork for navidrome-backed libraries.
-    # Order inside tier-1: embedded APIC/PICTURE -> sidecar cover files.
     payload, source = _extract_local_album_art(
         str(source_platform or ""),
         sample_file_path,
@@ -312,25 +352,67 @@ def _process_item(conn, row):
         album_title=album_title,
     )
 
-    # Priority 2: Deezer cover URL from Stage 2a promotion.
-    if payload is None and thumb_url_deezer:
+    if payload:
+        content_hash = ingest(payload)
+        _upsert_album_cache(
+            conn,
+            album_id=album_id,
+            image_url=str(thumb_url_deezer) if thumb_url_deezer else None,
+            content_hash=content_hash,
+            artwork_source=source,
+        )
+        write_enrichment_meta(conn, "album_art_local", "album", album_id, "found")
+        logger.debug("art_album local: '%s - %s' -> %s", artist_name, album_title, source)
+        return "found"
+
+    # Write not_found WITHOUT retry_after so CDN pass runs immediately.
+    try:
+        conn.execute(
+            """INSERT OR REPLACE INTO enrichment_meta
+                   (source, entity_type, entity_id, status, enriched_at, error_msg)
+               VALUES ('album_art_local', 'album', ?, 'not_found', CURRENT_TIMESTAMP,
+                       'no_local_art')""",
+            (album_id,),
+        )
+    except Exception:
+        pass
+    logger.debug("art_album local: '%s - %s' -> not found (no local art)", artist_name, album_title)
+    return "not_found"
+
+
+def _process_cdn_item(conn, row):
+    album_id = str(row["id"])
+    album_title = row["title"]
+    artist_name = row["artist_name"]
+    source_platform = row["source_platform"]
+    thumb_url_deezer = row["thumb_url_deezer"]
+    thumb_url_plex = row["thumb_url_plex"]
+    itunes_album_id = row["itunes_album_id"]
+    deezer_id = row["deezer_id"]
+
+    has_metadata_match = bool(deezer_id) or bool(itunes_album_id)
+
+    payload: bytes | None = None
+    source = ""
+    source_url: str | None = None
+
+    # Priority 1: Deezer cover URL — only if Deezer match confirmed
+    if payload is None and has_metadata_match and thumb_url_deezer:
         payload = _download_image_bytes(str(thumb_url_deezer))
         if payload:
             source = "deezer"
             source_url = str(thumb_url_deezer)
 
-    # Priority 3: iTunes lookup by album ID (direct or via release registry).
-    if payload is None:
-        if not itunes_album_id:
-            itunes_album_id = rythmx_store.get_release_itunes_album_id(artist_name, album_title)
-        itunes_url = _itunes_artwork_url(str(itunes_album_id or ""))
+    # Priority 2: iTunes lookup — only if iTunes match confirmed
+    if payload is None and has_metadata_match and itunes_album_id:
+        itunes_url = _itunes_artwork_url(str(itunes_album_id))
         if itunes_url:
             payload = _download_image_bytes(itunes_url)
             if payload:
                 source = "itunes"
                 source_url = itunes_url
 
-    # Priority 4: Plex thumb download with token while Stage 1 context is warm.
+    # Priority 3: Plex thumb — available without external IDs
     if payload is None and source_platform == "plex" and thumb_url_plex:
         payload, plex_ref = _download_plex_thumb(str(thumb_url_plex))
         if payload:
@@ -339,35 +421,58 @@ def _process_item(conn, row):
 
     if payload:
         content_hash = ingest(payload)
-        fallback_url = source_url or (str(thumb_url_deezer) if thumb_url_deezer else None)
         _upsert_album_cache(
             conn,
             album_id=album_id,
-            image_url=fallback_url,
+            image_url=source_url or (str(thumb_url_deezer) if thumb_url_deezer else None),
             content_hash=content_hash,
             artwork_source=source,
         )
-        write_enrichment_meta(conn, "album_art", "album", album_id, "found")
-        logger.debug("art_album: '%s - %s' -> %s", artist_name, album_title, source)
+        write_enrichment_meta(conn, "album_art_cdn", "album", album_id, "found")
+        logger.debug(
+            "art_album cdn: '%s - %s' -> %s", artist_name, album_title, source
+        )
         return "found"
 
-    write_enrichment_meta(conn, "album_art", "album", album_id, "not_found")
-    logger.debug("art_album: '%s - %s' -> not found", artist_name, album_title)
+    write_enrichment_meta(conn, "album_art_cdn", "album", album_id, "not_found")
+    logger.debug(
+        "art_album cdn: '%s - %s' -> not found (match=%s)",
+        artist_name, album_title, has_metadata_match,
+    )
     return "not_found"
 
 
-def enrich_album_art(batch_size=200, stop_event=None, on_progress=None):
-    """Stage 1.2: album artwork local storage pass."""
+def enrich_album_art_local(batch_size: int = 2000, stop_event=None, on_progress=None):
+    """Stage 1.2a: zero-network local file art pass. Runs before Stage 2a."""
     return run_enrichment_loop(
-        worker_name="enrich_album_art",
-        candidate_sql=_CANDIDATE_SQL,
+        worker_name="enrich_album_art_local",
+        candidate_sql=_LOCAL_CANDIDATE_SQL,
         candidate_params=(),
-        remaining_sql=_REMAINING_SQL,
+        remaining_sql=_LOCAL_REMAINING_SQL,
         remaining_params=(),
-        source="album_art",
+        source="album_art_local",
         entity_type="album",
         entity_id_col="id",
-        process_item=_process_item,
+        process_item=_process_local_item,
+        batch_size=batch_size,
+        stop_event=stop_event,
+        on_progress=on_progress,
+    )
+
+
+def enrich_album_art_cdn(batch_size: int = 200, stop_event=None, on_progress=None):
+    """Stage 1.2b: CDN URL pass. Runs after Stage 2a (IDs available).
+    Skips albums with no metadata match. Respects 30-day enrichment_meta gate."""
+    return run_enrichment_loop(
+        worker_name="enrich_album_art_cdn",
+        candidate_sql=_CDN_CANDIDATE_SQL,
+        candidate_params=(),
+        remaining_sql=_CDN_REMAINING_SQL,
+        remaining_params=(),
+        source="album_art_cdn",
+        entity_type="album",
+        entity_id_col="id",
+        process_item=_process_cdn_item,
         batch_size=batch_size,
         stop_event=stop_event,
         on_progress=on_progress,

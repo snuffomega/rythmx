@@ -217,25 +217,26 @@ class PipelineRunner:
                 result["status"] = "stopped"
                 return result
 
-            # === Stage 1.2: Album Artwork Local Storage ===
-            self._set_phase("album_art", on_phase)
+            # === Stage 1.2a: Album Artwork — Local File Pass ===
+            # Zero network — embedded APIC/PICTURE and sidecar files only.
+            # Runs before Stage 2a so artwork is available as early as possible.
+            self._set_phase("album_art_local", on_phase)
             try:
-                from app.services.enrichment.art_album import enrich_album_art
-                album_art_result = enrich_album_art(
-                    batch_size=500,
+                from app.services.enrichment.art_album import enrich_album_art_local
+                local_art_result = enrich_album_art_local(
+                    batch_size=2000,
                     stop_event=stop_event,
-                    on_progress=self._progress_fn(on_progress, "album_art"),
+                    on_progress=self._progress_fn(on_progress, "album_art_local"),
                 )
-                result["album_art"] = album_art_result
+                result["album_art_local"] = local_art_result
                 logger.info(
-                    "PipelineRunner: album_art - enriched=%d skipped=%d failed=%d remaining=%d",
-                    album_art_result.get("enriched", 0),
-                    album_art_result.get("skipped", 0),
-                    album_art_result.get("failed", 0),
-                    album_art_result.get("remaining", 0),
+                    "PipelineRunner: album_art_local - enriched=%d skipped=%d remaining=%d",
+                    local_art_result.get("enriched", 0),
+                    local_art_result.get("skipped", 0),
+                    local_art_result.get("remaining", 0),
                 )
             except Exception as e:
-                logger.warning("PipelineRunner: album_art failed: %s", e)
+                logger.warning("PipelineRunner: album_art_local failed: %s", e)
 
             if self._stopped(stop_event):
                 result["status"] = "stopped"
@@ -258,6 +259,31 @@ class PipelineRunner:
             if self._stopped(stop_event):
                 result["status"] = "stopped"
                 return result
+
+            # === Stage 1.2b: Album Artwork — CDN Pass ===
+            # Runs after Stage 2a so deezer_id / itunes_album_id are populated.
+            # Skips albums with no metadata match. 30-day gate via enrichment_meta.
+            if self._stopped(stop_event):
+                result["status"] = "stopped"
+                return result
+
+            self._set_phase("album_art_cdn", on_phase)
+            try:
+                from app.services.enrichment.art_album import enrich_album_art_cdn
+                cdn_art_result = enrich_album_art_cdn(
+                    batch_size=200,
+                    stop_event=stop_event,
+                    on_progress=self._progress_fn(on_progress, "album_art_cdn"),
+                )
+                result["album_art_cdn"] = cdn_art_result
+                logger.info(
+                    "PipelineRunner: album_art_cdn - enriched=%d skipped=%d remaining=%d",
+                    cdn_art_result.get("enriched", 0),
+                    cdn_art_result.get("skipped", 0),
+                    cdn_art_result.get("remaining", 0),
+                )
+            except Exception as e:
+                logger.warning("PipelineRunner: album_art_cdn failed: %s", e)
 
             # === Stage 2b: PARALLEL — Spotify IDs + Last.fm IDs + MusicBrainz IDs + Artist Artwork ===
             self._set_phase("id_parallel", on_phase)
