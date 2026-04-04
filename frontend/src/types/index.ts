@@ -242,6 +242,8 @@ export interface LibTrack {
   tag_genre?: string | null;
   album_title?: string;
   artist_name?: string;
+  thumb_url?: string | null;
+  thumb_hash?: string | null;
 }
 
 export interface MissingAlbum {

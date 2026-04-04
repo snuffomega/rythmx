@@ -25,7 +25,7 @@ import {
   Clock,
 } from 'lucide-react';
 import { useNavigate } from '@tanstack/react-router';
-import { libraryPlaylistsApi, hydrateTrackArtwork } from '../services/api';
+import { libraryPlaylistsApi } from '../services/api';
 import { usePlayerStore } from '../stores/usePlayerStore';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { ApiErrorBanner } from '../components/common';
@@ -159,26 +159,23 @@ function PlaylistDetail({
       .finally(() => setLoading(false));
   }, [playlist.id]);
 
-  const handlePlayAll = useCallback(async () => {
+  const handlePlayAll = useCallback(() => {
     if (!hasPlayableTracks) return;
-    const hydrated = await Promise.all(queueTracks.map(hydrateTrackArtwork));
-    playQueue(hydrated);
-  }, [hasPlayableTracks, queueTracks, playQueue, hydrateTrackArtwork]);
+    playQueue(queueTracks);
+  }, [hasPlayableTracks, queueTracks, playQueue]);
 
-  const handleShuffleAll = useCallback(async () => {
+  const handleShuffleAll = useCallback(() => {
     if (!hasPlayableTracks) return;
-    const hydrated = await Promise.all(queueTracks.map(hydrateTrackArtwork));
-    const shuffled = [...hydrated].sort(() => Math.random() - 0.5);
+    const shuffled = [...queueTracks].sort(() => Math.random() - 0.5);
     playQueue(shuffled);
-  }, [hasPlayableTracks, queueTracks, playQueue, hydrateTrackArtwork]);
+  }, [hasPlayableTracks, queueTracks, playQueue]);
 
   const handlePlayTrack = useCallback(
-    async (idx: number) => {
+    (idx: number) => {
       if (idx < 0 || idx >= queueTracks.length) return;
-      const hydrated = await Promise.all(queueTracks.slice(idx).map(hydrateTrackArtwork));
-      playQueue(hydrated);
+      playQueue(queueTracks.slice(idx));
     },
-    [queueTracks, playQueue, hydrateTrackArtwork]
+    [queueTracks, playQueue]
   );
 
   const handleSaveName = useCallback(async () => {

@@ -5,7 +5,7 @@ import {
   ListPlus, MoreHorizontal, User, Disc, Play, X, Shuffle, Camera, Check,
 } from 'lucide-react';
 import { Link, useNavigate, useRouter } from '@tanstack/react-router';
-import { libraryBrowseApi, libraryApi, enrichmentApi, libraryPlaylistsApi, hydrateTrackArtwork } from '../services/api';
+import { libraryBrowseApi, libraryApi, enrichmentApi, libraryPlaylistsApi } from '../services/api';
 import { useImage } from '../hooks/useImage';
 import { getImageUrl } from '../utils/imageUrl';
 import { usePlayerStore, type PlayerTrack } from '../stores/usePlayerStore';
@@ -617,16 +617,16 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
       artist: artistObj.name,
       album: t.album_title ?? '',
       duration: t.duration,
-      thumb_url: null,
-      thumb_hash: null,
+      thumb_url: t.thumb_url ?? null,
+      thumb_hash: t.thumb_hash ?? null,
       source_platform: artistObj.source_platform ?? 'navidrome',
       codec: t.codec,
       bitrate: t.bitrate,
       bit_depth: t.bit_depth,
       sample_rate: t.sample_rate,
     }));
-    return Promise.all(tracks.map(hydrateTrackArtwork));
-  }, [hydrateTrackArtwork]);
+    return tracks;
+  }, []);
 
   const handlePlayArtist = useCallback(async () => {
     if (!data) return;
@@ -687,8 +687,8 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
         artist: similarArtist.name,
         album: t.album_title ?? '',
         duration: t.duration,
-        thumb_url: null,
-        thumb_hash: null,
+        thumb_url: t.thumb_url ?? null,
+        thumb_hash: t.thumb_hash ?? null,
         source_platform: 'navidrome',
         codec: t.codec,
         bitrate: t.bitrate,
@@ -699,17 +699,16 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
         toastError(`No playable tracks found for "${similarArtist.name}"`);
         return;
       }
-      const hydrated = await Promise.all(tracks.map(hydrateTrackArtwork));
       const { currentTrack, queue } = usePlayerStore.getState();
       if (!currentTrack || queue.length === 0) {
-        playQueue(hydrated);
+        playQueue(tracks);
       } else {
-        enqueueNext(hydrated);
+        enqueueNext(tracks);
       }
     } catch (err) {
       toastError(err instanceof Error ? err.message : 'Failed to start similar artist radio');
     }
-  }, [enqueueNext, playQueue, toastError, hydrateTrackArtwork]);
+  }, [enqueueNext, playQueue, toastError]);
 
   const handleSaveCover = useCallback(async () => {
     if (!coverInput.trim() || !data) return;
@@ -809,11 +808,10 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
     sample_rate: tr.sample_rate,
   }));
 
-  async function playPopularTrackNow(trackId: string) {
+  function playPopularTrackNow(trackId: string) {
     const idx = popularQueue.findIndex((track) => track.id === trackId);
     if (idx >= 0) {
-      const hydrated = await Promise.all(popularQueue.slice(idx).map(hydrateTrackArtwork));
-      playQueue(hydrated);
+      playQueue(popularQueue.slice(idx));
     }
   }
 
@@ -2172,8 +2170,8 @@ export function LibraryRoot() {
         artist: artistItem.name,
         album: t.album_title ?? '',
         duration: t.duration,
-        thumb_url: null,
-        thumb_hash: null,
+        thumb_url: t.thumb_url ?? null,
+        thumb_hash: t.thumb_hash ?? null,
         source_platform: artistItem.source_platform ?? 'navidrome',
         codec: t.codec,
         bitrate: t.bitrate,
@@ -2184,13 +2182,12 @@ export function LibraryRoot() {
         toastError(`No playable tracks found for "${artistItem.name}"`);
         return;
       }
-      const hydrated = await Promise.all(queueTracks.map(hydrateTrackArtwork));
-      const shuffled = [...hydrated].sort(() => Math.random() - 0.5);
+      const shuffled = [...queueTracks].sort(() => Math.random() - 0.5);
       playQueue(shuffled);
     } catch (err) {
       toastError(err instanceof Error ? err.message : 'Failed to shuffle play artist');
     }
-  }, [playQueue, toastError, hydrateTrackArtwork]);
+  }, [playQueue, toastError]);
 
   // Root view
   const footerText = loading ? null

@@ -37,7 +37,6 @@ import type {
   LibPlaylist,
   LibPlaylistTrack,
 } from '../types';
-import type { PlayerTrack } from '../stores/usePlayerStore';
 
 const BASE_URL = '/api/v1';
 
@@ -511,31 +510,3 @@ export const libraryPlaylistsApi = {
     ),
 };
 
-// ── Artwork hydration ─────────────────────────────────────────────────────────
-
-/**
- * Enriches a PlayerTrack with artwork data before it enters the player store.
- * No-ops immediately if thumb_hash is already populated.
- * On pending response, returns the track as-is — player falls back to useImage hook.
- */
-export async function hydrateTrackArtwork(track: PlayerTrack): Promise<PlayerTrack> {
-  if (track.thumb_hash) return track;
-  if (!track.album && !track.artist) return track;
-  try {
-    const data = await request<{
-      items?: Array<{ id?: string; image_url?: string; content_hash?: string; pending?: boolean }>;
-    }>('/images/resolve-batch', {
-      method: 'POST',
-      body: JSON.stringify({
-        items: [{ id: '0', type: 'album', name: track.album, artist: track.artist }],
-      }),
-    });
-    const item = data.items?.[0];
-    if (item?.content_hash) {
-      return { ...track, thumb_hash: item.content_hash, thumb_url: item.image_url ?? track.thumb_url };
-    }
-  } catch {
-    // Network failure — return track as-is
-  }
-  return track;
-}
