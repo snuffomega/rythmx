@@ -17,7 +17,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Play, Pause, SkipBack,
+  Play, Pause, SkipBack, SkipForward,
   Shuffle, Repeat, Repeat1, Settings,
   Disc, Star, Heart, ListMusic, Mic2,
   ChevronDown, List, ListPlus, Volume2, X, Maximize2, Minimize2, MoreHorizontal, Trash2, GripVertical,
@@ -27,6 +27,7 @@ import { usePlayerStore, type PlayerTrack } from '../stores/usePlayerStore';
 import { useImage } from '../hooks/useImage';
 import { AudioQualityBadge } from './common';
 import { libraryBrowseApi, libraryPlaylistsApi } from '../services/api';
+import { getImageUrl } from '../utils/imageUrl';
 import { useToastStore } from '../stores/useToastStore';
 import type { LibPlaylist } from '../types';
 
@@ -58,7 +59,9 @@ function Waveform() {
 // ── Art card — useImage inside so key remount refreshes it on track change ───
 function ArtCard({ track, size }: { track: PlayerTrack | null; size: 'sm' | 'lg' }) {
   const resolved = useImage('album', track?.album ?? '', track?.artist ?? '');
-  const src = track?.thumb_url ?? resolved ?? null;
+  const src = track?.thumb_url
+    ? getImageUrl(track.thumb_url, track.thumb_hash ?? null)
+    : (resolved ? getImageUrl(resolved) : null);
   if (src) return <img src={src} alt={track?.album ?? ''} className="w-full h-full object-cover" draggable={false} />;
   return (
     <div className="w-full h-full bg-[#0f0f0f] flex items-center justify-center">
@@ -210,6 +213,26 @@ export function VinylPlayerScreen({
     if (!progressRef.current || duration <= 0) return;
     const rect = progressRef.current.getBoundingClientRect();
     onSeek(Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)) * duration);
+  }
+
+  function handleProgressMouseDown(e: React.MouseEvent<HTMLDivElement>) {
+    if (!progressRef.current || duration <= 0) return;
+
+    const seekAt = (clientX: number) => {
+      if (!progressRef.current || duration <= 0) return;
+      const rect = progressRef.current.getBoundingClientRect();
+      const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      onSeek(pct * duration);
+    };
+
+    seekAt(e.clientX);
+    const onMove = (event: MouseEvent) => seekAt(event.clientX);
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
   }
 
   function handleVolumeSlider(val: number) {
@@ -498,6 +521,16 @@ export function VinylPlayerScreen({
               <span>-</span>
             )}
           </div>
+          {currentTrack && (
+            <div className="mt-2 flex justify-center">
+              <AudioQualityBadge
+                codec={currentTrack.codec}
+                bitrate={currentTrack.bitrate}
+                bit_depth={currentTrack.bit_depth}
+                sample_rate={currentTrack.sample_rate}
+              />
+            </div>
+          )}
           <div className="mt-2 flex justify-center">
             <Waveform />
           </div>
@@ -507,40 +540,9 @@ export function VinylPlayerScreen({
         </div>
 
         {/* ── Scrobble bar ────────────────────────────────────────────────── */}
-        <div className="flex items-center gap-3 mb-4">
-          <span className="font-mono text-[10px] text-text-muted tabular-nums w-9 text-right flex-shrink-0">
-            {formattedPosition}
-          </span>
-          <div
-            ref={progressRef}
-            onClick={handleProgressClick}
-            className="flex-1 h-[5px] bg-[#1c1c1c] rounded-full relative cursor-pointer group"
-          >
-            <div
-              className="absolute top-0 left-0 h-full bg-accent rounded-full pointer-events-none"
-              style={{ width: `${progressPct}%` }}
-            />
-            <div
-              className="absolute top-1/2 -translate-y-1/2 w-3.5 h-3.5 bg-accent rounded-full
-                         opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
-              style={{ left: `${progressPct}%`, marginLeft: '-7px' }}
-            />
-          </div>
-          <span className="font-mono text-[10px] text-text-muted tabular-nums w-9 flex-shrink-0">
-            {formattedDuration}
-          </span>
-          {currentTrack && (
-            <AudioQualityBadge
-              codec={currentTrack.codec}
-              bitrate={currentTrack.bitrate}
-              bit_depth={currentTrack.bit_depth}
-              sample_rate={currentTrack.sample_rate}
-            />
-          )}
-        </div>
 
         {/* ── Button row ───────────────────────────────────────────────────── */}
-        <div className="grid grid-cols-3 items-center relative">
+        <div className="relative grid grid-cols-[1fr_auto_1fr] items-center gap-3 min-h-[72px]">
 
           {/* Volume popup — floats above volume button (stays absolute/upward) */}
           {showVolume && (
@@ -569,7 +571,8 @@ export function VinylPlayerScreen({
           )}
 
           {/* Left — misc controls */}
-          <div className="grid grid-cols-2 gap-1.5 w-fit">
+          <div className="flex items-center justify-start">
+            <div className="grid grid-cols-2 gap-1.5 w-fit">
             <button
               onClick={() => setLiked(v => !v)}
               aria-label={liked ? 'Unlike' : 'Like'}
@@ -590,10 +593,12 @@ export function VinylPlayerScreen({
             >
               <Settings size={17} />
             </button>
+            </div>
           </div>
 
           {/* Center — primary transport */}
-          <div className="flex items-center justify-center gap-6">
+          <div className="flex items-center justify-center">
+            <div className="flex items-center justify-center gap-4 sm:gap-5 flex-nowrap">
             <button
               onClick={toggleShuffle}
               aria-label={shuffle ? 'Shuffle on' : 'Shuffle off'}
@@ -619,7 +624,15 @@ export function VinylPlayerScreen({
             >
               {isPlaying
                 ? <Pause size={22} className="text-black" />
-                : <Play  size={22} className="text-black ml-0.5" />}
+                : <Play  size={22} className="text-black" />}
+            </button>
+            <button
+              onClick={nextTrack}
+              disabled={!currentTrack}
+              aria-label="Next"
+              className="text-text-secondary hover:text-text-primary transition-all active:scale-90 disabled:opacity-25"
+            >
+              <SkipForward size={24} />
             </button>
             <button
               onClick={toggleRepeat}
@@ -639,6 +652,7 @@ export function VinylPlayerScreen({
             </button>
           </div>
 
+          </div>
           {/* Right — volume + queue */}
           <div className="flex items-center justify-end gap-1">
             <button
@@ -837,6 +851,30 @@ export function VinylPlayerScreen({
             </div>
           )}
 
+        </div>
+
+        <div className="flex items-center gap-3 mt-2 mb-4">
+          <span className="font-mono text-[10px] text-text-muted tabular-nums w-9 text-right flex-shrink-0">
+            {formattedPosition}
+          </span>
+          <div
+            ref={progressRef}
+            onMouseDown={handleProgressMouseDown}
+            onClick={handleProgressClick}
+            className="flex-1 h-[5px] bg-[#1c1c1c] rounded-full relative cursor-pointer group"
+          >
+            <div
+              className="absolute top-0 left-0 h-full bg-accent rounded-full pointer-events-none"
+              style={{ width: `${progressPct}%` }}
+            />
+            <div
+              className="absolute top-1/2 -translate-y-1/2 w-3.5 h-3.5 bg-accent rounded-full opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
+              style={{ left: `${progressPct}%`, marginLeft: '-7px' }}
+            />
+          </div>
+          <span className="font-mono text-[10px] text-text-muted tabular-nums w-9 flex-shrink-0">
+            {formattedDuration}
+          </span>
         </div>
 
         {/* Queue expanded overlay */}
@@ -1074,3 +1112,4 @@ export function VinylPlayerScreen({
     </div>
   );
 }
+
