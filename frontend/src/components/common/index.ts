@@ -3,3 +3,4 @@ export { EmptyState } from './EmptyState';
 export { Toggle } from './Toggle';
 export { ApiErrorBanner } from './ApiErrorBanner';
 export { AudioQualityBadge } from './AudioQualityBadge';
+export { TrackArt } from './TrackArt';
