@@ -36,6 +36,7 @@ def settings_get():
         "library_track_count": lr.get_track_count() if accessible else 0,
         "library_last_synced": rythmx_store.get_setting("library_last_synced"),
         "fetch_enabled": rythmx_store.get_setting("fetch_enabled", "0") == "1",
+        "catalog_primary": config.CATALOG_PRIMARY,
     }
 
 

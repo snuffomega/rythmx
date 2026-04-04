@@ -438,10 +438,7 @@ export function SettingsPage({ toast }: SettingsPageProps) {
   const [auditInlineLoading, setAuditInlineLoading] = useState(false);
   const [auditInlineError, setAuditInlineError] = useState<string | null>(null);
   const [auditInlineSaving, setAuditInlineSaving] = useState(false);
-  const [auditInlineCandidates, setAuditInlineCandidates] = useState<Record<string, {
-    itunes: AuditCandidateItem[];
-    deezer: AuditCandidateItem[];
-  }>>({});
+  const [auditInlineCandidates, setAuditInlineCandidates] = useState<Record<string, AuditCandidateItem[]>>({});
   const [confirmClearHistory, setConfirmClearHistory] = useState(false);
   const [confirmResetDb, setConfirmResetDb] = useState(false);
   const [dangerOpen, setDangerOpen] = useState(false);
@@ -495,6 +492,7 @@ export function SettingsPage({ toast }: SettingsPageProps) {
         if ((res.items?.length ?? 0) < perPage || allItems.length >= total) break;
         page += 1;
       }
+      allItems.sort((a, b) => (Number(b.match_confidence ?? 0) - Number(a.match_confidence ?? 0)));
       setAuditReviewItems(allItems);
       setAuditTotal(total || allItems.length);
       return allItems;
@@ -514,21 +512,19 @@ export function SettingsPage({ toast }: SettingsPageProps) {
     void loadAuditReviewItems();
   };
 
+  const primarySource: 'itunes' | 'deezer' =
+    (settingsStatus?.catalog_primary === 'itunes' ? 'itunes' : 'deezer');
+
   const loadInlineCandidates = async (albumId: string) => {
     setAuditInlineLoading(true);
     setAuditInlineError(null);
     try {
-      const [it, dz] = await Promise.all([
-        libraryBrowseApi.getAuditCandidates({ album_id: albumId, source: 'itunes', limit: 15 }),
-        libraryBrowseApi.getAuditCandidates({ album_id: albumId, source: 'deezer', limit: 15 }),
-      ]);
-      setAuditInlineCandidates(prev => ({
-        ...prev,
-        [albumId]: {
-          itunes: it.candidates ?? [],
-          deezer: dz.candidates ?? [],
-        },
-      }));
+      const res = await libraryBrowseApi.getAuditCandidates({
+        album_id: albumId,
+        source: primarySource,
+        limit: 5,
+      });
+      setAuditInlineCandidates(prev => ({ ...prev, [albumId]: res.candidates ?? [] }));
     } catch (err) {
       setAuditInlineError(err instanceof Error ? err.message : 'Failed to load candidates');
     } finally {
@@ -561,7 +557,6 @@ export function SettingsPage({ toast }: SettingsPageProps) {
 
   const inlineConfirmCandidate = async (
     item: AuditItem,
-    source: 'itunes' | 'deezer',
     candidateId: string,
   ) => {
     setAuditInlineSaving(true);
@@ -570,10 +565,10 @@ export function SettingsPage({ toast }: SettingsPageProps) {
       await libraryBrowseApi.confirmAuditItem({
         entity_type: 'album',
         entity_id: item.album_id,
-        source,
+        source: primarySource,
         confirmed_id: candidateId,
       });
-      toast.success(`${source === 'itunes' ? 'iTunes' : 'Deezer'} match confirmed`);
+      toast.success(`${primarySource === 'itunes' ? 'iTunes' : 'Deezer'} match confirmed`);
       await refreshAuditAfterAction(item.album_id);
     } catch (err) {
       setAuditInlineError(err instanceof Error ? err.message : 'Failed to confirm candidate');
@@ -584,7 +579,6 @@ export function SettingsPage({ toast }: SettingsPageProps) {
 
   const inlineRejectSource = async (
     item: AuditItem,
-    source: 'itunes' | 'deezer',
   ) => {
     setAuditInlineSaving(true);
     setAuditInlineError(null);
@@ -592,9 +586,9 @@ export function SettingsPage({ toast }: SettingsPageProps) {
       await libraryBrowseApi.rejectAuditItem({
         entity_type: 'album',
         entity_id: item.album_id,
-        source,
+        source: primarySource,
       });
-      toast.success(`${source === 'itunes' ? 'iTunes' : 'Deezer'} match rejected`);
+      toast.success(`${primarySource === 'itunes' ? 'iTunes' : 'Deezer'} match rejected`);
       await refreshAuditAfterAction(item.album_id);
     } catch (err) {
       setAuditInlineError(err instanceof Error ? err.message : 'Failed to reject source');
@@ -823,7 +817,13 @@ export function SettingsPage({ toast }: SettingsPageProps) {
 
         {auditTotal > 0 && (
           <div className="pt-2">
-            <div className="flex items-center justify-between gap-3 bg-[#0e0e0e] border border-[#1a1a1a] p-3">
+            <div className="flex items-center gap-3 bg-[#0e0e0e] border border-[#1a1a1a] p-3">
+              <button
+                onClick={openAuditReviewModal}
+                className="btn-secondary text-xs flex-shrink-0"
+              >
+                Review
+              </button>
               <p className="text-xs text-[#666]">
                 <span className="inline-flex items-center gap-1.5 text-amber-500 font-medium">
                   <span className="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block" />
@@ -831,12 +831,6 @@ export function SettingsPage({ toast }: SettingsPageProps) {
                 </span>
                 {' '}— low-confidence matches flagged for manual confirmation.
               </p>
-              <button
-                onClick={openAuditReviewModal}
-                className="btn-secondary text-xs"
-              >
-                Review
-              </button>
             </div>
           </div>
         )}
@@ -880,12 +874,13 @@ export function SettingsPage({ toast }: SettingsPageProps) {
             )}
 
             <div className="flex-1 overflow-y-auto">
-              <div className="grid grid-cols-[1.1fr_1.1fr_90px_120px_170px] gap-3 px-4 py-2 border-b border-[#1a1a1a] sticky top-0 bg-[#101010] z-10">
+              <div className="grid grid-cols-[1fr_1.2fr_70px_90px_170px] gap-3 px-4 py-2 border-b border-[#1a1a1a] sticky top-0 bg-[#101010] z-10">
                 <span className="font-mono text-[10px] text-text-muted uppercase tracking-wider">Artist</span>
                 <span className="font-mono text-[10px] text-text-muted uppercase tracking-wider">Album</span>
+                <span className="font-mono text-[10px] text-text-muted uppercase tracking-wider">Year</span>
                 <span className="font-mono text-[10px] text-text-muted uppercase tracking-wider">Confidence</span>
                 <span className="font-mono text-[10px] text-text-muted uppercase tracking-wider">IDs</span>
-                <span className="font-mono text-[10px] text-text-muted uppercase tracking-wider text-right">Action</span>
+                <span className="font-mono text-[10px] text-text-muted uppercase tracking-wider">Action</span>
               </div>
 
               {auditReviewLoading && (
@@ -904,16 +899,17 @@ export function SettingsPage({ toast }: SettingsPageProps) {
               {!auditReviewLoading && auditReviewItems.map(item => {
                 const ids = `${item.itunes_album_id ? 'iT' : ''}${item.itunes_album_id && item.deezer_id ? ' + ' : ''}${item.deezer_id ? 'DZ' : ''}` || 'none';
                 const isOpen = auditInlineAlbumId === item.album_id;
-                const candidates = auditInlineCandidates[item.album_id] ?? { itunes: [], deezer: [] };
+                const candidates = auditInlineCandidates[item.album_id] ?? [];
                 const manualOverrides = item.manual_overrides ?? {};
                 const lockedSources = Object.entries(manualOverrides).filter(([, v]) => Boolean(v?.locked));
                 const hasManualLock = lockedSources.length > 0;
                 const manualSummary = lockedSources.map(([k, v]) => `${k}:${v.state}`).join(', ');
                 return (
                   <div key={`${item.album_id}:${item.artist_id}`} className="border-b border-[#151515]">
-                    <div className="grid grid-cols-[1.1fr_1.1fr_90px_120px_170px] gap-3 px-4 py-2 items-center">
+                    <div className="grid grid-cols-[1fr_1.2fr_70px_90px_170px] gap-3 px-4 py-2 items-center">
                       <span className="text-xs text-text-secondary truncate">{item.artist_name}</span>
                       <span className="text-xs text-text-primary truncate">{item.album_title}</span>
+                      <span className="text-xs font-mono text-text-muted">{item.album_year ?? '-'}</span>
                       <div className="flex items-center gap-1.5 min-w-0">
                         <span className="text-xs font-mono text-amber-400">{Math.round(item.match_confidence ?? 0)}%</span>
                         {hasManualLock && (
@@ -926,7 +922,7 @@ export function SettingsPage({ toast }: SettingsPageProps) {
                         )}
                       </div>
                       <span className="text-[11px] font-mono text-text-muted">{ids}</span>
-                      <div className="text-right flex items-center justify-end gap-2">
+                      <div className="flex items-center gap-2">
                         <button
                           onClick={() => toggleInlineReview(item.album_id)}
                           className="inline-flex btn-secondary text-xs"
@@ -954,72 +950,64 @@ export function SettingsPage({ toast }: SettingsPageProps) {
                             Loading candidates...
                           </div>
                         ) : (
-                          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                            {(['itunes', 'deezer'] as const).map(source => {
-                              const sourceLabel = source === 'itunes' ? 'iTunes' : 'Deezer';
-                              const currentId = source === 'itunes' ? item.itunes_album_id : item.deezer_id;
-                              const sourceManual = item.manual_overrides?.[source];
-                              return (
-                                <div key={`${item.album_id}:${source}`} className="border border-[#202020] bg-[#0f0f0f] p-2">
-                                  <div className="flex items-center justify-between gap-2 mb-2">
-                                    <div className="flex items-center gap-1.5 min-w-0">
-                                      <span className="text-[11px] font-mono text-text-secondary uppercase tracking-wider">
-                                        {sourceLabel}
-                                      </span>
-                                      {sourceManual?.locked && (
-                                        <span className="text-[9px] font-mono text-green-400 border border-green-400/30 px-1 py-0.5">
-                                          {sourceManual.state}
-                                        </span>
-                                      )}
+                          <div className="border border-[#202020] bg-[#0f0f0f] p-2">
+                            <div className="flex items-center justify-between gap-2 mb-2">
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <span className="text-[11px] font-mono text-text-secondary uppercase tracking-wider">
+                                  {primarySource === 'itunes' ? 'iTunes' : 'Deezer'} (primary)
+                                </span>
+                                {item.manual_overrides?.[primarySource]?.locked && (
+                                  <span className="text-[9px] font-mono text-green-400 border border-green-400/30 px-1 py-0.5">
+                                    {item.manual_overrides[primarySource].state}
+                                  </span>
+                                )}
+                              </div>
+                              <button
+                                onClick={() => void inlineRejectSource(item)}
+                                disabled={auditInlineSaving}
+                                className="btn-secondary text-[10px] disabled:opacity-40"
+                              >
+                                Reject current
+                              </button>
+                            </div>
+                            <p className="text-[10px] font-mono text-text-muted mb-2 truncate">
+                              current: {primarySource === 'itunes' ? (item.itunes_album_id || '(none)') : (item.deezer_id || '(none)')}
+                            </p>
+                            <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                              {candidates.length === 0 && (
+                                <p className="text-xs text-text-muted">No candidates</p>
+                              )}
+                              {candidates.map(c => {
+                                const currentId = primarySource === 'itunes' ? item.itunes_album_id : item.deezer_id;
+                                const isCurrent = !!currentId && String(currentId) === String(c.candidate_id);
+                                return (
+                                  <div key={`${primarySource}:${c.candidate_id}`} className="border border-[#242424] bg-[#111] px-2 py-1.5">
+                                    <div className="flex items-start justify-between gap-2">
+                                      <div className="min-w-0">
+                                        <p className="text-xs text-text-primary truncate">{c.candidate_title}</p>
+                                        <p className="text-[10px] font-mono text-text-muted">
+                                          {Math.round((c.candidate_score ?? 0) * 100)}% • tracks {c.track_count ?? '-'}
+                                        </p>
+                                      </div>
+                                      <div className="flex items-center gap-1">
+                                        {isCurrent && (
+                                          <span className="text-[9px] font-mono text-green-400 border border-green-400/30 px-1 py-0.5">
+                                            current
+                                          </span>
+                                        )}
+                                        <button
+                                          onClick={() => void inlineConfirmCandidate(item, c.candidate_id)}
+                                          disabled={auditInlineSaving}
+                                          className="px-1.5 py-1 text-[10px] bg-accent text-black hover:bg-accent/80 transition-colors disabled:opacity-40"
+                                        >
+                                          Confirm
+                                        </button>
+                                      </div>
                                     </div>
-                                    <button
-                                      onClick={() => void inlineRejectSource(item, source)}
-                                      disabled={auditInlineSaving}
-                                      className="btn-secondary text-[10px] disabled:opacity-40"
-                                    >
-                                      Reject current
-                                    </button>
                                   </div>
-                                  <p className="text-[10px] font-mono text-text-muted mb-2 truncate">
-                                    current: {currentId || '(none)'}
-                                  </p>
-                                  <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
-                                    {candidates[source].length === 0 && (
-                                      <p className="text-xs text-text-muted">No candidates</p>
-                                    )}
-                                    {candidates[source].map(c => {
-                                      const isCurrent = !!currentId && String(currentId) === String(c.candidate_id);
-                                      return (
-                                        <div key={`${source}:${c.candidate_id}`} className="border border-[#242424] bg-[#111] px-2 py-1.5">
-                                          <div className="flex items-start justify-between gap-2">
-                                            <div className="min-w-0">
-                                              <p className="text-xs text-text-primary truncate">{c.candidate_title}</p>
-                                              <p className="text-[10px] font-mono text-text-muted">
-                                                {Math.round((c.candidate_score ?? 0) * 100)}% • tracks {c.track_count ?? '-'}
-                                              </p>
-                                            </div>
-                                            <div className="flex items-center gap-1">
-                                              {isCurrent && (
-                                                <span className="text-[9px] font-mono text-green-400 border border-green-400/30 px-1 py-0.5">
-                                                  current
-                                                </span>
-                                              )}
-                                              <button
-                                                onClick={() => void inlineConfirmCandidate(item, source, c.candidate_id)}
-                                                disabled={auditInlineSaving}
-                                                className="px-1.5 py-1 text-[10px] bg-accent text-black hover:bg-accent/80 transition-colors disabled:opacity-40"
-                                              >
-                                                Confirm
-                                              </button>
-                                            </div>
-                                          </div>
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                </div>
-                              );
-                            })}
+                                );
+                              })}
+                            </div>
                           </div>
                         )}
                       </div>

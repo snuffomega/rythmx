@@ -256,7 +256,7 @@ def library_audit(
         rows = conn.execute(
             """
             SELECT ar.id AS artist_id, ar.name AS artist_name,
-                   la.id AS album_id, la.title AS album_title,
+                   la.id AS album_id, la.title AS album_title, la.year AS album_year,
                    la.match_confidence, la.needs_verification,
                    la.itunes_album_id, la.deezer_id
             FROM lib_artists ar
@@ -314,6 +314,7 @@ def library_audit(
             "artist_name": r["artist_name"],
             "album_id": r["album_id"],
             "album_title": r["album_title"],
+            "album_year": r["album_year"],
             "match_confidence": r["match_confidence"],
             "needs_verification": bool(r["needs_verification"]),
             "itunes_album_id": r["itunes_album_id"],

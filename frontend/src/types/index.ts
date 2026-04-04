@@ -161,6 +161,7 @@ export interface Settings {
   fanart_configured?: boolean;
   library_platform: LibraryPlatform;
   fetch_enabled?: boolean;
+  catalog_primary?: 'deezer' | 'itunes' | string;
 }
 
 export interface Toast {
@@ -343,6 +344,7 @@ export interface AuditItem {
   artist_name: string;
   album_id: string;
   album_title: string;
+  album_year?: number | null;
   match_confidence: number | null;
   needs_verification: boolean;
   itunes_album_id: string | null;
