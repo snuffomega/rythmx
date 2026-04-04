@@ -33,6 +33,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from app import config
 from app.db import rythmx_store
+from app.services import artwork_store
 from app.services.api_orchestrator import rate_limiter
 
 logger = logging.getLogger(__name__)
@@ -501,7 +502,27 @@ def _fetch_and_cache(entity_type: str, name: str, artist: str) -> None:
             url = _extract_art(data)
 
         if url:
-            rythmx_store.set_image_cache(entity_type, key, url)
+            content_hash: str | None = None
+            local_path: str | None = None
+            try:
+                resp = requests.get(url, timeout=10)
+                resp.raise_for_status()
+                if resp.content:
+                    content_hash = artwork_store.ingest(resp.content)
+                    local_path = str(artwork_store.get_original_path(content_hash))
+            except Exception as exc:
+                logger.warning("L3 ingest failed for %s/%s: %s", entity_type, name, exc)
+
+            if content_hash:
+                rythmx_store.set_image_cache_entry(
+                    entity_type, key, url,
+                    local_path=local_path,
+                    content_hash=content_hash,
+                    artwork_source="runtime",
+                )
+            else:
+                rythmx_store.set_image_cache(entity_type, key, url)
+
             # Promote to L1 so subsequent requests skip SQLite entirely
             _mem_cache_put(key, url, time.time())
         logger.debug("Image cached: [%s] %s — %s", entity_type, name, url[:60] if url else "(none)")

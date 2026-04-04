@@ -3,14 +3,13 @@
  */
 import {
   Play, Pause, SkipBack, SkipForward,
-  Volume2, Repeat, Repeat1, Shuffle, List, Maximize2, Disc, Star, X, MoreHorizontal, Trash2, GripVertical,
+  Volume2, Repeat, Repeat1, Shuffle, List, Maximize2, Star, X, MoreHorizontal, Trash2, GripVertical,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { usePlayerStore } from '../stores/usePlayerStore';
-import { useImage } from '../hooks/useImage';
+import { TrackArt } from './common';
 import { libraryBrowseApi } from '../services/api';
-import { getImageUrl } from '../utils/imageUrl';
 
 interface PlayerBarProps {
   isPlaying: boolean;
@@ -18,29 +17,6 @@ interface PlayerBarProps {
   onExpand: () => void;
   onSeek: (seconds: number) => void;
   onVolumeChange: (vol: number) => void;
-}
-
-function TrackArt({
-  thumbUrl,
-  thumbHash,
-  title,
-  artist,
-}: {
-  thumbUrl: string | null;
-  thumbHash?: string | null;
-  title: string;
-  artist: string;
-}) {
-  const resolved = useImage('album', title, artist);
-  const src = thumbUrl
-    ? getImageUrl(thumbUrl, thumbHash ?? null)
-    : (resolved ? getImageUrl(resolved) : null);
-  if (src) return <img src={src} alt="" className="w-16 h-16 object-cover rounded-sm flex-shrink-0" />;
-  return (
-    <div className="w-16 h-16 bg-[#1a1a1a] rounded-sm flex-shrink-0 flex items-center justify-center border border-[#222]">
-      <Disc size={24} className="text-text-muted" />
-    </div>
-  );
 }
 
 function formatTrackDuration(seconds: number | null | undefined): string {
@@ -255,6 +231,7 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
               thumbHash={currentTrack?.thumb_hash ?? null}
               title={currentTrack?.album ?? ''}
               artist={currentTrack?.artist ?? ''}
+              size="sm"
             />
           </button>
           <div className="min-w-0 flex-1">

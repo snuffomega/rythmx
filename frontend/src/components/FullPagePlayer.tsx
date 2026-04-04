@@ -13,10 +13,8 @@ import { useNavigate } from '@tanstack/react-router';
 import { usePlayerStore } from '../stores/usePlayerStore';
 // isPlaying is still a prop here (owned by __root → useAudioEngine) but
 // repeat / shuffle / showVinyl are pure store actions, read directly.
-import { AudioQualityBadge } from './common';
-import { useImage } from '../hooks/useImage';
+import { AudioQualityBadge, TrackArt } from './common';
 import { libraryPlaylistsApi } from '../services/api';
-import { getImageUrl } from '../utils/imageUrl';
 import { useToastStore } from '../stores/useToastStore';
 import type { LibPlaylist } from '../types';
 
@@ -26,29 +24,6 @@ interface FullPagePlayerProps {
   onMinimize: () => void;
   onSeek: (seconds: number) => void;
   onVolumeChange: (vol: number) => void;
-}
-
-function TrackArt({
-  thumbUrl,
-  thumbHash,
-  title,
-  artist,
-}: {
-  thumbUrl: string | null;
-  thumbHash?: string | null;
-  title: string;
-  artist: string;
-}) {
-  const resolved = useImage('album', title, artist);
-  const src = thumbUrl
-    ? getImageUrl(thumbUrl, thumbHash ?? null)
-    : (resolved ? getImageUrl(resolved) : null);
-  if (src) return <img src={src} alt="" className="w-full max-w-[400px] aspect-square object-cover rounded border border-[#222]" />;
-  return (
-    <div className="w-full max-w-[400px] aspect-square bg-[#1a1a1a] rounded flex items-center justify-center border border-[#222]">
-      <Disc size={80} className="text-[#333]" />
-    </div>
-  );
 }
 
 export function FullPagePlayer({ isPlaying, onPlayPause, onMinimize, onSeek, onVolumeChange }: FullPagePlayerProps) {

@@ -23,11 +23,9 @@ import {
   ChevronDown, List, ListPlus, Volume2, X, Maximize2, Minimize2, MoreHorizontal, Trash2, GripVertical,
 } from 'lucide-react';
 import { useNavigate } from '@tanstack/react-router';
-import { usePlayerStore, type PlayerTrack } from '../stores/usePlayerStore';
-import { useImage } from '../hooks/useImage';
-import { AudioQualityBadge } from './common';
+import { usePlayerStore } from '../stores/usePlayerStore';
+import { AudioQualityBadge, TrackArt } from './common';
 import { libraryBrowseApi, libraryPlaylistsApi } from '../services/api';
-import { getImageUrl } from '../utils/imageUrl';
 import { useToastStore } from '../stores/useToastStore';
 import type { LibPlaylist } from '../types';
 
@@ -52,20 +50,6 @@ function Waveform() {
           style={{ width: '2px', height: `${Math.min(h, 14)}px`, background: 'rgba(212,245,60,0.20)' }}
         />
       ))}
-    </div>
-  );
-}
-
-// ── Art card — useImage inside so key remount refreshes it on track change ───
-function ArtCard({ track, size }: { track: PlayerTrack | null; size: 'sm' | 'lg' }) {
-  const resolved = useImage('album', track?.album ?? '', track?.artist ?? '');
-  const src = track?.thumb_url
-    ? getImageUrl(track.thumb_url, track.thumb_hash ?? null)
-    : (resolved ? getImageUrl(resolved) : null);
-  if (src) return <img src={src} alt={track?.album ?? ''} className="w-full h-full object-cover" draggable={false} />;
-  return (
-    <div className="w-full h-full bg-[#0f0f0f] flex items-center justify-center">
-      <Disc size={size === 'lg' ? 48 : 18} className="text-[#252525]" />
     </div>
   );
 }
@@ -444,7 +428,16 @@ export function VinylPlayerScreen({
                 transition: 'opacity 0.24s ease-out, transform 0.24s ease-out',
               }}
             >
-              <ArtCard key={prevTrackItem?.id ?? 'empty-prev'} track={prevTrackItem} size="sm" />
+              <TrackArt
+                key={prevTrackItem?.id ?? 'empty-prev'}
+                thumbUrl={prevTrackItem?.thumb_url ?? null}
+                thumbHash={prevTrackItem?.thumb_hash ?? null}
+                title={prevTrackItem?.album ?? ''}
+                artist={prevTrackItem?.artist ?? ''}
+                size="fill"
+                discSize={18}
+                draggable={false}
+              />
             </button>
 
             {/* Current — LP sleeve, dominant */}
@@ -459,7 +452,16 @@ export function VinylPlayerScreen({
                 transition: 'opacity 0.24s ease-out, transform 0.24s ease-out',
               }}
             >
-              <ArtCard key={currentTrack?.id ?? 'empty-curr'} track={currentTrack} size="lg" />
+              <TrackArt
+                key={currentTrack?.id ?? 'empty-curr'}
+                thumbUrl={currentTrack?.thumb_url ?? null}
+                thumbHash={currentTrack?.thumb_hash ?? null}
+                title={currentTrack?.album ?? ''}
+                artist={currentTrack?.artist ?? ''}
+                size="fill"
+                discSize={48}
+                draggable={false}
+              />
               <div
                 className="absolute inset-x-0 top-0 h-px pointer-events-none"
                 style={{ background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.12) 50%, transparent)' }}
@@ -482,7 +484,16 @@ export function VinylPlayerScreen({
                 transition: 'opacity 0.24s ease-out, transform 0.24s ease-out',
               }}
             >
-              <ArtCard key={nextTrackItem?.id ?? 'empty-next'} track={nextTrackItem} size="sm" />
+              <TrackArt
+                key={nextTrackItem?.id ?? 'empty-next'}
+                thumbUrl={nextTrackItem?.thumb_url ?? null}
+                thumbHash={nextTrackItem?.thumb_hash ?? null}
+                title={nextTrackItem?.album ?? ''}
+                artist={nextTrackItem?.artist ?? ''}
+                size="fill"
+                discSize={18}
+                draggable={false}
+              />
             </button>
 
           </div>
