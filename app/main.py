@@ -199,18 +199,29 @@ async def lifespan(app: FastAPI):
     from app.services.artwork_store import ensure_artwork_dirs
     ensure_artwork_dirs()
 
-    # --- Repair stale artwork hashes on startup (hash exists, blob missing) ---
-    try:
-        from app.services.enrichment.artwork_repair import reset_missing_content_hashes
-        repair_result = reset_missing_content_hashes(entity_types=("album", "artist"))
-        if repair_result.get("reset", 0):
-            logger.info(
-                "Startup artwork hash repair: scanned=%d reset=%d",
-                repair_result.get("scanned", 0),
-                repair_result.get("reset", 0),
-            )
-    except Exception as exc:
-        logger.warning("Startup artwork hash repair skipped (non-fatal): %s", exc)
+    # --- Repair stale artwork hashes (background, non-blocking) ---
+    # Runs in a daemon thread so startup is not blocked by filesystem stat calls.
+    # Capped at 500 rows per boot — full repair is a future scheduled maintenance task.
+    import threading as _threading_repair
+
+    def _artwork_hash_repair() -> None:
+        try:
+            from app.services.enrichment.artwork_repair import reset_missing_content_hashes
+            result = reset_missing_content_hashes(entity_types=("album", "artist"), limit=500)
+            if result.get("reset", 0):
+                logger.info(
+                    "Artwork hash repair (background): scanned=%d reset=%d",
+                    result.get("scanned", 0),
+                    result.get("reset", 0),
+                )
+        except Exception as exc:
+            logger.warning("Background artwork hash repair failed (non-fatal): %s", exc)
+
+    _threading_repair.Thread(
+        target=_artwork_hash_repair,
+        daemon=True,
+        name="artwork-hash-repair",
+    ).start()
 
     # --- Ensure API key exists (auto-generate on first boot) ---
     if not rythmx_store.get_api_key():

@@ -15,9 +15,18 @@ from app.services.artwork_store import get_original_path
 logger = logging.getLogger(__name__)
 
 
-def reset_missing_content_hashes(entity_types: tuple[str, ...] = ("album", "artist")) -> dict:
+def reset_missing_content_hashes(
+    entity_types: tuple[str, ...] = ("album", "artist"),
+    limit: int = 500,
+) -> dict:
     """
     Clear stale content_hash/local_path rows for the requested image_cache entity types.
+
+    Args:
+      entity_types: which entity types to scan (album, artist).
+      limit: cap on rows scanned per call. 0 = unlimited (use only for manual/admin runs).
+             Default 500 keeps startup overhead sub-second on large libraries.
+             Rows are ordered by last_accessed ASC so oldest-stale entries are repaired first.
 
     Returns:
       {
@@ -26,6 +35,9 @@ def reset_missing_content_hashes(entity_types: tuple[str, ...] = ("album", "arti
         "scanned_by_type": {"album": int, "artist": int},
         "reset_by_type": {"album": int, "artist": int},
       }
+
+    Note: This function is intentionally capped for startup use. Full library repair
+    should be triggered via the scheduled maintenance task (future: POST /maintenance/artwork-repair).
     """
     requested = tuple(t for t in entity_types if t in ("album", "artist"))
     if not requested:
@@ -36,7 +48,17 @@ def reset_missing_content_hashes(entity_types: tuple[str, ...] = ("album", "arti
     reset_by_type = {t: 0 for t in requested}
     stale_rows: list[tuple[str, str]] = []
 
+    limit_clause = f"LIMIT {limit}" if limit > 0 else ""
+
     with _connect() as conn:
+        # Safety guard: skip entirely if image_cache is empty (e.g. pre-first-sync).
+        row_count = conn.execute(
+            "SELECT COUNT(*) FROM image_cache WHERE entity_type IN ({}) AND content_hash IS NOT NULL AND content_hash != ''".format(placeholders),
+            requested,
+        ).fetchone()[0]
+        if row_count == 0:
+            return {"scanned": 0, "reset": 0, "scanned_by_type": scanned_by_type, "reset_by_type": reset_by_type}
+
         rows = conn.execute(
             f"""
             SELECT entity_type, entity_key, content_hash
@@ -44,6 +66,8 @@ def reset_missing_content_hashes(entity_types: tuple[str, ...] = ("album", "arti
             WHERE entity_type IN ({placeholders})
               AND content_hash IS NOT NULL
               AND content_hash != ''
+            ORDER BY last_accessed ASC
+            {limit_clause}
             """,
             requested,
         ).fetchall()
