@@ -121,9 +121,42 @@ export interface ForgeDiscoveryConfig {
 export interface ForgeDiscoveryResult {
   artist: string;
   image?: string;
+  track_name?: string;
+  album_name?: string;
+  album_cover_url?: string;
+  deezer_artist_id?: string;
+  deezer_track_id?: string;
+  track_id?: string | null;
+  is_owned?: boolean;
+  hop?: number;
+  rank_position?: number;
+  band?: 'strict' | 'balanced' | 'adventurous' | string;
   reason?: string;
   similarity?: number | null;
   tags?: string[];
+}
+
+export interface ForgeDiscoveryRunResponse {
+  artists: ForgeDiscoveryResult[];
+  artists_found: number;
+  run_id?: string;
+  seed_artists_count?: number;
+  candidate_artist_count?: number;
+  resolved_artist_count?: number;
+  target_tracks?: number;
+  built_tracks?: number;
+  owned_count?: number;
+  missing_count?: number;
+  include_missing?: boolean;
+  closeness?: number;
+  bands?: string[];
+  wildcard?: boolean;
+  skipped_no_track?: number;
+  skipped_no_match_build_mode?: number;
+  avoid_repeat_tracks?: boolean;
+  track_repeat_cooldown_days?: number;
+  exclude_owned_artists?: boolean;
+  cache_ttl_days?: number;
 }
 
 // Backward-compatible aliases while old UI modules are being renamed.

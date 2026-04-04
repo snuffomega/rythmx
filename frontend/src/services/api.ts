@@ -12,6 +12,7 @@ import type {
   ReleaseKind,
   ForgeDiscoveryConfig,
   ForgeDiscoveryResult,
+  ForgeDiscoveryRunResponse,
   LibArtist,
   LibAlbum,
   LibTrack,
@@ -242,7 +243,7 @@ export const forgeDiscoveryApi = {
       body: JSON.stringify(config),
     }),
   run: (config: Partial<ForgeDiscoveryConfig>) =>
-    request<{ status: string; artists: ForgeDiscoveryResult[]; artists_found: number }>(
+    request<{ status: string } & ForgeDiscoveryRunResponse>(
       '/forge/discovery/run',
       {
         method: 'POST',

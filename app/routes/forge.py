@@ -415,11 +415,12 @@ def discovery_run(data: Optional[dict[str, Any]] = Body(default=None)):
         logger.error("forge/discovery/run: pipeline error: %s", exc, exc_info=True)
         return _error(str(exc), status_code=500, code="FORGE_DISCOVERY_FAILED")
 
-    return {
-        "status": "ok",
-        "artists_found": summary.get("artists_found", 0),
-        "artists": summary.get("artists", []),
-    }
+    payload: dict[str, Any] = {"status": "ok"}
+    if isinstance(summary, dict):
+        payload.update(summary)
+    payload["artists_found"] = int(payload.get("artists_found") or len(payload.get("artists") or []))
+    payload["artists"] = payload.get("artists") or []
+    return payload
 
 
 @router.get("/forge/discovery/results")
