@@ -183,6 +183,43 @@ def get_deezer_related_artists(deezer_artist_id: str, limit: int = 10) -> list[d
     return results
 
 
+def get_deezer_artist_top_tracks(deezer_artist_id: str, limit: int = 50) -> list[dict]:
+    """
+    Fetch top tracks for a Deezer artist.
+
+    Deezer's /artist/{id}/top response is already popularity-ordered. We keep a
+    stable 1-based rank_position so higher-level discovery logic can apply
+    rank-band rules consistently across runs.
+    """
+    safe_limit = max(1, min(int(limit or 50), 100))
+    data = _deezer_get(f"/artist/{deezer_artist_id}/top", {"limit": safe_limit})
+    if not data or not data.get("data"):
+        return []
+
+    results: list[dict] = []
+    for i, track in enumerate(data["data"], start=1):
+        tid = str(track.get("id") or "").strip()
+        title = str(track.get("title") or "").strip()
+        if not tid or not title:
+            continue
+
+        results.append(
+            {
+                "id": tid,
+                "title": title,
+                "rank_position": i,
+                "deezer_rank": int(track.get("rank") or 0),
+                "preview_url": track.get("preview") or "",
+                "artist_name": (track.get("artist") or {}).get("name") or "",
+                "album_title": (track.get("album") or {}).get("title") or "",
+                "album_cover_url": (track.get("album") or {}).get("cover_medium")
+                or (track.get("album") or {}).get("cover")
+                or "",
+            }
+        )
+    return results
+
+
 def get_album_tracks_deezer(deezer_album_id: str) -> list[dict]:
     """Fetch track listing for a Deezer album by album ID."""
     data = _deezer_get(f"/album/{deezer_album_id}/tracks", {"limit": 200})

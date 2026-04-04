@@ -28,6 +28,7 @@ from app.clients.music.deezer import (
     get_deezer_album_info,
     get_deezer_artist_info,
     get_deezer_related_artists,
+    get_deezer_artist_top_tracks,
     get_album_tracks_deezer,
 )
 from app.clients.music.musicbrainz import (
@@ -66,6 +67,7 @@ __all__ = [
     "get_deezer_album_info",
     "get_deezer_artist_info",
     "get_deezer_related_artists",
+    "get_deezer_artist_top_tracks",
     "get_album_tracks_itunes",
     "get_album_tracks_deezer",
     "_mb_get",
@@ -78,4 +80,3 @@ __all__ = [
     "get_new_releases_for_artist",
     "get_active_provider",
 ]
-
