@@ -652,10 +652,11 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
   const handlePlayOwnedAlbum = useCallback(async (albumItem: LibAlbum) => {
     try {
       const res = await libraryBrowseApi.getAlbum(albumItem.id);
+      const fallbackArtistName = albumItem.artist_name?.trim() || data?.artist.name || '';
       const queueTracks: PlayerTrack[] = res.tracks.map(t => ({
         id: t.id,
         title: t.title,
-        artist: albumItem.artist_name,
+        artist: fallbackArtistName,
         album: albumItem.title,
         duration: t.duration,
         thumb_url: albumItem.thumb_url ?? null,
@@ -674,7 +675,7 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
     } catch (err) {
       toastError(err instanceof Error ? err.message : 'Failed to play album');
     }
-  }, [playQueue, toastError]);
+  }, [data?.artist.name, playQueue, toastError]);
 
   const handlePlaySimilar = useCallback(async (similarArtist: SimilarArtist) => {
     if (!similarArtist.library_id) return;
