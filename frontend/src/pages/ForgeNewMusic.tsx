@@ -551,7 +551,7 @@ export function ForgeNewMusic() {
 
 function ReleaseCard({ release }: { release: DiscoveredRelease }) {
   return (
-    <div className={`group flex flex-col gap-0 ${!release.in_library ? 'opacity-60' : ''}`}>
+    <div className="group flex flex-col gap-0">
       <div className="relative overflow-hidden bg-[#111] aspect-square">
         {release.cover_url ? (
           <img
