@@ -22,6 +22,7 @@ from app.db.rythmx_store import _connect
 from app.services.api_orchestrator import rate_limiter
 from app.services.artwork_store import get_original_path, get_thumb, get_thumb_cache_path, ingest
 from app.services.enrichment._base import run_enrichment_loop, write_enrichment_meta
+from app.services.local_path_resolver import resolve_library_file_path
 
 logger = logging.getLogger(__name__)
 
@@ -194,16 +195,29 @@ def _extract_sidecar_art(file_path: str) -> bytes | None:
     return None
 
 
-def _extract_local_album_art(source_platform: str, sample_file_path: str | None) -> tuple[bytes | None, str]:
+def _extract_local_album_art(
+    source_platform: str,
+    sample_file_path: str | None,
+    *,
+    artist_name: str | None = None,
+    album_title: str | None = None,
+) -> tuple[bytes | None, str]:
     """
     Return (payload, source) from local files for navidrome-backed albums.
     """
     if source_platform != "navidrome" or not config.MUSIC_DIR or not sample_file_path:
         return None, ""
 
-    abs_path = os.path.join(config.MUSIC_DIR, str(sample_file_path).lstrip("/\\"))
-    if not os.path.isfile(abs_path):
+    abs_path, mode = resolve_library_file_path(
+        config.MUSIC_DIR,
+        str(sample_file_path),
+        artist_name=artist_name,
+        album_title=album_title,
+    )
+    if not abs_path:
         return None, ""
+    if mode == "fallback":
+        logger.debug("art_album: path fallback resolved '%s' (%s)", sample_file_path, album_title or "")
 
     payload = _extract_embedded_art(abs_path)
     if payload:
@@ -291,7 +305,12 @@ def _process_item(conn, row):
 
     # Priority 1: local file artwork for navidrome-backed libraries.
     # Order inside tier-1: embedded APIC/PICTURE -> sidecar cover files.
-    payload, source = _extract_local_album_art(str(source_platform or ""), sample_file_path)
+    payload, source = _extract_local_album_art(
+        str(source_platform or ""),
+        sample_file_path,
+        artist_name=artist_name,
+        album_title=album_title,
+    )
 
     # Priority 2: Deezer cover URL from Stage 2a promotion.
     if payload is None and thumb_url_deezer:
@@ -379,7 +398,12 @@ def hydrate_local_album_art_after_sync(batch_size: int = 2000) -> dict:
             sample_file_path = row["sample_file_path"]
             thumb_url_deezer = row["thumb_url_deezer"]
 
-            payload, source = _extract_local_album_art(source_platform, sample_file_path)
+            payload, source = _extract_local_album_art(
+                source_platform,
+                sample_file_path,
+                artist_name=str(row["artist_name"] or ""),
+                album_title=str(row["title"] or ""),
+            )
             if not payload:
                 skipped += 1
                 continue

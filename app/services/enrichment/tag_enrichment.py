@@ -5,7 +5,8 @@ Targets lib_tracks WHERE codec IS NULL AND file_path IS NOT NULL
   AND source_platform = 'navidrome'.
 
 file_path values from Navidrome are relative paths (e.g. '311/311/01-01 - Down.flac').
-The absolute path is resolved as:  MUSIC_DIR / file_path
+Absolute path resolution is exact-first with a safe fallback resolver when
+folder naming drifts (for example "Artist/Album" vs "Artist/Artist - Album").
 
 Skipped entirely (returns immediately with zeros) when MUSIC_DIR is not configured.
 Plex file paths are never read — they may not be accessible from the Rythmx container.
@@ -20,6 +21,7 @@ import logging
 import os
 
 from app.db.rythmx_store import _connect
+from app.services.local_path_resolver import resolve_library_file_path
 
 logger = logging.getLogger(__name__)
 
@@ -210,17 +212,23 @@ def enrich_tags(batch_size: int = 50, stop_event=None, on_progress=None) -> dict
     processed = 0
     skipped = 0
     errors = 0
+    fallback_resolved = 0
     missing_by_dir: dict[str, int] = {}
 
     try:
         with _connect() as conn:
             rows = conn.execute(
                 """
-                SELECT id, file_path
-                FROM lib_tracks
-                WHERE codec IS NULL
-                  AND file_path IS NOT NULL
-                  AND source_platform = 'navidrome'
+                SELECT t.id,
+                       t.file_path,
+                       ar.name AS artist_name,
+                       al.title AS album_title
+                FROM lib_tracks t
+                LEFT JOIN lib_albums al ON al.id = t.album_id
+                LEFT JOIN lib_artists ar ON ar.id = t.artist_id
+                WHERE t.codec IS NULL
+                  AND t.file_path IS NOT NULL
+                  AND t.source_platform = 'navidrome'
                 LIMIT ?
                 """,
                 (batch_size,),
@@ -243,21 +251,31 @@ def enrich_tags(batch_size: int = 50, stop_event=None, on_progress=None) -> dict
 
         track_id: str = row["id"]
         rel_path: str = row["file_path"]
+        artist_name: str = str(row["artist_name"] or "")
+        album_title: str = str(row["album_title"] or "")
 
-        # Resolve absolute path: MUSIC_DIR / relative_file_path
-        abs_path = os.path.join(music_dir, rel_path)
+        abs_path, mode = resolve_library_file_path(
+            music_dir,
+            rel_path,
+            artist_name=artist_name,
+            album_title=album_title,
+        )
 
-        if not os.path.isfile(abs_path):
-            missing_dir = os.path.dirname(abs_path) or music_dir
+        if not abs_path:
+            expected_abs = os.path.join(music_dir, str(rel_path).replace("\\", "/").lstrip("/"))
+            missing_dir = os.path.dirname(expected_abs) or music_dir
             missing_by_dir[missing_dir] = missing_by_dir.get(missing_dir, 0) + 1
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug(
-                    "tag_enrichment: file not found for track %s: %s", track_id, abs_path
+                    "tag_enrichment: file not found for track %s: %s", track_id, expected_abs
                 )
             skipped += 1
             if on_progress:
                 on_progress(processed, skipped, errors, len(rows))
             continue
+
+        if mode == "fallback":
+            fallback_resolved += 1
 
         tags = _extract_tags(abs_path)
         if tags is None:
@@ -276,7 +294,6 @@ def enrich_tags(batch_size: int = 50, stop_event=None, on_progress=None) -> dict
             track_id,
         ))
 
-        # Commit when batch is full
         if len(batch) >= batch_size:
             _flush_batch(batch)
             processed += len(batch)
@@ -284,7 +301,6 @@ def enrich_tags(batch_size: int = 50, stop_event=None, on_progress=None) -> dict
                 on_progress(processed, skipped, errors, len(rows))
             batch = []
 
-    # Flush remainder
     if batch:
         _flush_batch(batch)
         processed += len(batch)
@@ -314,6 +330,9 @@ def enrich_tags(batch_size: int = 50, stop_event=None, on_progress=None) -> dict
         "tag_enrichment: processed=%d skipped=%d errors=%d",
         processed, skipped, errors,
     )
+    if fallback_resolved:
+        logger.info("tag_enrichment: path fallback resolved %d track files", fallback_resolved)
+
     return {"processed": processed, "skipped": skipped, "errors": errors}
 
 
