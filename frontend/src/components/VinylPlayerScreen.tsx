@@ -12,8 +12,9 @@
  *   scrobble bar
  *   button row: [misc left] [Prev · Play · Next center] [volume · queue right]
  *
- * Artwork fix: useImage lives inside ArtCard; parent passes key={track?.id}
- * so React remounts on skip → fresh image every track change.
+ * Artwork: TrackArt (from ./common) owns useImage internally.
+ * Each carousel slot passes key={track?.id} so React remounts TrackArt
+ * on track change — ensuring a fresh image fetch every skip.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
