@@ -785,6 +785,11 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
 
   const { artist, albums, top_tracks, missing_albums = [] } = data;
   const totalDuration = top_tracks.reduce((s, t) => s + (t.duration ?? 0), 0);
+  const deezerPopularityCount = top_tracks.filter(t => t.popularity_source === 'deezer').length;
+  const usingDeezerPopularity = deezerPopularityCount > 0;
+  const popularityHint = usingDeezerPopularity
+    ? `Ranked by Deezer public popularity${deezerPopularityCount < top_tracks.length ? ` (${deezerPopularityCount}/${top_tracks.length} matched in library)` : ''}`
+    : 'Sorted by your local play count';
   const tags = mergeUniqueTags(artist.lastfm_tags_json, artist.genres_json).slice(0, 8);
   const listeners = formatCount(artist.listener_count);
   const fans = formatCount(artist.fans_deezer);
@@ -1024,13 +1029,16 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
       {/* Top Tracks */}
       {top_tracks.length > 0 && (
         <div className="px-8 py-5">
-          <h2 className="text-xs font-mono font-semibold text-text-muted uppercase tracking-widest mb-3">Popular Tracks</h2>
+          <h2 className="text-xs font-mono font-semibold text-text-muted uppercase tracking-widest mb-1">
+            Popular Tracks
+          </h2>
+          <p className="font-mono text-[10px] text-text-muted mb-3">{popularityHint}</p>
           <div>
             {top_tracks.map((t, i) => (
               <div
                 key={t.id}
                 onDoubleClick={() => playPopularTrackNow(t.id)}
-                className="group grid grid-cols-[1.75rem_2rem_1fr_1fr_3.5rem_auto] gap-3 items-center py-2 px-2 hover:bg-[#111] rounded-sm transition-colors"
+                className="group grid grid-cols-[1.75rem_2rem_minmax(0,1.2fr)_minmax(0,1fr)_5.5rem_3.5rem_auto_auto] gap-3 items-center py-2 px-2 hover:bg-[#111] rounded-sm transition-colors"
               >
                 <button
                   onClick={() => playPopularTrackNow(t.id)}
@@ -1042,7 +1050,16 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
                 <span className="font-mono text-xs text-text-muted group-hover:text-accent/80 tabular-nums text-right">{i + 1}</span>
                 <span className="text-sm text-text-primary group-hover:text-accent truncate">{t.title}</span>
                 <span className="font-mono text-xs text-text-muted group-hover:text-accent/80 truncate">{t.album_title}</span>
+                <span
+                  className="font-mono text-xs text-text-muted group-hover:text-accent/80 tabular-nums text-right"
+                  title={t.popularity_source === 'deezer' ? 'Deezer public popularity rank' : 'Local play count fallback'}
+                >
+                  {t.popularity_source === 'deezer'
+                    ? (t.public_popularity ?? 0).toLocaleString()
+                    : (t.play_count ?? 0).toLocaleString()}
+                </span>
                 <span className="font-mono text-xs text-text-muted group-hover:text-accent/80 tabular-nums text-right">{formatDuration(t.duration)}</span>
+                <AudioQualityBadge bit_depth={t.bit_depth} sample_rate={t.sample_rate} codec={t.codec} bitrate={t.bitrate} />
                 <button
                   onClick={() => openPlaylistPicker(t)}
                   className="text-text-muted opacity-0 group-hover:opacity-100 hover:text-accent transition-all"

@@ -5,7 +5,9 @@ Extracted from library_browse.py to reduce route-module sprawl while keeping
 all API paths stable.
 """
 import logging
+import json
 from collections import OrderedDict
+from datetime import datetime, timedelta
 from typing import Any, Optional
 
 from fastapi import APIRouter, Body, Depends, Query
@@ -18,6 +20,197 @@ from app.services.enrichment._helpers import strip_title_suffixes
 logger = logging.getLogger(__name__)
 
 router = APIRouter(dependencies=[Depends(verify_api_key)])
+
+_ARTIST_TOP_TRACKS_LIMIT = 10
+_DEEZER_TOP_TRACKS_FETCH_LIMIT = 50
+_DEEZER_TOP_TRACKS_TTL_DAYS = 30
+
+
+def _now_iso() -> str:
+    return datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def _get_local_top_tracks(
+    conn,
+    artist_id: str,
+    *,
+    limit: int = _ARTIST_TOP_TRACKS_LIMIT,
+    exclude_track_ids: Optional[set[str]] = None,
+    popularity_source: str = "local",
+) -> list[dict[str, Any]]:
+    params: list[Any] = [artist_id]
+    exclude_sql = ""
+    if exclude_track_ids:
+        placeholders = ",".join("?" for _ in exclude_track_ids)
+        exclude_sql = f" AND t.id NOT IN ({placeholders})"
+        params.extend(sorted(exclude_track_ids))
+    params.append(limit)
+
+    rows = conn.execute(
+        f"""
+        SELECT t.id, t.album_id, t.artist_id, t.title,
+               t.track_number, t.disc_number, t.duration,
+               t.rating, t.play_count, t.tempo_deezer AS tempo,
+               t.sample_rate, t.bit_depth, t.channel_count, t.replay_gain_track,
+               t.bitrate, t.codec, t.container, t.embedded_lyrics, t.tag_genre,
+               al.title AS album_title
+        FROM lib_tracks t
+        JOIN lib_albums al ON al.id = t.album_id
+        WHERE al.artist_id = ? AND t.removed_at IS NULL AND al.removed_at IS NULL
+        {exclude_sql}
+        ORDER BY
+            COALESCE(t.play_count, 0) DESC,
+            COALESCE(t.rating, 0) DESC,
+            lower(t.title) ASC
+        LIMIT ?
+        """,
+        tuple(params),
+    ).fetchall()
+
+    results = [dict(r) for r in rows]
+    for row in results:
+        row["public_rank_position"] = None
+        row["public_popularity"] = None
+        row["popularity_source"] = popularity_source
+    return results
+
+
+def _load_cached_deezer_top_tracks(conn, deezer_artist_id: str) -> list[dict[str, Any]] | None:
+    try:
+        row = conn.execute(
+            """
+            SELECT tracks_json
+            FROM lib_artist_top_tracks_cache
+            WHERE artist_deezer_id = ?
+              AND (expires_at IS NULL OR expires_at >= ?)
+            """,
+            (deezer_artist_id, _now_iso()),
+        ).fetchone()
+    except Exception as exc:
+        logger.debug("artist_detail: top-track cache lookup unavailable: %s", exc)
+        return None
+
+    if not row:
+        return None
+    try:
+        parsed = json.loads(str(row["tracks_json"] or "[]"))
+        return parsed if isinstance(parsed, list) else None
+    except Exception:
+        return None
+
+
+def _save_cached_deezer_top_tracks(conn, deezer_artist_id: str, tracks: list[dict[str, Any]]) -> None:
+    now = datetime.utcnow()
+    now_iso = now.strftime("%Y-%m-%dT%H:%M:%S")
+    expires_at = (now + timedelta(days=_DEEZER_TOP_TRACKS_TTL_DAYS)).strftime("%Y-%m-%dT%H:%M:%S")
+    try:
+        conn.execute(
+            """
+            INSERT INTO lib_artist_top_tracks_cache
+                (artist_deezer_id, tracks_json, fetched_at, expires_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(artist_deezer_id) DO UPDATE SET
+                tracks_json = excluded.tracks_json,
+                fetched_at = excluded.fetched_at,
+                expires_at = excluded.expires_at
+            """,
+            (deezer_artist_id, json.dumps(tracks), now_iso, expires_at),
+        )
+    except Exception as exc:
+        logger.debug("artist_detail: failed to write top-track cache: %s", exc)
+
+
+def _fetch_deezer_top_tracks(conn, deezer_artist_id: str) -> list[dict[str, Any]]:
+    from app.clients.music_client import get_deezer_artist_top_tracks
+
+    tracks = get_deezer_artist_top_tracks(deezer_artist_id, limit=_DEEZER_TOP_TRACKS_FETCH_LIMIT)
+    if tracks:
+        _save_cached_deezer_top_tracks(conn, deezer_artist_id, tracks)
+    return tracks or []
+
+
+def _get_public_top_tracks(conn, artist_id: str, deezer_artist_id: str) -> list[dict[str, Any]]:
+    if not deezer_artist_id:
+        return []
+
+    external_tracks = _load_cached_deezer_top_tracks(conn, deezer_artist_id)
+    if external_tracks is None:
+        external_tracks = _fetch_deezer_top_tracks(conn, deezer_artist_id)
+    if not external_tracks:
+        return []
+
+    deezer_track_ids = [
+        str(t.get("id") or t.get("deezer_track_id") or "").strip()
+        for t in external_tracks
+        if str(t.get("id") or t.get("deezer_track_id") or "").strip()
+    ]
+    if not deezer_track_ids:
+        return []
+
+    placeholders = ",".join("?" for _ in deezer_track_ids)
+    rows = conn.execute(
+        f"""
+        SELECT t.id, t.album_id, t.artist_id, t.title,
+               t.track_number, t.disc_number, t.duration,
+               t.rating, t.play_count, t.tempo_deezer AS tempo,
+               t.sample_rate, t.bit_depth, t.channel_count, t.replay_gain_track,
+               t.bitrate, t.codec, t.container, t.embedded_lyrics, t.tag_genre,
+               t.deezer_id AS deezer_track_id,
+               al.title AS album_title
+        FROM lib_tracks t
+        JOIN lib_albums al ON al.id = t.album_id
+        WHERE t.artist_id = ?
+          AND t.removed_at IS NULL
+          AND al.removed_at IS NULL
+          AND t.deezer_id IN ({placeholders})
+        """,
+        (artist_id, *deezer_track_ids),
+    ).fetchall()
+
+    best_by_deezer_id: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        payload = dict(row)
+        deezer_track_id = str(payload.get("deezer_track_id") or "").strip()
+        if not deezer_track_id:
+            continue
+        prev = best_by_deezer_id.get(deezer_track_id)
+        if prev is None:
+            best_by_deezer_id[deezer_track_id] = payload
+            continue
+        prev_score = (int(prev.get("play_count") or 0), int(prev.get("rating") or 0))
+        curr_score = (int(payload.get("play_count") or 0), int(payload.get("rating") or 0))
+        if curr_score > prev_score:
+            best_by_deezer_id[deezer_track_id] = payload
+
+    ranked: list[dict[str, Any]] = []
+    used_track_ids: set[str] = set()
+    for i, ext in enumerate(external_tracks, start=1):
+        deezer_track_id = str(ext.get("id") or ext.get("deezer_track_id") or "").strip()
+        if not deezer_track_id:
+            continue
+        local_match = best_by_deezer_id.get(deezer_track_id)
+        if not local_match:
+            continue
+
+        local_match["public_rank_position"] = int(ext.get("rank_position") or i)
+        local_match["public_popularity"] = int(ext.get("deezer_rank") or 0)
+        local_match["popularity_source"] = "deezer"
+        ranked.append(local_match)
+        used_track_ids.add(str(local_match.get("id") or ""))
+        if len(ranked) >= _ARTIST_TOP_TRACKS_LIMIT:
+            break
+
+    if len(ranked) < _ARTIST_TOP_TRACKS_LIMIT:
+        fillers = _get_local_top_tracks(
+            conn,
+            artist_id,
+            limit=_ARTIST_TOP_TRACKS_LIMIT - len(ranked),
+            exclude_track_ids=used_track_ids,
+            popularity_source="local_fallback",
+        )
+        ranked.extend(fillers)
+
+    return ranked[:_ARTIST_TOP_TRACKS_LIMIT]
 
 
 @router.get("/library/artists/filter-options")
@@ -145,6 +338,7 @@ def library_artist_detail(artist_id: str):
                    a.lastfm_tags_json,
                    a.genres_json_spotify AS genres_json,
                    a.popularity_spotify AS popularity,
+                   a.deezer_artist_id,
                    a.listener_count_lastfm AS listener_count,
                    a.play_count_lastfm AS global_play_count,
                    COALESCE(ia.image_url, a.image_url_fanart, a.image_url_deezer) AS image_url,
@@ -203,22 +397,10 @@ def library_artist_detail(artist_id: str):
             (artist_id,),
         ).fetchall()
 
-        top_tracks = conn.execute(
-            """
-            SELECT t.id, t.album_id, t.artist_id, t.title,
-                   t.track_number, t.disc_number, t.duration,
-                   t.rating, t.play_count, t.tempo_deezer AS tempo,
-                   t.sample_rate, t.bit_depth, t.channel_count, t.replay_gain_track,
-                   t.bitrate, t.codec, t.container, t.embedded_lyrics, t.tag_genre,
-                   al.title AS album_title
-            FROM lib_tracks t
-            JOIN lib_albums al ON al.id = t.album_id
-            WHERE al.artist_id = ? AND t.removed_at IS NULL AND al.removed_at IS NULL
-            ORDER BY t.play_count DESC
-            LIMIT 10
-            """,
-            (artist_id,),
-        ).fetchall()
+        deezer_artist_id = str(artist_row["deezer_artist_id"] or "").strip()
+        top_tracks = _get_public_top_tracks(conn, artist_id, deezer_artist_id)
+        if not top_tracks:
+            top_tracks = _get_local_top_tracks(conn, artist_id, limit=_ARTIST_TOP_TRACKS_LIMIT)
 
         try:
             missing_rows = conn.execute(
@@ -341,9 +523,9 @@ def library_artist_detail(artist_id: str):
 
     return {
         "status": "ok",
-        "artist": dict(artist_row),
+        "artist": {k: v for k, v in dict(artist_row).items() if k != "deezer_artist_id"},
         "albums": [dict(r) for r in albums],
-        "top_tracks": [dict(r) for r in top_tracks],
+        "top_tracks": top_tracks,
         "missing_albums": [
             {**dict(r), "display_title": strip_title_suffixes(r["album_title"])}
             for r in missing_rows

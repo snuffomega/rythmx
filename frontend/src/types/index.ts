@@ -277,6 +277,9 @@ export interface LibTrack {
   artist_name?: string;
   thumb_url?: string | null;
   thumb_hash?: string | null;
+  public_rank_position?: number | null;
+  public_popularity?: number | null;
+  popularity_source?: 'deezer' | 'local' | 'local_fallback' | string;
 }
 
 export interface MissingAlbum {
