@@ -20,6 +20,9 @@ services:
       # Unraid: 99/100 | TrueNAS: 568/568 | Linux: 1000/1000
       PUID: 99
       PGID: 100
+      # Local artwork cache root (inside mounted rythmx data volume).
+      # Override in .env if you want a different location.
+      ARTWORK_DIR: ${ARTWORK_DIR:-/data/rythmx/artwork}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8009/health')"]
       interval: 30s
