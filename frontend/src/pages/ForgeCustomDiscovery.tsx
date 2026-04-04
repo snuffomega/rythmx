@@ -28,6 +28,14 @@ interface PDConfig extends ForgeDiscoveryConfig {
   schedule_weekday: number;
   schedule_hour: number;
   dry_run: boolean;
+  exclude_owned_artists: boolean;
+  avoid_repeat_tracks: boolean;
+  track_repeat_cooldown_days: number;
+  cache_ttl_days: number;
+  fetch_wait_timeout_s: number;
+  build_name_override: string;
+  ignore_keywords: string;
+  ignore_artists: string;
 }
 
 interface ForgeCustomDiscoveryProps {
@@ -46,6 +54,14 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
     schedule_weekday: 1,
     schedule_hour: 8,
     dry_run: false,
+    exclude_owned_artists: false,
+    avoid_repeat_tracks: true,
+    track_repeat_cooldown_days: 42,
+    cache_ttl_days: 30,
+    fetch_wait_timeout_s: 600,
+    build_name_override: '',
+    ignore_keywords: '',
+    ignore_artists: '',
   });
   const [advanced, setAdvanced] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -102,17 +118,28 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
       let queued = false;
       try {
         const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
+        const customName = config.build_name_override.trim();
         await forgeBuildsApi.create({
-          name: `Custom Discovery ${stamp}`,
+          name: customName || `Custom Discovery ${stamp}`,
           source: 'custom_discovery',
           status: 'ready',
           run_mode: 'build',
           track_list: data.artists as unknown as Array<Record<string, unknown>>,
           summary: {
             artists_found: data.artists_found,
+            built_tracks: data.built_tracks ?? data.artists_found,
+            target_tracks: data.target_tracks ?? config.max_tracks,
+            owned_count: data.owned_count ?? 0,
+            missing_count: data.missing_count ?? 0,
+            seed_artists_count: data.seed_artists_count ?? 0,
             seed_period: config.seed_period,
             max_tracks: config.max_tracks,
             closeness: config.closeness,
+            run_mode: config.run_mode,
+            avoid_repeat_tracks: config.avoid_repeat_tracks,
+            track_repeat_cooldown_days: config.track_repeat_cooldown_days,
+            cache_ttl_days: config.cache_ttl_days,
+            exclude_owned_artists: config.exclude_owned_artists,
           },
         });
         queued = true;
@@ -224,18 +251,87 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
           <div className="mt-5 space-y-5">
             <div>
               <label className="label">Ignore Keywords</label>
-              <input className="input" placeholder="christmas, tribute, karaoke" />
+              <input
+                className="input"
+                placeholder="christmas, tribute, karaoke"
+                value={config.ignore_keywords}
+                onChange={e => update('ignore_keywords', e.target.value)}
+              />
               <p className="text-[#444] text-xs mt-1">Comma-separated - artists matching any keyword will be skipped</p>
             </div>
             <div>
               <label className="label">Ignore Artists</label>
-              <input className="input" placeholder="Artist One, Artist Two" />
+              <input
+                className="input"
+                placeholder="Artist One, Artist Two"
+                value={config.ignore_artists}
+                onChange={e => update('ignore_artists', e.target.value)}
+              />
               <p className="text-[#444] text-xs mt-1">Comma-separated - these artists will never surface in results</p>
             </div>
             <div>
               <label className="label">Custom Build Name</label>
-              <input className="input" placeholder="My Discovery" />
+              <input
+                className="input"
+                placeholder="My Discovery"
+                value={config.build_name_override}
+                onChange={e => update('build_name_override', e.target.value)}
+              />
               <p className="text-[#444] text-xs mt-1">Override the default build name shown in Builder</p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-t border-[#1a1a1a] pt-5">
+              <div className="space-y-3">
+                <div className="flex items-center gap-3">
+                  <Toggle on={config.exclude_owned_artists} onChange={v => update('exclude_owned_artists', v)} />
+                  <div>
+                    <p className="text-text-primary text-sm font-medium">Exclude Owned Artists</p>
+                    <p className="text-[#444] text-xs mt-0.5">Skip artists already present in your library</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <Toggle on={config.avoid_repeat_tracks} onChange={v => update('avoid_repeat_tracks', v)} />
+                  <div>
+                    <p className="text-text-primary text-sm font-medium">Avoid Repeat Tracks</p>
+                    <p className="text-[#444] text-xs mt-0.5">Prefer tracks not recently recommended</p>
+                  </div>
+                </div>
+              </div>
+              <div className="space-y-3">
+                <div>
+                  <label className="label">Track Repeat Cooldown (days)</label>
+                  <input
+                    type="number"
+                    className="input"
+                    min={1}
+                    max={365}
+                    value={config.track_repeat_cooldown_days}
+                    onChange={e => update('track_repeat_cooldown_days', Number(e.target.value))}
+                  />
+                </div>
+                <div>
+                  <label className="label">Discovery Cache TTL (days)</label>
+                  <input
+                    type="number"
+                    className="input"
+                    min={1}
+                    max={365}
+                    value={config.cache_ttl_days}
+                    onChange={e => update('cache_ttl_days', Number(e.target.value))}
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="border-t border-[#1a1a1a] pt-5">
+              <label className="label">Fetch Wait Timeout (seconds)</label>
+              <input
+                type="number"
+                className="input max-w-[220px]"
+                min={30}
+                max={7200}
+                value={config.fetch_wait_timeout_s}
+                onChange={e => update('fetch_wait_timeout_s', Number(e.target.value))}
+              />
+              <p className="text-[#444] text-xs mt-1">Reserved for Build+Fetch orchestration flow.</p>
             </div>
             <div className="border-t border-[#1a1a1a] pt-5 flex items-center gap-3">
               <Toggle on={config.dry_run} onChange={v => update('dry_run', v)} />
@@ -273,12 +369,12 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
           <div className="flex items-center gap-2 mb-4">
             <Sparkles size={14} className="text-accent" />
             <span className="text-text-muted text-xs font-semibold uppercase tracking-widest">
-              {results.length} artist{results.length !== 1 ? 's' : ''} discovered
+              {results.length} track{results.length !== 1 ? 's' : ''} compiled
             </span>
           </div>
           {results.length === 0 ? (
             <div className="py-12 text-center space-y-2">
-              <p className="text-text-muted text-sm">No new artists found for these settings</p>
+              <p className="text-text-muted text-sm">No tracks matched these settings</p>
               <p className="text-[#444] text-xs">Try increasing the closeness value or expanding the seed period</p>
             </div>
           ) : (
@@ -292,8 +388,7 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
       {!running && results === null && (
         <div className="py-12 text-center border border-dashed border-[#1e1e1e] space-y-2">
           <Sparkles size={22} className="text-[#2a2a2a] mx-auto" />
-          <p className="text-[#444] text-sm">Configure and run to discover new artists</p>
-          {/* GAP-03: backend stub - results will be empty until Custom Discovery engine is implemented */}
+          <p className="text-[#444] text-sm">Configure and run to build a discovery track list</p>
         </div>
       )}
     </div>
