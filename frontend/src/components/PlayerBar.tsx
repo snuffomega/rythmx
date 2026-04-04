@@ -10,6 +10,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { usePlayerStore } from '../stores/usePlayerStore';
 import { useImage } from '../hooks/useImage';
 import { libraryBrowseApi } from '../services/api';
+import { getImageUrl } from '../utils/imageUrl';
 
 interface PlayerBarProps {
   isPlaying: boolean;
@@ -19,9 +20,21 @@ interface PlayerBarProps {
   onVolumeChange: (vol: number) => void;
 }
 
-function TrackArt({ thumbUrl, title, artist }: { thumbUrl: string | null; title: string; artist: string }) {
+function TrackArt({
+  thumbUrl,
+  thumbHash,
+  title,
+  artist,
+}: {
+  thumbUrl: string | null;
+  thumbHash?: string | null;
+  title: string;
+  artist: string;
+}) {
   const resolved = useImage('album', title, artist);
-  const src = thumbUrl ?? resolved ?? null;
+  const src = thumbUrl
+    ? getImageUrl(thumbUrl, thumbHash ?? null)
+    : (resolved ? getImageUrl(resolved) : null);
   if (src) return <img src={src} alt="" className="w-16 h-16 object-cover rounded-sm flex-shrink-0" />;
   return (
     <div className="w-16 h-16 bg-[#1a1a1a] rounded-sm flex-shrink-0 flex items-center justify-center border border-[#222]">
@@ -78,6 +91,25 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
     const rect = progressRef.current.getBoundingClientRect();
     const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     onSeek(pct * duration);
+  }
+
+  function handleProgressMouseDown(e: React.MouseEvent<HTMLDivElement>) {
+    if (!progressRef.current || duration <= 0) return;
+    const seekAt = (clientX: number) => {
+      if (!progressRef.current || duration <= 0) return;
+      const rect = progressRef.current.getBoundingClientRect();
+      const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      onSeek(pct * duration);
+    };
+
+    seekAt(e.clientX);
+    const onMove = (event: MouseEvent) => seekAt(event.clientX);
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
   }
 
   function handleVolumeMouseDown(e: React.MouseEvent<HTMLDivElement>) {
@@ -208,15 +240,7 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
 
   return (
     <div className="fixed bottom-0 left-0 right-0 z-30 h-[96px] bg-[#0a0a0a] border-t border-[#1a1a1a]">
-      <div
-        ref={progressRef}
-        onClick={handleProgressClick}
-        className="absolute top-0 left-0 right-0 h-[4px] bg-[#1a1a1a] cursor-pointer"
-      >
-        <div className="absolute top-0 left-0 h-full bg-accent" style={{ width: `${progressPct}%` }} />
-      </div>
-
-      <div className="h-full pt-[8px] pl-[72px] pr-6 relative flex items-center">
+      <div className="h-full pl-[72px] pr-6 relative flex items-center">
         <div className="flex items-center gap-4 w-[360px] min-w-0">
           <button
             onClick={handleExpand}
@@ -227,6 +251,7 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
           >
             <TrackArt
               thumbUrl={currentTrack?.thumb_url ?? null}
+              thumbHash={currentTrack?.thumb_hash ?? null}
               title={currentTrack?.album ?? ''}
               artist={currentTrack?.artist ?? ''}
             />
@@ -247,7 +272,7 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
         </div>
 
         <div className="absolute left-1/2 -translate-x-1/2 flex items-center justify-center gap-5">
-          <div className="w-[124px] flex flex-col items-center justify-center">
+          <div className="w-[170px] flex flex-col items-center justify-center">
             <div className="h-[18px] flex items-center gap-0.5" onMouseLeave={() => setHoverRating(0)}>
               {[1, 2, 3, 4, 5].map((star) => (
                 <button
@@ -268,6 +293,18 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
             <span className="h-[18px] font-mono text-[12px] text-text-muted tabular-nums leading-[18px]">
               {formattedPosition} / {formattedDuration}
             </span>
+            <div
+              ref={progressRef}
+              onMouseDown={handleProgressMouseDown}
+              onClick={handleProgressClick}
+              className="mt-1.5 w-full h-[5px] bg-[#1a1a1a] rounded-full relative cursor-pointer group"
+            >
+              <div className="absolute top-0 left-0 h-full bg-accent rounded-full" style={{ width: `${progressPct}%` }} />
+              <div
+                className="absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-accent rounded-full opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
+                style={{ left: `${progressPct}%`, marginLeft: '-6px' }}
+              />
+            </div>
           </div>
           <div className="flex items-center gap-4">
             <button
