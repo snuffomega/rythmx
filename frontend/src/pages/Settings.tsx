@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { CheckCircle, XCircle, Loader2, RefreshCw, Database, Radio, ChevronDown, ChevronUp, Key, Eye, EyeOff, Copy, Play, Square, Clock, Zap } from 'lucide-react';
+import { CheckCircle, Loader2, RefreshCw, Database, Radio, ChevronDown, ChevronUp, Key, Eye, EyeOff, Copy, Play, Square, Clock, Zap } from 'lucide-react';
 import { Link } from '@tanstack/react-router';
 import { useApi } from '../hooks/useApi';
 import { settingsApi, libraryApi, libraryBrowseApi, setApiKey, enrichmentApi } from '../services/api';
@@ -20,63 +20,97 @@ interface ServiceRowProps {
   icon: React.ReactNode;
   configured?: boolean;
   onTest: () => Promise<{ connected: boolean; message?: string }>;
-  extra?: React.ReactNode;
+  onResult: (result: { connected: boolean; message?: string }) => void;
 }
 
-function ServiceCard({ name, subtitle, icon, configured, onTest, extra }: ServiceRowProps) {
-  const [status, setStatus] = useState<'idle' | 'testing' | 'connected' | 'error'>('idle');
+function ServiceCard({ name, subtitle, icon, configured, onTest, onResult }: ServiceRowProps) {
+  const [status, setStatus] = useState<'idle' | 'testing' | 'connected'>('idle');
 
   const handleTest = async () => {
     setStatus('testing');
     try {
       const result = await onTest();
-      setStatus(result.connected ? 'connected' : 'error');
+      setStatus(result.connected ? 'connected' : 'idle');
+      onResult(result);
     } catch {
-      setStatus('error');
+      setStatus('idle');
+      onResult({ connected: false, message: 'Connection test failed' });
     }
   };
 
   return (
-    <div className="bg-[#0e0e0e] border border-[#1a1a1a] p-4 flex items-stretch gap-3 min-h-[68px]">
-      {/* LEFT: icon + name + optional dropdown */}
-      <div className="flex-1 flex flex-col gap-2.5 min-w-0">
+    <button
+      type="button"
+      onClick={() => void handleTest()}
+      disabled={status === 'testing'}
+      className="bg-[#0e0e0e] border border-[#1a1a1a] p-4 flex items-center gap-3 min-h-[68px] text-left transition-colors hover:border-[#303030] disabled:opacity-70 disabled:cursor-not-allowed"
+    >
+      <div className="w-7 h-7 bg-[#181818] flex items-center justify-center flex-shrink-0">
+        {icon}
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-text-primary text-sm font-medium">{name}</p>
+        {subtitle && <p className="text-[#444] text-[10px] mt-0.5">{subtitle}</p>}
+        {configured !== undefined && (
+          <p className="text-[#4e4e4e] text-[10px] mt-0.5">
+            {configured ? 'configured' : 'not configured'}
+          </p>
+        )}
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        {status === 'testing' && <Loader2 size={12} className="animate-spin text-text-muted" />}
+        <span
+          className={`w-2.5 h-2.5 rounded-full border ${
+            status === 'connected'
+              ? 'bg-accent border-accent'
+              : 'bg-transparent border-[#4a4a4a]'
+          }`}
+          title={status === 'connected' ? 'Connected' : 'Not tested / unavailable'}
+        />
+      </div>
+    </button>
+  );
+}
+
+interface PlatformCardProps {
+  platform: LibraryPlatform;
+  active: boolean;
+  configured: boolean;
+  disabled?: boolean;
+  onClick: (platform: LibraryPlatform) => void;
+}
+
+function PlatformCard({ platform, active, configured, disabled, onClick }: PlatformCardProps) {
+  return (
+    <button
+      type="button"
+      onClick={() => onClick(platform)}
+      disabled={disabled}
+      className={`bg-[#0e0e0e] border p-4 text-left transition-colors disabled:opacity-70 disabled:cursor-not-allowed ${
+        active ? 'border-accent/60' : 'border-[#1a1a1a] hover:border-[#303030]'
+      }`}
+    >
+      <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2.5">
           <div className="w-7 h-7 bg-[#181818] flex items-center justify-center flex-shrink-0">
-            {icon}
+            <span className="text-accent font-bold text-sm">{PLATFORM_LABELS[platform][0]}</span>
           </div>
-          {extra ?? (
-            <div className="min-w-0">
-              <p className="text-text-primary text-sm font-medium">{name}</p>
-              {subtitle && <p className="text-[#444] text-[10px]">{subtitle}</p>}
-            </div>
-          )}
+          <div className="min-w-0">
+            <p className="text-text-primary text-sm font-medium">{PLATFORM_LABELS[platform]}</p>
+            <p className="text-[#4e4e4e] text-[10px] mt-0.5">
+              {configured ? 'configured' : 'not configured'}
+            </p>
+          </div>
         </div>
-      </div>
-
-      {/* RIGHT: configured dot + test button */}
-      <div className="flex flex-col items-end justify-between shrink-0">
         <span
-          className={`w-2 h-2 rounded-full ${configured ? 'bg-accent' : 'bg-[#1e1e1e]'}`}
-          title={configured ? 'Configured' : 'Not configured'}
-        />
-        <button
-          onClick={handleTest}
-          disabled={status === 'testing'}
-          className="btn-ghost flex items-center gap-1.5 text-xs"
+          className={`text-[10px] font-mono uppercase tracking-wider ${
+            active ? 'text-accent' : 'text-text-muted'
+          }`}
         >
-          {status === 'testing' ? (
-            <Loader2 size={12} className="animate-spin" />
-          ) : status === 'connected' ? (
-            <CheckCircle size={12} className="text-success" />
-          ) : status === 'error' ? (
-            <XCircle size={12} className="text-danger" />
-          ) : (
-            <RefreshCw size={12} />
-          )}
-          Test
-        </button>
+          {active ? 'Active' : 'Set Active'}
+        </span>
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -367,7 +401,7 @@ function PipelineOrchestrator({ running, workers, activeWorkers, elapsedMs, phas
                   <div className="mt-0.5">
                     {phaseDef.id === 'sync' ? (
                       <div className="space-y-0.5">
-                        <p className="text-[10px] font-mono text-text-muted/50">{PLATFORM_LABELS[platform ?? 'plex'] ?? platform} library sync</p>
+                        <p className="text-[10px] font-mono text-text-muted/50">Library platform sync</p>
                         {libraryTrackCount !== undefined && (
                           <p className="text-[10px] font-mono text-text-muted/40">
                             Tracks indexed: {libraryTrackCount.toLocaleString()}
@@ -611,6 +645,32 @@ export function SettingsPage({ toast }: SettingsPageProps) {
     }
   };
 
+  const platformConfigured = (p: LibraryPlatform): boolean => {
+    if (p === 'navidrome') return Boolean(settingsStatus?.navidrome_configured);
+    if (p === 'plex') return Boolean(settingsStatus?.plex_configured);
+    return false;
+  };
+
+  const handleServiceTestResult = (
+    label: string,
+    result: { connected: boolean; message?: string },
+  ) => {
+    const detail = result.message?.trim();
+    if (result.connected) {
+      toast.success(detail ? `${label}: ${detail}` : `${label}: connection OK`);
+      return;
+    }
+    toast.error(detail ? `${label}: ${detail}` : `${label}: connection failed`);
+  };
+
+  const testActiveLibraryPlatform = () => {
+    if (platform === 'navidrome') return settingsApi.testNavidrome();
+    if (platform === 'plex') return settingsApi.testPlex();
+    return Promise.resolve({ connected: false, message: 'Jellyfin not yet implemented' });
+  };
+
+  const showSoulSyncCard = Boolean(settingsStatus?.soulsync_url || settingsStatus?.soulsync_db_accessible);
+
   const handleClearHistory = async () => {
     try {
       await settingsApi.clearHistory();
@@ -696,57 +756,64 @@ export function SettingsPage({ toast }: SettingsPageProps) {
 
       <section>
         <h2 className="text-text-muted text-xs font-semibold uppercase tracking-widest mb-3">Connections</h2>
-        <div className="grid grid-cols-3 gap-2">
+        <h3 className="text-[10px] font-mono text-text-muted uppercase tracking-wider mb-2">Library Platform</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-5">
+          {(['plex', 'navidrome', 'jellyfin'] as LibraryPlatform[]).map((p) => (
+            <PlatformCard
+              key={p}
+              platform={p}
+              active={platform === p}
+              configured={platformConfigured(p)}
+              disabled={switchingBackend}
+              onClick={handlePlatformChange}
+            />
+          ))}
+        </div>
+
+        <h3 className="text-[10px] font-mono text-text-muted uppercase tracking-wider mb-2">Services</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
           <ServiceCard
             name="Last.fm"
+            subtitle="Click to test"
             icon={<Radio size={16} className="text-danger" />}
             configured={settingsStatus?.lastfm_configured}
             onTest={settingsApi.testLastfm}
-          />
-          <ServiceCard
-            name={PLATFORM_LABELS[platform] ?? platform}
-            icon={<span className="text-accent font-bold text-sm">{(PLATFORM_LABELS[platform] ?? platform)[0]}</span>}
-            configured={platform === 'navidrome' ? Boolean(settingsStatus?.navidrome_configured) : settingsStatus?.plex_configured}
-            onTest={platform === 'navidrome' ? settingsApi.testNavidrome : settingsApi.testPlex}
-            extra={
-              <div className="relative">
-                <select
-                  className="select"
-                  value={libraryStatus?.platform ?? platform}
-                  onChange={e => handlePlatformChange(e.target.value as LibraryPlatform)}
-                  disabled={switchingBackend}
-                >
-                  <option value="plex">Plex</option>
-                  <option value="jellyfin">Jellyfin</option>
-                  <option value="navidrome">Navidrome</option>
-                </select>
-                {switchingBackend && (
-                  <div className="absolute right-8 top-1/2 -translate-y-1/2 pointer-events-none">
-                    <Loader2 size={13} className="animate-spin text-text-muted" />
-                  </div>
-                )}
-              </div>
-            }
+            onResult={(result) => handleServiceTestResult('Last.fm', result)}
           />
           <ServiceCard
             key={`library-${platform}`}
-            name="SoulSync"
-            icon={<Database size={16} className="text-accent" />}
-            configured={settingsStatus?.soulsync_db_accessible}
-            onTest={settingsApi.testSoulsync}
+            name={PLATFORM_LABELS[platform] ?? platform}
+            subtitle="Click to test"
+            icon={<span className="text-accent font-bold text-sm">{(PLATFORM_LABELS[platform] ?? platform)[0]}</span>}
+            configured={platformConfigured(platform)}
+            onTest={testActiveLibraryPlatform}
+            onResult={(result) => handleServiceTestResult(PLATFORM_LABELS[platform] ?? platform, result)}
           />
+          {showSoulSyncCard && (
+            <ServiceCard
+              name="SoulSync"
+              subtitle="Click to test"
+              icon={<Database size={16} className="text-accent" />}
+              configured={settingsStatus?.soulsync_db_accessible}
+              onTest={settingsApi.testSoulsync}
+              onResult={(result) => handleServiceTestResult('SoulSync', result)}
+            />
+          )}
           <ServiceCard
             name="Spotify"
+            subtitle="Click to test"
             icon={<span className="text-success font-bold text-sm">S</span>}
             configured={settingsStatus?.spotify_configured}
             onTest={settingsApi.testSpotify}
+            onResult={(result) => handleServiceTestResult('Spotify', result)}
           />
           <ServiceCard
             name="Fanart.tv"
-            subtitle="optional"
+            subtitle="Optional • click to test"
             icon={<span className="text-[#e88c2a] font-bold text-sm">F</span>}
             configured={settingsStatus?.fanart_configured}
             onTest={settingsApi.testFanart}
+            onResult={(result) => handleServiceTestResult('Fanart.tv', result)}
           />
         </div>
       </section>
@@ -769,8 +836,8 @@ export function SettingsPage({ toast }: SettingsPageProps) {
             aria-label={fetchEnabled ? 'Disable fetch' : 'Enable fetch'}
           >
             <span
-              className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform duration-200 ${
-                fetchEnabled ? 'translate-x-5' : 'translate-x-0.5'
+              className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform duration-200 ${
+                fetchEnabled ? 'translate-x-5' : 'translate-x-0'
               }`}
             />
           </button>
