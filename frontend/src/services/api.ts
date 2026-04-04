@@ -18,6 +18,7 @@ import type {
   LibArtistDetail,
   LibAlbumDetail,
   AuditResponse,
+  AuditCandidatesResponse,
   EnrichmentPipelineStatus,
   EnrichmentStopResponse,
   ConnectionVerifyResult,
@@ -300,6 +301,12 @@ export const libraryBrowseApi = {
       Object.entries({ per_page: '50', ...p }).filter(([, v]) => v != null) as [string, string][]
     ).toString();
     return request<AuditResponse>(`/library/audit?${qs}`);
+  },
+  getAuditCandidates: (p: { album_id: string; source: 'itunes' | 'deezer'; limit?: number }) => {
+    const qs = new URLSearchParams(
+      Object.entries({ limit: 20, ...p }).filter(([, v]) => v != null) as [string, string][]
+    ).toString();
+    return request<AuditCandidatesResponse>(`/library/audit/candidates?${qs}`);
   },
   confirmAuditItem: (body: { entity_type: string; entity_id: string; source: string; confirmed_id: string }) =>
     request<{ status: string }>('/library/audit/confirm', {

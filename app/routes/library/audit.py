@@ -12,10 +12,150 @@ from fastapi.responses import JSONResponse
 
 from app.db import rythmx_store
 from app.dependencies import verify_api_key
+from app.services.enrichment._helpers import match_album_title, strip_title_suffixes
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(dependencies=[Depends(verify_api_key)])
+
+
+def _candidate_reasons(
+    *,
+    score: float,
+    candidate_title: str,
+    requested_title: str,
+    candidate_track_count: int | None,
+    album_track_count: int,
+) -> list[str]:
+    reasons: list[str] = []
+    cand_norm = strip_title_suffixes(candidate_title).strip().lower()
+    req_norm = strip_title_suffixes(requested_title).strip().lower()
+
+    if cand_norm == req_norm:
+        reasons.append("title_exact")
+    elif score >= 0.95:
+        reasons.append("title_near_exact")
+    elif score >= 0.82:
+        reasons.append("title_overlap")
+
+    if album_track_count > 0 and candidate_track_count and candidate_track_count > 0:
+        diff = abs(album_track_count - candidate_track_count)
+        if diff == 0:
+            reasons.append("track_count_exact")
+        elif diff <= 1:
+            reasons.append("track_count_close")
+
+    return reasons
+
+
+@router.get("/library/audit/candidates")
+def library_audit_candidates(
+    album_id: str = Query(default="", min_length=1),
+    source: str = Query(default="itunes"),
+    limit: int = Query(default=20, ge=1, le=100),
+):
+    """
+    Return ranked catalog candidates for a single album/source pair.
+
+    Read-only evidence endpoint for manual Fix Match UX.
+    """
+    src = source.strip().lower()
+    if src not in ("itunes", "deezer"):
+        return JSONResponse(
+            {"status": "error", "message": "source must be one of: itunes, deezer"},
+            status_code=400,
+        )
+
+    with rythmx_store._connect() as conn:
+        album_row = conn.execute(
+            """
+            SELECT la.id,
+                   la.artist_id,
+                   la.title,
+                   la.itunes_album_id,
+                   la.deezer_id,
+                   la.match_confidence,
+                   la.needs_verification,
+                   ar.name AS artist_name
+            FROM lib_albums la
+            JOIN lib_artists ar ON ar.id = la.artist_id
+            WHERE la.id = ?
+              AND la.removed_at IS NULL
+            LIMIT 1
+            """,
+            (album_id,),
+        ).fetchone()
+
+        if not album_row:
+            return JSONResponse(
+                {"status": "error", "message": "Album not found"},
+                status_code=404,
+            )
+
+        album_track_count_row = conn.execute(
+            "SELECT COUNT(*) FROM lib_tracks WHERE album_id = ? AND removed_at IS NULL",
+            (album_id,),
+        ).fetchone()
+        album_track_count = int(album_track_count_row[0] or 0) if album_track_count_row else 0
+
+        rows = conn.execute(
+            """
+            SELECT album_id, album_title, record_type, track_count, artwork_url
+            FROM lib_artist_catalog
+            WHERE artist_id = ?
+              AND source = ?
+            ORDER BY fetched_at DESC
+            LIMIT ?
+            """,
+            (album_row["artist_id"], src, max(limit * 4, 20)),
+        ).fetchall()
+
+    requested_title = str(album_row["title"] or "")
+    scored: list[dict[str, Any]] = []
+    for row in rows:
+        candidate_title = str(row["album_title"] or "")
+        score = float(match_album_title(requested_title, candidate_title))
+        scored.append(
+            {
+                "candidate_id": str(row["album_id"] or ""),
+                "candidate_title": candidate_title,
+                "candidate_score": round(score, 4),
+                "record_type": row["record_type"],
+                "track_count": row["track_count"],
+                "artwork_url": row["artwork_url"],
+                "reasons": _candidate_reasons(
+                    score=score,
+                    candidate_title=candidate_title,
+                    requested_title=requested_title,
+                    candidate_track_count=int(row["track_count"] or 0) if row["track_count"] is not None else None,
+                    album_track_count=album_track_count,
+                ),
+            }
+        )
+
+    def _rank(item: dict[str, Any]) -> tuple[float, int, str]:
+        tc = item.get("track_count")
+        tc_diff = abs(int(tc) - album_track_count) if tc is not None and album_track_count > 0 else 999
+        return (float(item.get("candidate_score") or 0.0), -tc_diff, str(item.get("candidate_title") or ""))
+
+    top = sorted(scored, key=_rank, reverse=True)[:limit]
+
+    return {
+        "status": "ok",
+        "album": {
+            "id": album_row["id"],
+            "artist_id": album_row["artist_id"],
+            "artist_name": album_row["artist_name"],
+            "title": album_row["title"],
+            "itunes_album_id": album_row["itunes_album_id"],
+            "deezer_id": album_row["deezer_id"],
+            "match_confidence": album_row["match_confidence"],
+            "needs_verification": bool(album_row["needs_verification"]),
+            "track_count": album_track_count,
+        },
+        "source": src,
+        "candidates": top,
+    }
 
 
 @router.get("/library/audit")

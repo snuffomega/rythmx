@@ -357,6 +357,35 @@ export interface AuditResponse {
   page: number;
 }
 
+export interface AuditCandidateAlbum {
+  id: string;
+  artist_id: string;
+  artist_name: string;
+  title: string;
+  itunes_album_id: string | null;
+  deezer_id: string | null;
+  match_confidence: number | null;
+  needs_verification: boolean;
+  track_count: number;
+}
+
+export interface AuditCandidateItem {
+  candidate_id: string;
+  candidate_title: string;
+  candidate_score: number;
+  record_type: string | null;
+  track_count: number | null;
+  artwork_url: string | null;
+  reasons: string[];
+}
+
+export interface AuditCandidatesResponse {
+  status: 'ok';
+  album: AuditCandidateAlbum;
+  source: 'itunes' | 'deezer';
+  candidates: AuditCandidateItem[];
+}
+
 // ---------------------------------------------------------------------------
 // Enrichment pipeline — REST status shapes
 // ---------------------------------------------------------------------------
