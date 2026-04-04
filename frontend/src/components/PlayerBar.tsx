@@ -217,12 +217,31 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
 
   return (
     <div className="fixed bottom-0 left-0 right-0 z-30 h-[96px] bg-[#0a0a0a] border-t border-[#1a1a1a]">
-      <div className="h-full pl-[72px] pr-6 relative flex items-center">
-        <div className="flex items-center gap-4 w-[360px] min-w-0">
+
+      {/* ── Seek bar — top edge ─────────────────────────────────────────── */}
+      <div
+        ref={progressRef}
+        onMouseDown={handleProgressMouseDown}
+        onClick={handleProgressClick}
+        className="absolute top-0 left-0 right-0 h-4 cursor-pointer group select-none z-10"
+      >
+        <div className="absolute top-0 left-0 right-0 h-[3px] bg-[#1a1a1a]">
+          <div className="h-full bg-accent" style={{ width: `${progressPct}%` }} />
+        </div>
+        <div
+          className="absolute w-3 h-3 bg-accent rounded-full opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
+          style={{ left: `${progressPct}%`, marginLeft: '-6px', top: '1.5px', transform: 'translateY(-50%)' }}
+        />
+      </div>
+
+      <div className="h-full pl-[72px] pr-2 relative flex items-center">
+
+        {/* ── Left: album art + track info ─────────────────────────────── */}
+        <div className="flex items-center gap-4 min-w-0 flex-shrink-0" style={{ width: 'clamp(200px, 26%, 300px)' }}>
           <button
             onClick={handleExpand}
             disabled={!currentTrack}
-            className="rounded-sm transition-all hover:brightness-110 active:scale-95 disabled:opacity-60 disabled:cursor-default"
+            className="flex-shrink-0 rounded-sm transition-all hover:brightness-110 active:scale-95 disabled:opacity-60 disabled:cursor-default"
             aria-label="Open large player"
             title="Open large player"
           >
@@ -235,23 +254,100 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
             />
           </button>
           <div className="min-w-0 flex-1">
-            <p className="text-[16px] text-text-primary truncate leading-tight">
+            <p className="text-[15px] text-text-primary truncate leading-tight">
               {currentTrack?.title ?? 'Nothing playing'}
             </p>
             <button
               onClick={handleArtistClick}
               disabled={!currentTrack?.artist || artistNavLoading}
-              className="font-mono text-[14px] text-text-secondary hover:text-accent truncate leading-tight mt-0.5 transition-colors text-left max-w-full disabled:cursor-default disabled:hover:text-text-secondary"
+              className="font-mono text-[13px] text-accent truncate leading-tight mt-0.5 text-left max-w-full disabled:cursor-default disabled:opacity-60"
               title={currentTrack?.artist ? `Open ${currentTrack.artist}` : undefined}
             >
               {currentTrack?.artist ?? '-'}
             </button>
+            <p className="font-mono text-[10px] text-text-muted tabular-nums mt-0.5 leading-none">
+              {formattedPosition}
+              {currentTrack && <span className="text-[#333]"> / {formattedDuration}</span>}
+            </p>
           </div>
         </div>
 
-        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center justify-center gap-1">
-          <div className="w-[260px] flex items-center justify-center gap-2">
-            <div className="h-[16px] flex items-center gap-0.5" onMouseLeave={() => setHoverRating(0)}>
+        {/* ── Center: transport ────────────────────────────────────────── */}
+        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex items-center gap-4">
+          <button
+            onClick={toggleShuffle}
+            className={`transition-colors ${shuffle ? 'text-accent' : 'text-text-muted hover:text-text-secondary'}`}
+            aria-label="Shuffle"
+          >
+            <Shuffle size={17} />
+          </button>
+          <button
+            onClick={prevTrack}
+            className="text-text-secondary hover:text-text-primary transition-colors"
+            aria-label="Previous"
+            disabled={!currentTrack}
+          >
+            <SkipBack size={20} />
+          </button>
+          <button
+            onClick={onPlayPause}
+            aria-label={isPlaying ? 'Pause' : 'Play'}
+            disabled={!currentTrack}
+            className="w-11 h-11 rounded-full bg-accent hover:bg-accent/80 flex items-center justify-center transition-colors disabled:opacity-40"
+          >
+            {isPlaying
+              ? <Pause size={18} className="text-black" />
+              : <Play size={18} className="text-black ml-0.5" />}
+          </button>
+          <button
+            onClick={nextTrack}
+            className="text-text-secondary hover:text-text-primary transition-colors"
+            aria-label="Next"
+            disabled={!currentTrack}
+          >
+            <SkipForward size={20} />
+          </button>
+          <button
+            onClick={toggleRepeat}
+            className={`transition-colors ${repeatMode !== 'off' ? 'text-accent' : 'text-text-muted hover:text-text-secondary'}`}
+            aria-label={
+              repeatMode === 'off' ? 'Repeat off'
+                : repeatMode === 'all' ? 'Repeat all'
+                  : 'Repeat one'
+            }
+            title={
+              repeatMode === 'off' ? 'Repeat off'
+                : repeatMode === 'all' ? 'Repeat all'
+                  : 'Repeat one'
+            }
+          >
+            {repeatMode === 'one' ? <Repeat1 size={17} /> : <Repeat size={17} />}
+          </button>
+        </div>
+
+        {/* ── Right: volume + stars + expand + queue ───────────────────── */}
+        <div className="ml-auto relative flex items-center gap-3 flex-shrink-0">
+
+          {/* Volume row + star rating stacked */}
+          <div className="flex flex-col items-end gap-1.5">
+            <div className="flex items-center gap-2">
+              <Volume2 size={15} className="text-text-secondary flex-shrink-0" />
+              <div
+                ref={volumeRef}
+                onMouseDown={handleVolumeMouseDown}
+                className="w-24 h-[4px] bg-[#1a1a1a] rounded-full relative cursor-pointer group"
+              >
+                <div
+                  className="absolute top-0 left-0 h-full bg-accent rounded-full pointer-events-none"
+                  style={{ width: `${volume * 100}%` }}
+                />
+                <div
+                  className="absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-accent rounded-full opacity-70 group-hover:opacity-100 transition-opacity pointer-events-none"
+                  style={{ left: `${volume * 100}%`, marginLeft: '-5px' }}
+                />
+              </div>
+            </div>
+            <div className="flex items-center gap-0.5" onMouseLeave={() => setHoverRating(0)}>
               {[1, 2, 3, 4, 5].map((star) => (
                 <button
                   key={star}
@@ -261,93 +357,26 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
                   aria-label={`Rate ${star} stars`}
                 >
                   <Star
-                    size={12}
-                    className={star <= activeRating ? 'text-accent' : 'text-text-muted'}
+                    size={11}
+                    className={star <= activeRating ? 'text-accent' : 'text-[#2a2a2a]'}
                     fill={star <= activeRating ? 'currentColor' : 'none'}
                   />
                 </button>
               ))}
             </div>
-            <span className="font-mono text-[11px] text-text-muted tabular-nums whitespace-nowrap">
-              {formattedPosition}
-            </span>
-            <div
-              ref={progressRef}
-              onMouseDown={handleProgressMouseDown}
-              onClick={handleProgressClick}
-              className="flex-1 h-4 relative cursor-pointer group min-w-[90px] flex items-center select-none"
-            >
-              <div className="absolute inset-x-0 h-[5px] bg-[#1a1a1a] rounded-full overflow-hidden pointer-events-none">
-                <div className="h-full bg-accent rounded-full" style={{ width: `${progressPct}%` }} />
-              </div>
-              <div
-                className="absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-accent rounded-full opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
-                style={{ left: `${progressPct}%`, marginLeft: '-6px' }}
-              />
-            </div>
-            <span className="font-mono text-[11px] text-text-muted tabular-nums whitespace-nowrap">
-              {formattedDuration}
-            </span>
           </div>
-          <div className="flex items-center gap-4">
-            <button
-              onClick={toggleShuffle}
-              className={`transition-colors ${shuffle ? 'text-accent' : 'text-text-muted hover:text-text-secondary'}`}
-              aria-label="Shuffle"
-            >
-              <Shuffle size={17} />
-            </button>
-            <button
-              onClick={prevTrack}
-              className="text-text-secondary hover:text-text-primary transition-colors"
-              aria-label="Previous"
-              disabled={!currentTrack}
-            >
-              <SkipBack size={20} />
-            </button>
-            <button
-              onClick={onPlayPause}
-              aria-label={isPlaying ? 'Pause' : 'Play'}
-              disabled={!currentTrack}
-              className="w-11 h-11 rounded-full bg-accent hover:bg-accent/80 flex items-center justify-center transition-colors disabled:opacity-40"
-            >
-              {isPlaying
-                ? <Pause size={18} className="text-black" />
-                : <Play size={18} className="text-black ml-0.5" />}
-            </button>
-            <button
-              onClick={nextTrack}
-              className="text-text-secondary hover:text-text-primary transition-colors"
-              aria-label="Next"
-              disabled={!currentTrack}
-            >
-              <SkipForward size={20} />
-            </button>
-            <button
-              onClick={toggleRepeat}
-              className={`transition-colors ${repeatMode !== 'off' ? 'text-accent' : 'text-text-muted hover:text-text-secondary'}`}
-              aria-label={
-                repeatMode === 'off' ? 'Repeat off'
-                  : repeatMode === 'all' ? 'Repeat all'
-                    : 'Repeat one'
-              }
-              title={
-                repeatMode === 'off' ? 'Repeat off'
-                  : repeatMode === 'all' ? 'Repeat all'
-                    : 'Repeat one'
-              }
-            >
-              {repeatMode === 'one' ? <Repeat1 size={17} /> : <Repeat size={17} />}
-            </button>
-          </div>
-        </div>
 
-        <div className="ml-auto relative flex items-center gap-3 w-[360px] justify-end">
-          {queue.length > 0 && (
-            <span className="font-mono text-[12px] text-text-muted tabular-nums">
-              {queueIndex >= 0 ? queueIndex + 1 : 0}/{queue.length}
-            </span>
-          )}
+          {/* Expand */}
+          <button
+            onClick={handleExpand}
+            className="text-text-muted hover:text-text-secondary transition-colors"
+            aria-label="Open large player"
+            title="Open large player"
+          >
+            <Maximize2 size={15} />
+          </button>
+
+          {/* Queue button — mirrors album art (w-16 h-16) */}
           <button
             ref={queueButtonRef}
             onClick={() => {
@@ -357,36 +386,21 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
                 return !open;
               });
             }}
-            className={`text-text-muted transition-colors ${showQueue ? 'text-accent' : 'hover:text-text-secondary'}`}
+            className={`relative w-16 h-16 flex-shrink-0 flex items-center justify-center rounded-sm border transition-colors ${
+              showQueue
+                ? 'border-accent/60 bg-[#141414] text-accent'
+                : 'border-[#1e1e1e] bg-[#111] text-text-muted hover:border-[#2a2a2a] hover:text-text-secondary'
+            }`}
             aria-label="Queue"
             title="Queue"
           >
-            <List size={18} />
+            <List size={20} />
+            {queue.length > 0 && (
+              <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] rounded-full bg-accent text-black text-[8px] font-bold flex items-center justify-center leading-none tabular-nums px-1">
+                {queue.length > 99 ? '99+' : queue.length}
+              </span>
+            )}
           </button>
-          <button
-            onClick={handleExpand}
-            className="text-text-muted hover:text-text-secondary transition-colors"
-            aria-label="Open large player"
-            title="Open large player"
-          >
-            <Maximize2 size={16} />
-          </button>
-          <div className="w-px h-5 bg-[#222] mx-1" />
-          <Volume2 size={17} className="text-text-secondary flex-shrink-0" />
-          <div
-            ref={volumeRef}
-            onMouseDown={handleVolumeMouseDown}
-            className="w-24 h-[4px] bg-[#1a1a1a] rounded-full relative cursor-pointer group"
-          >
-            <div
-              className="absolute top-0 left-0 h-full bg-accent rounded-full pointer-events-none"
-              style={{ width: `${volume * 100}%` }}
-            />
-            <div
-              className="absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-accent rounded-full opacity-70 group-hover:opacity-100 transition-opacity pointer-events-none"
-              style={{ left: `${volume * 100}%`, marginLeft: '-5px' }}
-            />
-          </div>
 
           {showQueue && (
             <div
