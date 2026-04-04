@@ -18,6 +18,78 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(dependencies=[Depends(verify_api_key)])
 
+_ALLOWED_SOURCES = {"itunes", "deezer"}
+
+
+def _ensure_match_override_tables(conn) -> None:
+    """
+    Defensive table creation for deployments that have not restarted into the
+    latest migration yet. Migration remains the source of truth.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS match_overrides (
+            entity_type TEXT NOT NULL,
+            entity_id TEXT NOT NULL,
+            source TEXT NOT NULL,
+            confirmed_id TEXT,
+            state TEXT NOT NULL,
+            locked INTEGER NOT NULL DEFAULT 1,
+            note TEXT,
+            updated_by TEXT,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (entity_type, entity_id, source)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS match_override_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT NOT NULL,
+            entity_id TEXT NOT NULL,
+            source TEXT NOT NULL,
+            action TEXT NOT NULL,
+            candidate_id TEXT,
+            note TEXT,
+            actor TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
+
+def _upsert_manual_meta(
+    conn,
+    *,
+    source: str,
+    entity_type: str,
+    entity_id: str,
+    status: str,
+    confidence: int,
+    manual_tag: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO enrichment_meta
+            (source, entity_type, entity_id, status, enriched_at, error_msg,
+             confidence, retry_after, verified_at)
+        VALUES (
+            ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?,
+            CASE WHEN ? = 'not_found' THEN date('now', '+30 days') ELSE NULL END,
+            CURRENT_TIMESTAMP
+        )
+        ON CONFLICT(source, entity_type, entity_id) DO UPDATE SET
+            status = excluded.status,
+            enriched_at = excluded.enriched_at,
+            error_msg = excluded.error_msg,
+            confidence = excluded.confidence,
+            retry_after = excluded.retry_after,
+            verified_at = excluded.verified_at
+        """,
+        (source, entity_type, entity_id, status, manual_tag, confidence, status),
+    )
+
 
 def _candidate_reasons(
     *,
@@ -330,14 +402,16 @@ def library_artwork_audit(
 def library_audit_confirm(data: Optional[dict[str, Any]] = Body(default=None)):
     """
     Manually confirm an enrichment match.
-    Body: { entity_type, entity_id, source, confirmed_id }
+    Body: { entity_type, entity_id, source, confirmed_id, note?, actor? }
     Sets needs_verification=0, match_confidence=100, writes the confirmed ID.
     """
     data = data or {}
     entity_type = str(data.get("entity_type", "")).strip()
     entity_id = str(data.get("entity_id", "")).strip()
-    source = str(data.get("source", "")).strip()
+    source = str(data.get("source", "")).strip().lower()
     confirmed_id = str(data.get("confirmed_id", "")).strip()[:200]
+    note = str(data.get("note", "")).strip()[:1000] or None
+    actor = str(data.get("actor", "")).strip()[:200] or None
 
     if not entity_type or not entity_id or not source or not confirmed_id:
         return JSONResponse(
@@ -345,16 +419,21 @@ def library_audit_confirm(data: Optional[dict[str, Any]] = Body(default=None)):
              "message": "entity_type, entity_id, source, confirmed_id required"},
             status_code=400,
         )
+    if source not in _ALLOWED_SOURCES:
+        return JSONResponse(
+            {"status": "error", "message": "source must be one of: itunes, deezer"},
+            status_code=400,
+        )
 
     id_col_map = {
         "itunes": "itunes_album_id",
         "deezer": "deezer_id",
-        "spotify": "spotify_album_id",
     }
     id_col = id_col_map.get(source) if entity_type == "album" else None
 
     try:
         with rythmx_store._connect() as conn:
+            _ensure_match_override_tables(conn)
             if id_col and entity_type == "album":
                 conn.execute(
                     f"""
@@ -369,11 +448,35 @@ def library_audit_confirm(data: Optional[dict[str, Any]] = Body(default=None)):
                 )
             conn.execute(
                 """
-                INSERT OR REPLACE INTO enrichment_meta
-                    (source, entity_type, entity_id, status, enriched_at, confidence)
-                VALUES (?, ?, ?, 'found', CURRENT_TIMESTAMP, 100)
+                INSERT INTO match_overrides
+                    (entity_type, entity_id, source, confirmed_id, state, locked, note, updated_by, updated_at)
+                VALUES (?, ?, ?, ?, 'confirmed', 1, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(entity_type, entity_id, source) DO UPDATE SET
+                    confirmed_id = excluded.confirmed_id,
+                    state = 'confirmed',
+                    locked = 1,
+                    note = excluded.note,
+                    updated_by = excluded.updated_by,
+                    updated_at = CURRENT_TIMESTAMP
                 """,
-                (source, entity_type, entity_id),
+                (entity_type, entity_id, source, confirmed_id, note, actor),
+            )
+            conn.execute(
+                """
+                INSERT INTO match_override_events
+                    (entity_type, entity_id, source, action, candidate_id, note, actor)
+                VALUES (?, ?, ?, 'confirm', ?, ?, ?)
+                """,
+                (entity_type, entity_id, source, confirmed_id, note, actor),
+            )
+            _upsert_manual_meta(
+                conn,
+                source=source,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                status="found",
+                confidence=100,
+                manual_tag="manual_confirm",
             )
     except Exception as e:
         logger.error("library_audit_confirm: DB write failed: %s", e)
@@ -386,35 +489,47 @@ def library_audit_confirm(data: Optional[dict[str, Any]] = Body(default=None)):
 def library_audit_reject(data: Optional[dict[str, Any]] = Body(default=None)):
     """
     Reject an incorrect enrichment match.
-    Body: { entity_type, entity_id, source }
-    Clears the ID column, sets match_confidence=0, needs_verification=1.
+    Body: { entity_type, entity_id, source, candidate_id?, note?, actor? }
+    Clears the ID column, sets needs_verification=1.
+    match_confidence is reset to 0 only when both source IDs are NULL.
     """
     data = data or {}
     entity_type = str(data.get("entity_type", "")).strip()
     entity_id = str(data.get("entity_id", "")).strip()
-    source = str(data.get("source", "")).strip()
+    source = str(data.get("source", "")).strip().lower()
+    candidate_id = str(data.get("candidate_id", "")).strip()[:200] or None
+    note = str(data.get("note", "")).strip()[:1000] or None
+    actor = str(data.get("actor", "")).strip()[:200] or None
 
     if not entity_type or not entity_id or not source:
         return JSONResponse(
             {"status": "error", "message": "entity_type, entity_id, source required"},
             status_code=400,
         )
+    if source not in _ALLOWED_SOURCES:
+        return JSONResponse(
+            {"status": "error", "message": "source must be one of: itunes, deezer"},
+            status_code=400,
+        )
 
     id_col_map = {
         "itunes": "itunes_album_id",
         "deezer": "deezer_id",
-        "spotify": "spotify_album_id",
     }
     id_col = id_col_map.get(source) if entity_type == "album" else None
 
     try:
         with rythmx_store._connect() as conn:
+            _ensure_match_override_tables(conn)
             if id_col and entity_type == "album":
                 conn.execute(
                     f"""
                     UPDATE lib_albums
                     SET {id_col} = NULL,
-                        match_confidence = 0,
+                        match_confidence = CASE
+                            WHEN {('deezer_id' if source == 'itunes' else 'itunes_album_id')} IS NULL THEN 0
+                            ELSE match_confidence
+                        END,
                         needs_verification = 1,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
@@ -423,14 +538,86 @@ def library_audit_reject(data: Optional[dict[str, Any]] = Body(default=None)):
                 )
             conn.execute(
                 """
-                INSERT OR REPLACE INTO enrichment_meta
-                    (source, entity_type, entity_id, status, enriched_at, confidence)
-                VALUES (?, ?, ?, 'not_found', CURRENT_TIMESTAMP, 0)
+                INSERT INTO match_overrides
+                    (entity_type, entity_id, source, confirmed_id, state, locked, note, updated_by, updated_at)
+                VALUES (?, ?, ?, NULL, 'rejected', 1, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(entity_type, entity_id, source) DO UPDATE SET
+                    confirmed_id = NULL,
+                    state = 'rejected',
+                    locked = 1,
+                    note = excluded.note,
+                    updated_by = excluded.updated_by,
+                    updated_at = CURRENT_TIMESTAMP
                 """,
-                (source, entity_type, entity_id),
+                (entity_type, entity_id, source, note, actor),
+            )
+            conn.execute(
+                """
+                INSERT INTO match_override_events
+                    (entity_type, entity_id, source, action, candidate_id, note, actor)
+                VALUES (?, ?, ?, 'reject', ?, ?, ?)
+                """,
+                (entity_type, entity_id, source, candidate_id, note, actor),
+            )
+            _upsert_manual_meta(
+                conn,
+                source=source,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                status="not_found",
+                confidence=0,
+                manual_tag="manual_reject",
             )
     except Exception as e:
         logger.error("library_audit_reject: DB write failed: %s", e)
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+    return {"status": "ok"}
+
+
+@router.post("/library/audit/unlock")
+def library_audit_unlock(data: Optional[dict[str, Any]] = Body(default=None)):
+    """
+    Admin/manual escape hatch:
+    clears a manual lock so Stage 2 auto-match can operate on that source again.
+    """
+    data = data or {}
+    entity_type = str(data.get("entity_type", "")).strip()
+    entity_id = str(data.get("entity_id", "")).strip()
+    source = str(data.get("source", "")).strip().lower()
+    note = str(data.get("note", "")).strip()[:1000] or None
+    actor = str(data.get("actor", "")).strip()[:200] or None
+
+    if not entity_type or not entity_id or source not in _ALLOWED_SOURCES:
+        return JSONResponse(
+            {"status": "error", "message": "entity_type, entity_id, source required"},
+            status_code=400,
+        )
+
+    try:
+        with rythmx_store._connect() as conn:
+            _ensure_match_override_tables(conn)
+            conn.execute(
+                """
+                UPDATE match_overrides
+                SET locked = 0,
+                    note = ?,
+                    updated_by = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE entity_type = ? AND entity_id = ? AND source = ?
+                """,
+                (note, actor, entity_type, entity_id, source),
+            )
+            conn.execute(
+                """
+                INSERT INTO match_override_events
+                    (entity_type, entity_id, source, action, candidate_id, note, actor)
+                VALUES (?, ?, ?, 'unlock', NULL, ?, ?)
+                """,
+                (entity_type, entity_id, source, note, actor),
+            )
+    except Exception as e:
+        logger.error("library_audit_unlock: DB write failed: %s", e)
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
     return {"status": "ok"}

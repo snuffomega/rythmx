@@ -23,6 +23,39 @@ MIN_TRUSTED_ARTIST_CONFIDENCE = 85
 PROVISIONAL_CONFIDENCE_PENALTY = 50
 
 
+def _load_album_source_overrides(conn, album_ids: list[str]) -> dict[tuple[str, str], dict]:
+    """
+    Load locked manual overrides for (album_id, source).
+    Missing table is tolerated for pre-migration DBs.
+    """
+    if not album_ids:
+        return {}
+    try:
+        placeholders = ",".join("?" * len(album_ids))
+        rows = conn.execute(
+            f"""
+            SELECT entity_id, source, state, confirmed_id, locked
+            FROM match_overrides
+            WHERE entity_type = 'album'
+              AND locked = 1
+              AND entity_id IN ({placeholders})
+            """,
+            album_ids,
+        ).fetchall()
+    except Exception:
+        return {}
+
+    out: dict[tuple[str, str], dict] = {}
+    for r in rows:
+        key = (str(r["entity_id"]), str(r["source"]))
+        out[key] = {
+            "state": str(r["state"] or ""),
+            "confirmed_id": str(r["confirmed_id"] or ""),
+            "locked": int(r["locked"] or 0),
+        }
+    return out
+
+
 def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = None,
                     on_progress: "callable | None" = None) -> dict:
     """
@@ -131,6 +164,10 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
                 continue
 
             lib_titles = [strip_title_suffixes(r["local_title"] or r["title"]) for r in album_rows]
+            album_override_map = _load_album_source_overrides(
+                conn,
+                [str(r["id"]) for r in album_rows],
+            )
 
             _best_confidence = artist["match_confidence"] or 0
 
@@ -339,9 +376,56 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
                 raw_title = album["local_title"] or album["title"]
                 album_title = strip_title_suffixes(raw_title)
                 album_enriched = False
+                manual_confirmed = False
+                itunes_lock = album_override_map.get((str(album_id), "itunes"))
+                deezer_lock = album_override_map.get((str(album_id), "deezer"))
+
+                skip_itunes_auto = bool(itunes_lock and itunes_lock.get("state") == "rejected")
+                skip_deezer_auto = bool(deezer_lock and deezer_lock.get("state") == "rejected")
+
+                # Guardrail: locked manual confirms are authoritative for this source.
+                if itunes_lock and itunes_lock.get("state") == "confirmed":
+                    confirmed_id = str(itunes_lock.get("confirmed_id") or "").strip()
+                    if confirmed_id and album["itunes_album_id"] is None:
+                        conn.execute(
+                            """
+                            UPDATE lib_albums
+                            SET itunes_album_id = ?,
+                                match_confidence = CASE
+                                    WHEN COALESCE(match_confidence, 0) < 100 THEN 100
+                                    ELSE match_confidence
+                                END,
+                                needs_verification = 0,
+                                updated_at = CURRENT_TIMESTAMP
+                            WHERE id = ?
+                            """,
+                            (confirmed_id, album_id),
+                        )
+                    manual_confirmed = True
+                    skip_itunes_auto = True
+
+                if deezer_lock and deezer_lock.get("state") == "confirmed":
+                    confirmed_id = str(deezer_lock.get("confirmed_id") or "").strip()
+                    if confirmed_id and album["deezer_id"] is None:
+                        conn.execute(
+                            """
+                            UPDATE lib_albums
+                            SET deezer_id = ?,
+                                match_confidence = CASE
+                                    WHEN COALESCE(match_confidence, 0) < 100 THEN 100
+                                    ELSE match_confidence
+                                END,
+                                needs_verification = 0,
+                                updated_at = CURRENT_TIMESTAMP
+                            WHERE id = ?
+                            """,
+                            (confirmed_id, album_id),
+                        )
+                    manual_confirmed = True
+                    skip_deezer_auto = True
 
                 # iTunes album match (with track-count tiebreaker)
-                if album["itunes_album_id"] is None and itunes_by_title:
+                if album["itunes_album_id"] is None and itunes_by_title and not skip_itunes_auto:
                     scored = []
                     for t, entry in itunes_by_title.items():
                         s = match_album_title(album_title, t)
@@ -407,7 +491,7 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
                                                "not_found", confidence=0)
 
                 # Deezer album match (always runs — not a fallback)
-                if album["deezer_id"] is None and deezer_titles:
+                if album["deezer_id"] is None and deezer_titles and not skip_deezer_auto:
                     best_deezer = max(
                         ((t, match_album_title(album_title, t)) for t in deezer_titles),
                         key=lambda x: x[1],
@@ -430,7 +514,10 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
                                 """,
                                 (matched_id, album_id),
                             )
-                            conf = 95 if album["itunes_album_id"] or album_enriched else 75
+                            has_itunes = bool(album["itunes_album_id"]) or bool(
+                                itunes_lock and itunes_lock.get("state") == "confirmed"
+                            ) or album_enriched
+                            conf = 95 if has_itunes else 75
                             write_enrichment_meta(conn, "deezer", "album", album_id,
                                                    "found", confidence=conf)
                             album_enriched = True
@@ -468,6 +555,21 @@ def enrich_library(batch_size: int = 50, stop_event: threading.Event | None = No
                 elif album_enriched:
                     enriched += 1
                     artist_had_enrichment = True
+                    if on_progress:
+                        on_progress(enriched, skipped, failed, _total_pending)
+                elif manual_confirmed:
+                    # Locked manual confirmations are authoritative and should never
+                    # be flipped back to verification by Stage 2.
+                    conn.execute(
+                        """
+                        UPDATE lib_albums
+                        SET needs_verification = 0,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                        """,
+                        (album_id,),
+                    )
+                    skipped += 1
                     if on_progress:
                         on_progress(enriched, skipped, failed, _total_pending)
                 else:
