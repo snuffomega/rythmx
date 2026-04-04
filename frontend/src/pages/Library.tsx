@@ -1609,7 +1609,13 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
             <ConfidenceBadge value={album.match_confidence} />
             <SourceChip backend={album.source_platform} />
             {album.needs_verification === 1 && (
-              <span className="font-mono text-[10px] text-yellow-400 border border-yellow-400/30 px-1.5 py-0.5 rounded">verify</span>
+              <button
+                onClick={openFixMatchModal}
+                className="font-mono text-[10px] text-yellow-400 border border-yellow-400/30 px-1.5 py-0.5 rounded hover:bg-yellow-400/10 transition-colors"
+                title="Open Fix Match"
+              >
+                verify
+              </button>
             )}
           </div>
         </div>
