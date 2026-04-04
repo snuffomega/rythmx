@@ -5,7 +5,7 @@ import {
   ListPlus, MoreHorizontal, User, Disc, Play, X, Shuffle, Camera, Check,
 } from 'lucide-react';
 import { Link, useNavigate, useRouter } from '@tanstack/react-router';
-import { libraryBrowseApi, libraryApi, enrichmentApi, libraryPlaylistsApi } from '../services/api';
+import { libraryBrowseApi, libraryApi, enrichmentApi, libraryPlaylistsApi, hydrateTrackArtwork } from '../services/api';
 import { useImage } from '../hooks/useImage';
 import { getImageUrl } from '../utils/imageUrl';
 import { usePlayerStore, type PlayerTrack } from '../stores/usePlayerStore';
@@ -611,7 +611,7 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
 
   const fetchAllArtistTracks = useCallback(async (artistObj: LibArtist): Promise<PlayerTrack[]> => {
     const res = await libraryBrowseApi.getTracks({ artist_id: artistObj.id, per_page: 500 });
-    return res.tracks.map(t => ({
+    const tracks = res.tracks.map(t => ({
       id: t.id,
       title: t.title,
       artist: artistObj.name,
@@ -625,7 +625,8 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
       bit_depth: t.bit_depth,
       sample_rate: t.sample_rate,
     }));
-  }, []);
+    return Promise.all(tracks.map(hydrateTrackArtwork));
+  }, [hydrateTrackArtwork]);
 
   const handlePlayArtist = useCallback(async () => {
     if (!data) return;
@@ -697,16 +698,17 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
         toastError(`No playable tracks found for "${similarArtist.name}"`);
         return;
       }
+      const hydrated = await Promise.all(tracks.map(hydrateTrackArtwork));
       const { currentTrack, queue } = usePlayerStore.getState();
       if (!currentTrack || queue.length === 0) {
-        playQueue(tracks);
+        playQueue(hydrated);
       } else {
-        enqueueNext(tracks);
+        enqueueNext(hydrated);
       }
     } catch (err) {
       toastError(err instanceof Error ? err.message : 'Failed to start similar artist radio');
     }
-  }, [enqueueNext, playQueue, toastError]);
+  }, [enqueueNext, playQueue, toastError, hydrateTrackArtwork]);
 
   const handleSaveCover = useCallback(async () => {
     if (!coverInput.trim() || !data) return;
@@ -806,10 +808,11 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
     sample_rate: tr.sample_rate,
   }));
 
-  function playPopularTrackNow(trackId: string) {
+  async function playPopularTrackNow(trackId: string) {
     const idx = popularQueue.findIndex((track) => track.id === trackId);
     if (idx >= 0) {
-      playQueue(popularQueue.slice(idx));
+      const hydrated = await Promise.all(popularQueue.slice(idx).map(hydrateTrackArtwork));
+      playQueue(hydrated);
     }
   }
 
@@ -2180,12 +2183,13 @@ export function LibraryRoot() {
         toastError(`No playable tracks found for "${artistItem.name}"`);
         return;
       }
-      const shuffled = [...queueTracks].sort(() => Math.random() - 0.5);
+      const hydrated = await Promise.all(queueTracks.map(hydrateTrackArtwork));
+      const shuffled = [...hydrated].sort(() => Math.random() - 0.5);
       playQueue(shuffled);
     } catch (err) {
       toastError(err instanceof Error ? err.message : 'Failed to shuffle play artist');
     }
-  }, [playQueue, toastError]);
+  }, [playQueue, toastError, hydrateTrackArtwork]);
 
   // Root view
   const footerText = loading ? null
