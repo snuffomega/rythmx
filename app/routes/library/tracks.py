@@ -81,10 +81,13 @@ def library_tracks(
                    t.rating, t.play_count, t.tempo_deezer AS tempo,
                    t.codec, t.bitrate, t.bit_depth, t.sample_rate,
                    al.title AS album_title,
-                   ar.name  AS artist_name
+                   ar.name  AS artist_name,
+                   COALESCE(ia.image_url, al.thumb_url_deezer, al.thumb_url_plex) AS thumb_url,
+                   ia.content_hash AS thumb_hash
             FROM lib_tracks t
             JOIN lib_albums  al ON al.id = t.album_id
             JOIN lib_artists ar ON ar.id = al.artist_id
+            LEFT JOIN image_cache ia ON ia.entity_type = 'album' AND ia.entity_key = al.id
             WHERE {where_clause}
             ORDER BY ar.name COLLATE NOCASE, al.year DESC, t.disc_number, t.track_number
             LIMIT ? OFFSET ?
