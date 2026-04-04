@@ -20,6 +20,10 @@ def sync_library() -> dict:
     from app.db import get_library_reader
     result = get_library_reader().sync_library()
     _prune_old_releases()
+    pruned_orphans = _prune_orphan_artists()
+    result["orphan_artists_pruned"] = pruned_orphans
+    if pruned_orphans:
+        logger.info("sync_library: pruned %d orphan artists (no active albums)", pruned_orphans)
 
     # Local-only album artwork hydrate right after sync (navidrome + MUSIC_DIR).
     # Full Stage 1.2 still runs afterward for remote fallback sources.
@@ -55,3 +59,32 @@ def _prune_old_releases() -> None:
             )
     except Exception as e:
         logger.warning("prune_old_releases failed (table may not exist yet): %s", e)
+
+
+def _prune_orphan_artists() -> int:
+    """
+    Tombstone artists with no active albums.
+
+    Active means removed_at IS NULL. Artists are soft-deleted (removed_at set)
+    so empty artist pages do not appear after sync/repair runs.
+    """
+    try:
+        with _connect() as conn:
+            conn.execute(
+                """
+                UPDATE lib_artists
+                   SET removed_at = CURRENT_TIMESTAMP,
+                       updated_at = CURRENT_TIMESTAMP
+                 WHERE removed_at IS NULL
+                   AND NOT EXISTS (
+                        SELECT 1
+                        FROM lib_albums
+                        WHERE lib_albums.artist_id = lib_artists.id
+                          AND lib_albums.removed_at IS NULL
+                   )
+                """
+            )
+            return int(conn.total_changes or 0)
+    except Exception as e:
+        logger.warning("prune_orphan_artists failed (table may not exist yet): %s", e)
+        return 0
