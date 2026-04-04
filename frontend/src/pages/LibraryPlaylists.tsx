@@ -142,6 +142,7 @@ function PlaylistDetail({
         album: t.album_title ?? '',
         duration: t.duration,
         thumb_url: null,
+        thumb_hash: null,
         source_platform: playlist.source_platform,
       })),
     [tracks, playlist.source_platform]
