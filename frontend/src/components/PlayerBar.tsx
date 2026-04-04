@@ -83,23 +83,24 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
   const queuePanelRef = useRef<HTMLDivElement>(null);
 
   const progressPct = duration > 0 ? (position / duration) * 100 : 0;
+  const effectiveDuration = duration > 0 ? duration : (currentTrack?.duration ?? 0);
   const currentRating = currentTrack ? ratingByTrack[currentTrack.id] ?? 0 : 0;
   const activeRating = hoverRating || currentRating;
 
   function handleProgressClick(e: React.MouseEvent<HTMLDivElement>) {
-    if (!progressRef.current || duration <= 0) return;
+    if (!progressRef.current || effectiveDuration <= 0) return;
     const rect = progressRef.current.getBoundingClientRect();
     const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    onSeek(pct * duration);
+    onSeek(pct * effectiveDuration);
   }
 
   function handleProgressMouseDown(e: React.MouseEvent<HTMLDivElement>) {
-    if (!progressRef.current || duration <= 0) return;
+    if (!progressRef.current || effectiveDuration <= 0) return;
     const seekAt = (clientX: number) => {
-      if (!progressRef.current || duration <= 0) return;
+      if (!progressRef.current || effectiveDuration <= 0) return;
       const rect = progressRef.current.getBoundingClientRect();
       const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-      onSeek(pct * duration);
+      onSeek(pct * effectiveDuration);
     };
 
     seekAt(e.clientX);
@@ -271,9 +272,9 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
           </div>
         </div>
 
-        <div className="absolute left-1/2 -translate-x-1/2 flex items-center justify-center gap-5">
-          <div className="w-[170px] flex flex-col items-center justify-center">
-            <div className="h-[18px] flex items-center gap-0.5" onMouseLeave={() => setHoverRating(0)}>
+        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center justify-center gap-1">
+          <div className="w-[260px] flex items-center justify-center gap-2">
+            <div className="h-[16px] flex items-center gap-0.5" onMouseLeave={() => setHoverRating(0)}>
               {[1, 2, 3, 4, 5].map((star) => (
                 <button
                   key={star}
@@ -283,21 +284,21 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
                   aria-label={`Rate ${star} stars`}
                 >
                   <Star
-                    size={13}
+                    size={12}
                     className={star <= activeRating ? 'text-accent' : 'text-text-muted'}
                     fill={star <= activeRating ? 'currentColor' : 'none'}
                   />
                 </button>
               ))}
             </div>
-            <span className="h-[18px] font-mono text-[12px] text-text-muted tabular-nums leading-[18px]">
-              {formattedPosition} / {formattedDuration}
+            <span className="font-mono text-[11px] text-text-muted tabular-nums whitespace-nowrap">
+              {formattedPosition}
             </span>
             <div
               ref={progressRef}
               onMouseDown={handleProgressMouseDown}
               onClick={handleProgressClick}
-              className="mt-1.5 w-full h-[5px] bg-[#1a1a1a] rounded-full relative cursor-pointer group"
+              className="flex-1 h-[5px] bg-[#1a1a1a] rounded-full relative cursor-pointer group min-w-[90px]"
             >
               <div className="absolute top-0 left-0 h-full bg-accent rounded-full" style={{ width: `${progressPct}%` }} />
               <div
@@ -305,6 +306,9 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
                 style={{ left: `${progressPct}%`, marginLeft: '-6px' }}
               />
             </div>
+            <span className="font-mono text-[11px] text-text-muted tabular-nums whitespace-nowrap">
+              {formattedDuration}
+            </span>
           </div>
           <div className="flex items-center gap-4">
             <button
@@ -330,7 +334,7 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
             >
               {isPlaying
                 ? <Pause size={18} className="text-black" />
-                : <Play size={18} className="text-black ml-0.5" />}
+                : <Play size={18} className="text-black" />}
             </button>
             <button
               onClick={nextTrack}

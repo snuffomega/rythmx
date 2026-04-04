@@ -86,6 +86,7 @@ export function FullPagePlayer({ isPlaying, onPlayPause, onMinimize, onSeek, onV
   const volumeRef   = useRef<HTMLDivElement>(null);
 
   const progressPct = duration > 0 ? (position / duration) * 100 : 0;
+  const effectiveDuration = duration > 0 ? duration : (currentTrack?.duration ?? 0);
 
   const openPlaylistPicker = useCallback(async (track: { id: string; title: string }) => {
     setPlaylistTrack(track);
@@ -141,10 +142,10 @@ export function FullPagePlayer({ isPlaying, onPlayPause, onMinimize, onSeek, onV
   }, [playlistTrack, selectedPlaylistId, playlistOptions, toastSuccess, toastError, closePlaylistPicker]);
 
   function handleProgressClick(e: React.MouseEvent<HTMLDivElement>) {
-    if (!progressRef.current || duration <= 0) return;
+    if (!progressRef.current || effectiveDuration <= 0) return;
     const rect = progressRef.current.getBoundingClientRect();
     const pct  = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    onSeek(pct * duration);
+    onSeek(pct * effectiveDuration);
   }
 
   function handleVolumeClick(e: React.MouseEvent<HTMLDivElement>) {
@@ -266,7 +267,7 @@ export function FullPagePlayer({ isPlaying, onPlayPause, onMinimize, onSeek, onV
           >
             {isPlaying
               ? <Pause size={22} className="text-black" />
-              : <Play  size={22} className="text-black ml-0.5" />}
+              : <Play  size={22} className="text-black" />}
           </button>
           <button
             onClick={nextTrack}

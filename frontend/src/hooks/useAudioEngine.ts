@@ -145,10 +145,20 @@ export function useAudioEngine() {
   // Seek handler for the scrubber
   const seek = useCallback((seconds: number) => {
     const audio = audioRef.current;
-    if (audio && isFinite(audio.duration)) {
-      audio.currentTime = Math.max(0, Math.min(seconds, audio.duration));
+    if (!audio) return;
+
+    const durationFromAudio = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : null;
+    const durationFromTrack = currentTrack?.duration && currentTrack.duration > 0 ? currentTrack.duration : null;
+    const maxDuration = durationFromAudio ?? durationFromTrack;
+
+    if (maxDuration != null) {
+      audio.currentTime = Math.max(0, Math.min(seconds, maxDuration));
+      return;
     }
-  }, []);
+
+    // Last resort: allow raw seek attempts even when duration metadata is absent.
+    audio.currentTime = Math.max(0, seconds);
+  }, [currentTrack?.duration]);
 
   // Volume handler
   const setVolume = useCallback((vol: number) => {

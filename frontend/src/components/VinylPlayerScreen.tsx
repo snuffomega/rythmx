@@ -154,6 +154,7 @@ export function VinylPlayerScreen({
   })();
 
   const progressPct = duration > 0 ? (position / duration) * 100 : 0;
+  const effectiveDuration = duration > 0 ? duration : (currentTrack?.duration ?? 0);
   const coverOffset = coverTransitionActive ? coverDirection * 18 : 0;
 
   const openPlaylistPicker = useCallback(async (track: { id: string; title: string }) => {
@@ -210,19 +211,19 @@ export function VinylPlayerScreen({
   }, [playlistTrack, selectedPlaylistId, playlistOptions, toastSuccess, toastError, closePlaylistPicker]);
 
   function handleProgressClick(e: React.MouseEvent<HTMLDivElement>) {
-    if (!progressRef.current || duration <= 0) return;
+    if (!progressRef.current || effectiveDuration <= 0) return;
     const rect = progressRef.current.getBoundingClientRect();
-    onSeek(Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)) * duration);
+    onSeek(Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)) * effectiveDuration);
   }
 
   function handleProgressMouseDown(e: React.MouseEvent<HTMLDivElement>) {
-    if (!progressRef.current || duration <= 0) return;
+    if (!progressRef.current || effectiveDuration <= 0) return;
 
     const seekAt = (clientX: number) => {
-      if (!progressRef.current || duration <= 0) return;
+      if (!progressRef.current || effectiveDuration <= 0) return;
       const rect = progressRef.current.getBoundingClientRect();
       const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-      onSeek(pct * duration);
+      onSeek(pct * effectiveDuration);
     };
 
     seekAt(e.clientX);
