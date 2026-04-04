@@ -11,6 +11,7 @@ export interface PlayerTrack {
   album: string;
   duration: number | null;
   thumb_url: string | null;
+  thumb_hash?: string | null;
   source_platform: string;
   codec?: string | null;
   bitrate?: number | null;

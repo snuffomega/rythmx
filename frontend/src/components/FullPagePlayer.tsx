@@ -16,6 +16,7 @@ import { usePlayerStore } from '../stores/usePlayerStore';
 import { AudioQualityBadge } from './common';
 import { useImage } from '../hooks/useImage';
 import { libraryPlaylistsApi } from '../services/api';
+import { getImageUrl } from '../utils/imageUrl';
 import { useToastStore } from '../stores/useToastStore';
 import type { LibPlaylist } from '../types';
 
@@ -27,9 +28,21 @@ interface FullPagePlayerProps {
   onVolumeChange: (vol: number) => void;
 }
 
-function TrackArt({ thumbUrl, title, artist }: { thumbUrl: string | null; title: string; artist: string }) {
+function TrackArt({
+  thumbUrl,
+  thumbHash,
+  title,
+  artist,
+}: {
+  thumbUrl: string | null;
+  thumbHash?: string | null;
+  title: string;
+  artist: string;
+}) {
   const resolved = useImage('album', title, artist);
-  const src = thumbUrl ?? resolved ?? null;
+  const src = thumbUrl
+    ? getImageUrl(thumbUrl, thumbHash ?? null)
+    : (resolved ? getImageUrl(resolved) : null);
   if (src) return <img src={src} alt="" className="w-full max-w-[400px] aspect-square object-cover rounded border border-[#222]" />;
   return (
     <div className="w-full max-w-[400px] aspect-square bg-[#1a1a1a] rounded flex items-center justify-center border border-[#222]">
@@ -171,7 +184,12 @@ export function FullPagePlayer({ isPlaying, onPlayPause, onMinimize, onSeek, onV
 
         {/* Album art */}
         <div className="flex justify-center mb-8 flex-shrink-0">
-          <TrackArt thumbUrl={currentTrack?.thumb_url ?? null} title={currentTrack?.album ?? ''} artist={currentTrack?.artist ?? ''} />
+          <TrackArt
+            thumbUrl={currentTrack?.thumb_url ?? null}
+            thumbHash={currentTrack?.thumb_hash ?? null}
+            title={currentTrack?.album ?? ''}
+            artist={currentTrack?.artist ?? ''}
+          />
         </div>
 
         {/* Track info */}
