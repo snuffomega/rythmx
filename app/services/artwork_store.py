@@ -18,6 +18,7 @@ from app.config import ARTWORK_DIR
 _HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 _MIN_SIZE = 32
 _MAX_SIZE = 2048
+_THUMB_CACHE_VERSION = "v2"
 
 
 def _root() -> Path:
@@ -58,7 +59,7 @@ def get_original_path(content_hash: str) -> Path:
 def get_thumb_cache_path(content_hash: str, size: int) -> Path:
     h = _validate_hash(content_hash)
     s = _normalize_size(size)
-    return cache_dir() / f"{s}_{h}.webp"
+    return cache_dir() / f"{_THUMB_CACHE_VERSION}_{s}_{h}.webp"
 
 
 def ingest(raw_bytes: bytes) -> str:
@@ -88,7 +89,7 @@ def ingest(raw_bytes: bytes) -> str:
 
 def get_thumb(content_hash: str, size: int = 300) -> bytes:
     """
-    Return cached thumbnail bytes, generating WebP on cache miss.
+    Return cached square thumbnail bytes, generating WebP on cache miss.
 
     Raises:
       FileNotFoundError - original hash not present
@@ -116,8 +117,19 @@ def get_thumb(content_hash: str, size: int = 300) -> bytes:
         with Image.open(original_path) as img:
             if img.mode not in ("RGB", "RGBA"):
                 img = img.convert("RGB")
-            # Preserve aspect ratio and fit inside square bounding box.
-            img.thumbnail((s, s), Image.Resampling.LANCZOS)
+            width, height = img.size
+            if width <= 0 or height <= 0:
+                raise ValueError("Source artwork has invalid dimensions")
+
+            # Center-crop to square first, then resize to requested size.
+            side = min(width, height)
+            left = (width - side) // 2
+            top = (height - side) // 2
+            right = left + side
+            bottom = top + side
+            img = img.crop((left, top, right, bottom))
+            if img.size != (s, s):
+                img = img.resize((s, s), Image.Resampling.LANCZOS)
 
             out = io.BytesIO()
             img.save(out, format="WEBP", quality=86, method=6)
