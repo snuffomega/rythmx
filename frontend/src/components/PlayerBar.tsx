@@ -329,7 +329,7 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
         <div className="ml-auto relative flex items-center gap-3 flex-shrink-0">
 
           {/* Volume row + star rating stacked */}
-          <div className="flex flex-col items-end gap-1.5">
+          <div className="flex flex-col items-center gap-1.5">
             <div className="flex items-center gap-2">
               <Volume2 size={15} className="text-text-secondary flex-shrink-0" />
               <div
@@ -347,7 +347,7 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
                 />
               </div>
             </div>
-            <div className="flex items-center gap-0.5" onMouseLeave={() => setHoverRating(0)}>
+            <div className="flex items-center gap-1" onMouseLeave={() => setHoverRating(0)}>
               {[1, 2, 3, 4, 5].map((star) => (
                 <button
                   key={star}
@@ -357,7 +357,7 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
                   aria-label={`Rate ${star} stars`}
                 >
                   <Star
-                    size={11}
+                    size={13}
                     className={star <= activeRating ? 'text-accent' : 'text-[#2a2a2a]'}
                     fill={star <= activeRating ? 'currentColor' : 'none'}
                   />
