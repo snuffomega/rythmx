@@ -508,6 +508,116 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 
+  /api/v1/images/resolve-batch:
+    post:
+      tags: [images]
+      summary: Batch-resolve image URLs for multiple music entities
+      description: >
+        Resolves image URLs for up to 50 entities in a single round-trip.
+        Each item gets an independent (url, content_hash, pending) response.
+        Items with pending=true should be retried after 3-6 seconds.
+      operationId: resolveImageBatch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  maxItems: 50
+                  items:
+                    type: object
+                    required: [type, name]
+                    properties:
+                      id:
+                        type: string
+                        description: Caller-supplied correlation ID echoed back in the response
+                      type:
+                        $ref: '#/components/schemas/ImageType'
+                      name:
+                        type: string
+                      artist:
+                        type: string
+      responses:
+        '200':
+          description: Batch of resolved or pending image URLs
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiSuccess'
+                  - type: object
+                    required: [items]
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          allOf:
+                            - $ref: '#/components/schemas/ImageResolveResponse'
+                            - type: object
+                              properties:
+                                id:
+                                  type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/artwork/{content_hash}:
+    get:
+      tags: [images]
+      summary: Serve artwork thumbnail as WebP
+      description: >
+        Serves a WebP thumbnail from local content-addressed storage.
+        Generates the thumbnail on cache miss from the stored original.
+        Responds with Cache-Control: public, max-age=31536000, immutable.
+      operationId: getArtwork
+      parameters:
+        - name: content_hash
+          in: path
+          required: true
+          schema:
+            type: string
+          description: SHA-256 hex hash of the artwork blob
+        - name: s
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 32
+            maximum: 2048
+            default: 300
+          description: Thumbnail size in pixels (square)
+      responses:
+        '200':
+          description: WebP image thumbnail
+          content:
+            image/webp:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Invalid hash format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: Artwork not found for hash
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '503':
+          description: Image processing failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
   # ── Playlists ─────────────────────────────────────────────────────────────
 
   /api/v1/playlists:
@@ -1847,8 +1957,14 @@ components:
       properties:
         image_url:
           type: string
+          description: Resolved CDN or local URL
+        content_hash:
+          type: string
+          description: SHA-256 hex hash of the artwork blob; use with /api/v1/artwork/{hash}
+          nullable: true
         pending:
           type: boolean
+          description: True if the background fetch is still in progress; caller should retry
 
     # ── Stats ────────────────────────────────────────────────────────────────
 
