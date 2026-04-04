@@ -552,6 +552,31 @@ export function VinylPlayerScreen({
         </div>
 
         {/* ── Scrobble bar ────────────────────────────────────────────────── */}
+        <div className="flex items-center gap-3 mb-5">
+          <span className="font-mono text-[10px] text-text-muted tabular-nums w-9 text-right flex-shrink-0">
+            {formattedPosition}
+          </span>
+          <div
+            ref={progressRef}
+            onMouseDown={handleProgressMouseDown}
+            onClick={handleProgressClick}
+            className="flex-1 h-4 relative cursor-pointer group flex items-center select-none"
+          >
+            <div className="absolute inset-x-0 h-[5px] bg-[#1c1c1c] rounded-full overflow-hidden pointer-events-none">
+              <div
+                className="h-full bg-accent rounded-full"
+                style={{ width: `${progressPct}%` }}
+              />
+            </div>
+            <div
+              className="absolute top-1/2 -translate-y-1/2 w-3.5 h-3.5 bg-accent rounded-full opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
+              style={{ left: `${progressPct}%`, marginLeft: '-7px' }}
+            />
+          </div>
+          <span className="font-mono text-[10px] text-text-muted tabular-nums w-9 flex-shrink-0">
+            {formattedDuration}
+          </span>
+        </div>
 
         {/* ── Button row ───────────────────────────────────────────────────── */}
         <div className="relative grid grid-cols-[1fr_auto_1fr] items-center gap-3 min-h-[72px]">
@@ -636,7 +661,7 @@ export function VinylPlayerScreen({
             >
               {isPlaying
                 ? <Pause size={22} className="text-black" />
-                : <Play  size={22} className="text-black" />}
+                : <Play  size={22} className="text-black ml-0.5" />}
             </button>
             <button
               onClick={nextTrack}
@@ -863,30 +888,6 @@ export function VinylPlayerScreen({
             </div>
           )}
 
-        </div>
-
-        <div className="flex items-center gap-3 mt-2 mb-4">
-          <span className="font-mono text-[10px] text-text-muted tabular-nums w-9 text-right flex-shrink-0">
-            {formattedPosition}
-          </span>
-          <div
-            ref={progressRef}
-            onMouseDown={handleProgressMouseDown}
-            onClick={handleProgressClick}
-            className="flex-1 h-[5px] bg-[#1c1c1c] rounded-full relative cursor-pointer group"
-          >
-            <div
-              className="absolute top-0 left-0 h-full bg-accent rounded-full pointer-events-none"
-              style={{ width: `${progressPct}%` }}
-            />
-            <div
-              className="absolute top-1/2 -translate-y-1/2 w-3.5 h-3.5 bg-accent rounded-full opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
-              style={{ left: `${progressPct}%`, marginLeft: '-7px' }}
-            />
-          </div>
-          <span className="font-mono text-[10px] text-text-muted tabular-nums w-9 flex-shrink-0">
-            {formattedDuration}
-          </span>
         </div>
 
         {/* Queue expanded overlay */}

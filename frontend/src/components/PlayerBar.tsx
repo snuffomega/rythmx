@@ -275,9 +275,11 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
               ref={progressRef}
               onMouseDown={handleProgressMouseDown}
               onClick={handleProgressClick}
-              className="flex-1 h-[5px] bg-[#1a1a1a] rounded-full relative cursor-pointer group min-w-[90px]"
+              className="flex-1 h-4 relative cursor-pointer group min-w-[90px] flex items-center select-none"
             >
-              <div className="absolute top-0 left-0 h-full bg-accent rounded-full" style={{ width: `${progressPct}%` }} />
+              <div className="absolute inset-x-0 h-[5px] bg-[#1a1a1a] rounded-full overflow-hidden pointer-events-none">
+                <div className="h-full bg-accent rounded-full" style={{ width: `${progressPct}%` }} />
+              </div>
               <div
                 className="absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-accent rounded-full opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
                 style={{ left: `${progressPct}%`, marginLeft: '-6px' }}
@@ -311,7 +313,7 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
             >
               {isPlaying
                 ? <Pause size={18} className="text-black" />
-                : <Play size={18} className="text-black" />}
+                : <Play size={18} className="text-black ml-0.5" />}
             </button>
             <button
               onClick={nextTrack}

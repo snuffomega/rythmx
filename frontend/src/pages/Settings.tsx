@@ -123,7 +123,7 @@ function PlatformCard({ platform, active, configured, disabled, onClick }: Platf
 // id_itunes_deezer combined "library" key during live runs vs individual
 // sub-source keys from REST/completion payloads).
 const PIPELINE_PHASES = [
-  { id: 'sync', label: 'Library Sync', backendPhases: ['sync'], workers: [] },
+  { id: 'sync', label: 'Library Platform Sync', backendPhases: ['sync'], workers: [] },
   { id: 'identity', label: 'Identity Resolution', backendPhases: ['id_itunes_deezer', 'id_parallel'], workers: [
     { key: 'itunes_ids',   keys: ['itunes_artist', 'itunes'],  label: 'iTunes',   desc: 'Artist & album identity matching' },
     { key: 'deezer_ids',   keys: ['deezer_artist', 'deezer'],  label: 'Deezer',   desc: 'Artist & album identity matching' },
@@ -772,23 +772,27 @@ export function SettingsPage({ toast }: SettingsPageProps) {
 
         <h3 className="text-[10px] font-mono text-text-muted uppercase tracking-wider mb-2">Services</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-          <ServiceCard
-            name="Last.fm"
-            subtitle="Click to test"
-            icon={<Radio size={16} className="text-danger" />}
-            configured={settingsStatus?.lastfm_configured}
-            onTest={settingsApi.testLastfm}
-            onResult={(result) => handleServiceTestResult('Last.fm', result)}
-          />
-          <ServiceCard
-            key={`library-${platform}`}
-            name={PLATFORM_LABELS[platform] ?? platform}
-            subtitle="Click to test"
-            icon={<span className="text-accent font-bold text-sm">{(PLATFORM_LABELS[platform] ?? platform)[0]}</span>}
-            configured={platformConfigured(platform)}
-            onTest={testActiveLibraryPlatform}
-            onResult={(result) => handleServiceTestResult(PLATFORM_LABELS[platform] ?? platform, result)}
-          />
+          {(settingsStatus === null || settingsStatus?.lastfm_configured) && (
+            <ServiceCard
+              name="Last.fm"
+              subtitle="Click to test"
+              icon={<Radio size={16} className="text-danger" />}
+              configured={settingsStatus?.lastfm_configured}
+              onTest={settingsApi.testLastfm}
+              onResult={(result) => handleServiceTestResult('Last.fm', result)}
+            />
+          )}
+          {(settingsStatus === null || platformConfigured(platform)) && (
+            <ServiceCard
+              key={`library-${platform}`}
+              name={PLATFORM_LABELS[platform] ?? platform}
+              subtitle="Click to test"
+              icon={<span className="text-accent font-bold text-sm">{(PLATFORM_LABELS[platform] ?? platform)[0]}</span>}
+              configured={platformConfigured(platform)}
+              onTest={testActiveLibraryPlatform}
+              onResult={(result) => handleServiceTestResult(PLATFORM_LABELS[platform] ?? platform, result)}
+            />
+          )}
           {showSoulSyncCard && (
             <ServiceCard
               name="SoulSync"
@@ -799,22 +803,26 @@ export function SettingsPage({ toast }: SettingsPageProps) {
               onResult={(result) => handleServiceTestResult('SoulSync', result)}
             />
           )}
-          <ServiceCard
-            name="Spotify"
-            subtitle="Click to test"
-            icon={<span className="text-success font-bold text-sm">S</span>}
-            configured={settingsStatus?.spotify_configured}
-            onTest={settingsApi.testSpotify}
-            onResult={(result) => handleServiceTestResult('Spotify', result)}
-          />
-          <ServiceCard
-            name="Fanart.tv"
-            subtitle="Optional • click to test"
-            icon={<span className="text-[#e88c2a] font-bold text-sm">F</span>}
-            configured={settingsStatus?.fanart_configured}
-            onTest={settingsApi.testFanart}
-            onResult={(result) => handleServiceTestResult('Fanart.tv', result)}
-          />
+          {(settingsStatus === null || settingsStatus?.spotify_configured) && (
+            <ServiceCard
+              name="Spotify"
+              subtitle="Click to test"
+              icon={<span className="text-success font-bold text-sm">S</span>}
+              configured={settingsStatus?.spotify_configured}
+              onTest={settingsApi.testSpotify}
+              onResult={(result) => handleServiceTestResult('Spotify', result)}
+            />
+          )}
+          {(settingsStatus === null || settingsStatus?.fanart_configured) && (
+            <ServiceCard
+              name="Fanart.tv"
+              subtitle="Optional • click to test"
+              icon={<span className="text-[#e88c2a] font-bold text-sm">F</span>}
+              configured={settingsStatus?.fanart_configured}
+              onTest={settingsApi.testFanart}
+              onResult={(result) => handleServiceTestResult('Fanart.tv', result)}
+            />
+          )}
         </div>
       </section>
 
@@ -830,14 +838,14 @@ export function SettingsPage({ toast }: SettingsPageProps) {
           <button
             onClick={handleFetchToggle}
             disabled={fetchToggling}
-            className={`relative w-10 h-5 rounded-full transition-colors duration-200 flex-shrink-0 ${
+            className={`relative inline-flex items-center w-10 h-5 rounded-full transition-colors duration-200 flex-shrink-0 ${
               fetchEnabled ? 'bg-accent' : 'bg-[#2a2a2a]'
             } ${fetchToggling ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
             aria-label={fetchEnabled ? 'Disable fetch' : 'Enable fetch'}
           >
             <span
-              className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform duration-200 ${
-                fetchEnabled ? 'translate-x-5' : 'translate-x-0'
+              className={`inline-block w-4 h-4 rounded-full bg-white shadow transition-transform duration-200 ${
+                fetchEnabled ? 'translate-x-5' : 'translate-x-0.5'
               }`}
             />
           </button>

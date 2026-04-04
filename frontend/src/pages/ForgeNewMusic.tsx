@@ -552,7 +552,7 @@ export function ForgeNewMusic() {
 function ReleaseCard({ release }: { release: DiscoveredRelease }) {
   return (
     <div className="group flex flex-col gap-0">
-      <div className="relative overflow-hidden bg-[#111] aspect-square">
+      <div className="relative overflow-hidden bg-[#181818] aspect-square border border-[#1e1e1e]">
         {release.cover_url ? (
           <img
             src={release.cover_url}
@@ -561,7 +561,7 @@ function ReleaseCard({ release }: { release: DiscoveredRelease }) {
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center">
-            <Music2 size={32} className="text-[#2a2a2a]" />
+            <Music2 size={32} className="text-[#333]" />
           </div>
         )}
         {release.in_library && (
