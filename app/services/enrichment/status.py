@@ -16,14 +16,14 @@ def get_status() -> dict:
 
     try:
         with _connect() as conn:
-            track_row = conn.execute("SELECT COUNT(*) FROM lib_tracks").fetchone()
+            track_row = conn.execute("SELECT COUNT(*) FROM lib_tracks WHERE removed_at IS NULL").fetchone()
             track_count = track_row[0] if track_row else 0
 
-            album_row = conn.execute("SELECT COUNT(*) FROM lib_albums").fetchone()
+            album_row = conn.execute("SELECT COUNT(*) FROM lib_albums WHERE removed_at IS NULL").fetchone()
             total_albums = album_row[0] if album_row else 0
 
             enriched_row = conn.execute(
-                "SELECT COUNT(*) FROM lib_albums WHERE itunes_album_id IS NOT NULL OR deezer_id IS NOT NULL"
+                "SELECT COUNT(*) FROM lib_albums WHERE removed_at IS NULL AND (itunes_album_id IS NOT NULL OR deezer_id IS NOT NULL)"
             ).fetchone()
             enriched_albums = enriched_row[0] if enriched_row else 0
     except Exception:

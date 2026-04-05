@@ -405,11 +405,11 @@ def sync_library() -> dict:
 # ---------------------------------------------------------------------------
 
 def is_db_accessible() -> bool:
-    """Return True if lib_tracks has at least one navidrome-sourced row."""
+    """Return True if lib_tracks has at least one active navidrome-sourced row."""
     try:
         with _connect() as conn:
             row = conn.execute(
-                "SELECT COUNT(*) FROM lib_tracks WHERE source_platform = 'navidrome'"
+                "SELECT COUNT(*) FROM lib_tracks WHERE source_platform = 'navidrome' AND removed_at IS NULL"
             ).fetchone()
             return row[0] > 0
     except Exception:
@@ -417,11 +417,11 @@ def is_db_accessible() -> bool:
 
 
 def get_track_count() -> int:
-    """Return total navidrome track count from lib_tracks."""
+    """Return total active navidrome track count from lib_tracks."""
     try:
         with _connect() as conn:
             row = conn.execute(
-                "SELECT COUNT(*) FROM lib_tracks WHERE source_platform = 'navidrome'"
+                "SELECT COUNT(*) FROM lib_tracks WHERE source_platform = 'navidrome' AND removed_at IS NULL"
             ).fetchone()
             return row[0] if row else 0
     except Exception:

@@ -246,20 +246,20 @@ def sync_library() -> dict:
 # ---------------------------------------------------------------------------
 
 def is_db_accessible() -> bool:
-    """Return True if lib_tracks exists and has at least one row."""
+    """Return True if lib_tracks has at least one active row."""
     try:
         with _connect() as conn:
-            row = conn.execute("SELECT COUNT(*) FROM lib_tracks").fetchone()
+            row = conn.execute("SELECT COUNT(*) FROM lib_tracks WHERE removed_at IS NULL").fetchone()
             return row[0] > 0
     except Exception:
         return False
 
 
 def get_track_count() -> int:
-    """Return total track count from lib_tracks."""
+    """Return total active track count from lib_tracks."""
     try:
         with _connect() as conn:
-            row = conn.execute("SELECT COUNT(*) FROM lib_tracks").fetchone()
+            row = conn.execute("SELECT COUNT(*) FROM lib_tracks WHERE removed_at IS NULL").fetchone()
             return row[0] if row else 0
     except Exception:
         return 0
