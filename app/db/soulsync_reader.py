@@ -15,6 +15,7 @@ import sqlite3
 import logging
 import time
 from app import config
+from app.db.sql_helpers import build_in_clause
 
 logger = logging.getLogger(__name__)
 
@@ -479,9 +480,9 @@ def find_track_by_name(artist_name: str, track_title: str) -> str | None:
                 return None
 
             # Dynamic IN() placeholders — values are internal IDs, not user input.
-            placeholders = ",".join("?" * len(matched_artist_ids))
             track_rows = conn.execute(
-                "SELECT t.id, t.title FROM tracks t WHERE t.artist_id IN (" + placeholders + ")",
+                "SELECT t.id, t.title FROM tracks t WHERE t.artist_id IN "
+                + build_in_clause(len(matched_artist_ids)),
                 matched_artist_ids
             ).fetchall()
             for track_row in track_rows:
