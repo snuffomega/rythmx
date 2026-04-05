@@ -1065,6 +1065,48 @@ def test_library_stream_navidrome_forwards_range_and_returns_partial(monkeypatch
     assert captured["headers"] == {"Range": "bytes=0-3"}
 
 
+def test_library_stream_navidrome_m4a_forces_range_and_mime_fallback(monkeypatch):
+    captured: dict[str, object] = {"headers": None}
+
+    def _fake_get(url, headers=None, stream=None, timeout=None):
+        _ = (url, stream, timeout)
+        captured["headers"] = headers
+        return _FakeUpstreamResponse(
+            status_code=206,
+            headers={
+                "Content-Type": "application/octet-stream",
+                "Content-Length": "4",
+                "Content-Range": "bytes 0-3/1000",
+            },
+        )
+
+    monkeypatch.setattr(library_stream, "_verify_key", lambda _k: None)
+    monkeypatch.setattr(
+        library_stream,
+        "_get_track",
+        lambda _track_id: {
+            "id": "tr-m4a",
+            "source_platform": "navidrome",
+            "file_path": "Artist/Track.m4a",
+            "container": "m4a",
+            "codec": "aac",
+        },
+    )
+    monkeypatch.setattr("app.db.navidrome_reader._get_client", lambda: _FakeNavidromeClient())
+    monkeypatch.setattr("requests.get", _fake_get)
+
+    response = library_stream.stream_track(
+        "tr-m4a",
+        _FakeRequest(headers={}),
+        api_key="test",
+    )
+
+    assert response.status_code == 206
+    assert response.media_type == "audio/mp4"
+    assert response.headers["content-range"] == "bytes 0-3/1000"
+    assert captured["headers"] == {"Range": "bytes=0-"}
+
+
 def test_library_stream_plex_returns_redirect(monkeypatch):
     class _FakePlexTrack:
         @staticmethod
