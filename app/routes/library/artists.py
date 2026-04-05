@@ -251,7 +251,10 @@ def library_artists(
     letter: Optional[str] = Query(default=None),
 ):
     q = q.strip()
-    where = ["a.removed_at IS NULL"]
+    where = [
+        "a.removed_at IS NULL",
+        "EXISTS (SELECT 1 FROM lib_albums al WHERE al.artist_id = a.id AND al.removed_at IS NULL)",
+    ]
     params: list = []
     if q:
         where.append("lower(a.name) LIKE lower(?)")
