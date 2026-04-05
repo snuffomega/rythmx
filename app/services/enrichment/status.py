@@ -12,7 +12,7 @@ def get_status() -> dict:
     Always safe to call — returns sane defaults if tables don't exist yet.
     """
     last_synced = rythmx_store.get_setting("library_last_synced")
-    backend = rythmx_store.get_setting("library_platform") or config.LIBRARY_PLATFORM
+    platform = rythmx_store.get_setting("library_platform") or config.LIBRARY_PLATFORM
 
     try:
         with _connect() as conn:
