@@ -14,6 +14,7 @@ from fastapi import APIRouter, Body, Depends, Query
 from fastapi.responses import JSONResponse
 
 from app.db import rythmx_store
+from app.db.sql_helpers import build_in_clause
 from app.dependencies import verify_api_key
 from app.services.enrichment._helpers import strip_title_suffixes
 
@@ -39,15 +40,7 @@ def _get_local_top_tracks(
     popularity_source: str = "local",
 ) -> list[dict[str, Any]]:
     params: list[Any] = [artist_id]
-    exclude_sql = ""
-    if exclude_track_ids:
-        placeholders = ",".join("?" for _ in exclude_track_ids)
-        exclude_sql = f" AND t.id NOT IN ({placeholders})"
-        params.extend(sorted(exclude_track_ids))
-    params.append(limit)
-
-    rows = conn.execute(
-        f"""
+    sql = """
         SELECT t.id, t.album_id, t.artist_id, t.title,
                t.track_number, t.disc_number, t.duration,
                t.rating, t.play_count, t.tempo_deezer AS tempo,
@@ -57,13 +50,21 @@ def _get_local_top_tracks(
         FROM lib_tracks t
         JOIN lib_albums al ON al.id = t.album_id
         WHERE al.artist_id = ? AND t.removed_at IS NULL AND al.removed_at IS NULL
-        {exclude_sql}
+    """
+    if exclude_track_ids:
+        params.extend(sorted(exclude_track_ids))
+        sql += " AND t.id NOT IN " + build_in_clause(len(exclude_track_ids))
+    sql += """
         ORDER BY
             COALESCE(t.play_count, 0) DESC,
             COALESCE(t.rating, 0) DESC,
             lower(t.title) ASC
         LIMIT ?
-        """,
+    """
+    params.append(limit)
+
+    rows = conn.execute(
+        sql,
         tuple(params),
     ).fetchall()
 
@@ -147,9 +148,7 @@ def _get_public_top_tracks(conn, artist_id: str, deezer_artist_id: str) -> list[
     if not deezer_track_ids:
         return []
 
-    placeholders = ",".join("?" for _ in deezer_track_ids)
-    rows = conn.execute(
-        f"""
+    sql = """
         SELECT t.id, t.album_id, t.artist_id, t.title,
                t.track_number, t.disc_number, t.duration,
                t.rating, t.play_count, t.tempo_deezer AS tempo,
@@ -162,8 +161,11 @@ def _get_public_top_tracks(conn, artist_id: str, deezer_artist_id: str) -> list[
         WHERE t.artist_id = ?
           AND t.removed_at IS NULL
           AND al.removed_at IS NULL
-          AND t.deezer_id IN ({placeholders})
-        """,
+          AND t.deezer_id IN
+    """
+    sql += build_in_clause(len(deezer_track_ids))
+    rows = conn.execute(
+        sql,
         (artist_id, *deezer_track_ids),
     ).fetchall()
 
@@ -286,13 +288,13 @@ def library_artists(
     offset = (page - 1) * per_page
 
     with rythmx_store._connect() as conn:
+        total_sql = "SELECT COUNT(*) FROM lib_artists a WHERE " + where_clause
         total = conn.execute(
-            f"SELECT COUNT(*) FROM lib_artists a WHERE {where_clause}",
+            total_sql,
             params,
         ).fetchone()[0]
 
-        rows = conn.execute(
-            f"""
+        rows_sql = """
             SELECT a.id, a.name, a.match_confidence, a.source_platform,
                    a.lastfm_tags_json,
                    a.genres_json_spotify AS genres_json,
@@ -314,7 +316,10 @@ def library_artists(
                    ON ia.entity_type = 'artist' AND ia.entity_key = a.id
             LEFT JOIN lib_albums al
                    ON al.artist_id = a.id AND al.removed_at IS NULL
-            WHERE {where_clause}
+            WHERE
+        """
+        rows_sql += where_clause
+        rows_sql += """
             GROUP BY a.id
             ORDER BY
                 CASE
@@ -324,7 +329,9 @@ def library_artists(
                     ELSE a.name
                 END COLLATE NOCASE
             LIMIT ? OFFSET ?
-            """,
+        """
+        rows = conn.execute(
+            rows_sql,
             params + [per_page, offset],
         ).fetchall()
 
@@ -648,9 +655,9 @@ def library_artist_match_debug(artist_id: str):
         album_ids = [a["id"] for a in albums]
         track_counts: dict[str, int] = {}
         if album_ids:
-            ph = ",".join("?" * len(album_ids))
+            clause = build_in_clause(len(album_ids))
             for row in conn.execute(
-                f"SELECT album_id, COUNT(*) AS cnt FROM lib_tracks WHERE album_id IN ({ph}) GROUP BY album_id",
+                "SELECT album_id, COUNT(*) AS cnt FROM lib_tracks WHERE album_id IN " + clause + " GROUP BY album_id",
                 album_ids,
             ).fetchall():
                 track_counts[row["album_id"]] = row["cnt"]

@@ -168,27 +168,23 @@ def settings_set_library_platform(data: Optional[dict[str, Any]] = Body(default=
 
 def _soft_delete_platform_rows(platform: str) -> None:
     """Tombstone all lib_* rows for the given platform."""
-    import sqlite3 as _sq
     try:
-        conn = _sq.connect(config.RYTHMX_DB, timeout=10)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute(
-            "UPDATE lib_tracks SET removed_at = CURRENT_TIMESTAMP "
-            "WHERE source_platform = ? AND removed_at IS NULL",
-            (platform,),
-        )
-        conn.execute(
-            "UPDATE lib_albums SET removed_at = CURRENT_TIMESTAMP "
-            "WHERE source_platform = ? AND removed_at IS NULL",
-            (platform,),
-        )
-        conn.execute(
-            "UPDATE lib_artists SET removed_at = CURRENT_TIMESTAMP "
-            "WHERE source_platform = ? AND removed_at IS NULL",
-            (platform,),
-        )
-        conn.commit()
-        conn.close()
+        with rythmx_store._connect() as conn:
+            conn.execute(
+                "UPDATE lib_tracks SET removed_at = CURRENT_TIMESTAMP "
+                "WHERE source_platform = ? AND removed_at IS NULL",
+                (platform,),
+            )
+            conn.execute(
+                "UPDATE lib_albums SET removed_at = CURRENT_TIMESTAMP "
+                "WHERE source_platform = ? AND removed_at IS NULL",
+                (platform,),
+            )
+            conn.execute(
+                "UPDATE lib_artists SET removed_at = CURRENT_TIMESTAMP "
+                "WHERE source_platform = ? AND removed_at IS NULL",
+                (platform,),
+            )
         logger.info("_soft_delete_platform_rows: tombstoned all '%s' rows", platform)
     except Exception as exc:
         logger.error("_soft_delete_platform_rows failed for platform '%s': %s", platform, exc)

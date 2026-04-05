@@ -11,6 +11,7 @@ from fastapi import APIRouter, Body, Depends, Query
 from fastapi.responses import JSONResponse
 
 from app.db import rythmx_store
+from app.db.sql_helpers import build_in_clause
 from app.dependencies import verify_api_key
 
 logger = logging.getLogger(__name__)
@@ -39,9 +40,8 @@ def library_releases_global(
 
     if kind:
         kinds = [k.strip() for k in kind.split(",") if k.strip()]
-        placeholders = ",".join("?" * len(kinds))
         conditions.append(
-            f"COALESCE(lr.kind_deezer, lr.kind_itunes) IN ({placeholders})"
+            "COALESCE(lr.kind_deezer, lr.kind_itunes) IN " + build_in_clause(len(kinds))
         )
         params.extend(kinds)
 
@@ -57,7 +57,7 @@ def library_releases_global(
         else "lr.artist_name ASC, COALESCE(lr.release_date_itunes, lr.release_date_deezer) DESC"
     )
 
-    sql = f"""
+    sql = """
         SELECT lr.id, lr.artist_id, lr.artist_name, lr.title,
                COALESCE(lr.release_date_itunes, lr.release_date_deezer) AS release_date,
                lr.is_owned, lr.user_dismissed,
@@ -72,11 +72,13 @@ def library_releases_global(
                lr.catalog_source, lr.deezer_album_id, lr.itunes_album_id,
                lr.explicit, lr.label, lr.genre_itunes, lr.canonical_release_id
         FROM lib_releases lr
-        {where}
-        ORDER BY {order_col}
-        LIMIT ? OFFSET ?
     """
-    count_sql = f"SELECT COUNT(*) FROM lib_releases lr {where}"
+    if where:
+        sql += "\n" + where + "\n"
+    sql += "ORDER BY " + order_col + "\nLIMIT ? OFFSET ?"
+    count_sql = "SELECT COUNT(*) FROM lib_releases lr"
+    if where:
+        count_sql += " " + where
 
     with rythmx_store._connect() as conn:
         total = conn.execute(count_sql, params).fetchone()[0]
@@ -223,4 +225,3 @@ def library_update_release_prefs(
             logger.warning("refresh_missing_counts after prefs update failed: %s", e)
 
     return {"status": "ok"}
-

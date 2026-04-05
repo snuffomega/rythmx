@@ -17,6 +17,7 @@ from typing import Any
 
 from app import config
 from app.db import rythmx_store
+from app.db.sql_helpers import build_in_clause
 from app.clients import music_client
 
 logger = logging.getLogger(__name__)
@@ -180,9 +181,9 @@ def expand_neighbors(seed_names: list[str]) -> list[str]:
         lib_set = {r["name_lower"] for r in lib_rows}
 
         # Get similar_artists_json for seed artists
-        placeholders = ",".join("?" for _ in seed_names)
         similar_rows = conn.execute(
-            "SELECT similar_artists_json FROM lib_artists WHERE name_lower IN (" + placeholders + ")",
+            "SELECT similar_artists_json FROM lib_artists WHERE name_lower IN "
+            + build_in_clause(len(seed_names)),
             [n.lower() for n in seed_names]
         ).fetchall()
 
@@ -254,10 +255,11 @@ def fetch_releases_for_neighbors(
     stored_deezer_ids: dict[str, str] = {}
     names_lower = [n.lower() for n in neighbor_names]
     if names_lower:
-        placeholders = ",".join("?" for _ in names_lower)
         with _connect() as conn:
             rows = conn.execute(
-                f"SELECT name_lower, deezer_artist_id FROM lib_artists WHERE name_lower IN ({placeholders}) AND deezer_artist_id IS NOT NULL",
+                "SELECT name_lower, deezer_artist_id FROM lib_artists WHERE name_lower IN "
+                + build_in_clause(len(names_lower))
+                + " AND deezer_artist_id IS NOT NULL",
                 names_lower,
             ).fetchall()
         stored_deezer_ids = {r["name_lower"]: str(r["deezer_artist_id"]) for r in rows}

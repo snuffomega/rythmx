@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 from app import config
 from app.db import get_playlist_pusher
 from app.db import rythmx_store
+from app.db.sql_helpers import build_in_clause
 from app.dependencies import verify_api_key
 from app.services import playlist_importer
 from app.services.forge import discovery_runner, new_music_runner
@@ -155,9 +156,8 @@ def _sync_library_playlist_cache(
     with rythmx_store._connect() as conn:
         durations: dict[str, int] = {}
         if ordered_ids:
-            placeholders = ",".join("?" for _ in ordered_ids)
             rows = conn.execute(
-                f"SELECT id, duration FROM lib_tracks WHERE id IN ({placeholders})",
+                "SELECT id, duration FROM lib_tracks WHERE id IN " + build_in_clause(len(ordered_ids)),
                 tuple(ordered_ids),
             ).fetchall()
             durations = {str(r["id"]): int(r["duration"] or 0) for r in rows}

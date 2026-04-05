@@ -16,6 +16,7 @@ import logging
 import sqlite3
 
 from app import config
+from app.db.sql_helpers import build_in_clause
 
 logger = logging.getLogger(__name__)
 
@@ -311,9 +312,8 @@ def add_tracks_to_playlist(playlist_id: str, track_ids: list[str]) -> dict:
 
         platform = str(pl["source_platform"] or "").lower()
 
-        placeholders = ",".join("?" for _ in unique_track_ids)
         valid_rows = conn.execute(
-            f"SELECT id, duration FROM lib_tracks WHERE id IN ({placeholders})",
+            "SELECT id, duration FROM lib_tracks WHERE id IN " + build_in_clause(len(unique_track_ids)),
             tuple(unique_track_ids),
         ).fetchall()
         valid_duration = {str(r["id"]): int(r["duration"] or 0) for r in valid_rows}

@@ -7,6 +7,7 @@ import logging
 from typing import Callable
 
 import sqlite3
+from app.db.sql_helpers import build_in_clause
 
 
 def backfill_normalized_titles(connect: Callable[[], sqlite3.Connection], logger: logging.Logger) -> int:
@@ -43,9 +44,8 @@ def recompute_normalized_titles(
     updated = 0
     with connect() as conn:
         if artist_ids:
-            placeholders = ",".join("?" * len(artist_ids))
             rows = conn.execute(
-                f"SELECT id, title FROM lib_releases WHERE artist_id IN ({placeholders})",
+                "SELECT id, title FROM lib_releases WHERE artist_id IN " + build_in_clause(len(artist_ids)),
                 artist_ids,
             ).fetchall()
         else:
@@ -74,8 +74,7 @@ def refresh_missing_counts(
 ) -> int:
     """Recompute lib_artists.missing_count from lib_releases with dedup logic."""
     if artist_ids:
-        placeholders = ",".join("?" * len(artist_ids))
-        scope_clause = f"WHERE lib_artists.id IN ({placeholders})"
+        scope_clause = "WHERE lib_artists.id IN " + build_in_clause(len(artist_ids))
         params: tuple = tuple(artist_ids)
     elif artist_id:
         scope_clause = "WHERE lib_artists.id = ?"
@@ -85,8 +84,7 @@ def refresh_missing_counts(
         params = ()
 
     with connect() as conn:
-        conn.execute(
-            f"""
+        sql = """
             UPDATE lib_artists SET missing_count = COALESCE((
                 SELECT COUNT(*) FROM (
                     SELECT id,
@@ -133,8 +131,11 @@ def refresh_missing_counts(
                       )
                   )
             ), 0)
-            {scope_clause}
-            """,
+        """
+        if scope_clause:
+            sql += "\n" + scope_clause
+        conn.execute(
+            sql,
             params,
         )
         updated = conn.execute("SELECT changes()").fetchone()[0]
@@ -158,16 +159,14 @@ def populate_canonical_release_ids(
     where = "WHERE normalized_title IS NOT NULL AND artist_id IS NOT NULL"
     params: tuple = ()
     if artist_ids:
-        placeholders = ",".join("?" * len(artist_ids))
-        where += f" AND artist_id IN ({placeholders})"
+        where += " AND artist_id IN " + build_in_clause(len(artist_ids))
         params = tuple(artist_ids)
     elif artist_id:
         where += " AND artist_id = ?"
         params = (artist_id,)
 
     with connect() as conn:
-        cursor = conn.execute(
-            f"""
+        sql = """
             UPDATE lib_releases SET canonical_release_id = (
                 SELECT sub.id FROM lib_releases sub
                 WHERE sub.artist_id = lib_releases.artist_id
@@ -180,8 +179,10 @@ def populate_canonical_release_ids(
                     CASE sub.catalog_source WHEN 'deezer' THEN 1 ELSE 2 END
                 LIMIT 1
             )
-            {where}
-            """,
+        """
+        sql += "\n" + where
+        cursor = conn.execute(
+            sql,
             params,
         )
         updated = cursor.rowcount
