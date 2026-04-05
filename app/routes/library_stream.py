@@ -34,6 +34,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+_GENERIC_CONTENT_TYPES = {"", "application/octet-stream"}
+
 
 def _verify_key(api_key: str) -> None:
     """Validate the api_key query param against the stored key."""
@@ -46,13 +48,34 @@ def _get_track(track_id: str) -> dict:
     """Fetch a single lib_tracks row by id. Raises 404 if not found."""
     with _connect() as conn:
         row = conn.execute(
-            "SELECT id, source_platform, file_path FROM lib_tracks "
+            "SELECT id, source_platform, file_path, container, codec FROM lib_tracks "
             "WHERE id = ? AND removed_at IS NULL LIMIT 1",
             (track_id,),
         ).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail={"status": "error", "message": "Track not found"})
     return dict(row)
+
+
+def _is_m4a_track(track: dict) -> bool:
+    """Best-effort m4a detection from path/container/codec metadata."""
+    file_path = str(track.get("file_path") or "").lower()
+    if file_path.endswith(".m4a"):
+        return True
+
+    container = str(track.get("container") or "").lower()
+    codec = str(track.get("codec") or "").lower()
+    return container in {"m4a", "mp4"} or codec in {"aac", "alac"}
+
+
+def _resolve_content_type(track: dict, upstream_content_type: str | None) -> str:
+    """Prefer upstream type, but map generic m4a responses to audio/mp4."""
+    cleaned = str(upstream_content_type or "").split(";")[0].strip().lower()
+    if cleaned not in _GENERIC_CONTENT_TYPES:
+        return str(upstream_content_type)
+    if _is_m4a_track(track):
+        return "audio/mp4"
+    return "audio/mpeg"
 
 
 @router.get("/library/tracks/{track_id}/stream")
@@ -86,11 +109,18 @@ def stream_track(
         # song_id for Navidrome is the lib_tracks.id value (e.g. "tr-abc123")
         song_id = track_id
 
-        # Forward Range header if present (enables seeking)
+        # Forward seek headers. For m4a, request byte ranges even if the
+        # browser did not send one so startup/seek behavior remains stable.
         range_header = request.headers.get("range")
+        if not range_header and _is_m4a_track(track):
+            range_header = "bytes=0-"
+
         headers = {}
         if range_header:
             headers["Range"] = range_header
+        if_range = request.headers.get("if-range")
+        if if_range:
+            headers["If-Range"] = if_range
 
         import requests as req_lib
         upstream_url = client.get_stream_url(song_id)
@@ -104,22 +134,23 @@ def stream_track(
                 detail={"status": "error", "message": "Upstream stream unavailable"},
             ) from exc
 
-        content_type = upstream.headers.get("Content-Type", "audio/mpeg")
+        content_type = _resolve_content_type(track, upstream.headers.get("Content-Type"))
         status_code = upstream.status_code  # 200 or 206
 
         def _iter():
             try:
-                for chunk in upstream.iter_content(chunk_size=65536):
+                for chunk in upstream.iter_content(chunk_size=32768):
                     if chunk:
                         yield chunk
             finally:
                 upstream.close()
 
-        response_headers = {"Accept-Ranges": "bytes"}
-        if "Content-Range" in upstream.headers:
-            response_headers["Content-Range"] = upstream.headers["Content-Range"]
-        if "Content-Length" in upstream.headers:
-            response_headers["Content-Length"] = upstream.headers["Content-Length"]
+        response_headers = {
+            "Accept-Ranges": upstream.headers.get("Accept-Ranges", "bytes"),
+        }
+        for header in ("Content-Range", "Content-Length", "ETag", "Last-Modified", "Cache-Control"):
+            if header in upstream.headers:
+                response_headers[header] = upstream.headers[header]
 
         return StreamingResponse(
             _iter(),
