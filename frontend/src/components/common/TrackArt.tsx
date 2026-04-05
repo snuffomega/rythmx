@@ -1,4 +1,5 @@
 import { Disc } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { useImage } from '../../hooks/useImage';
 import { getImageUrl } from '../../utils/imageUrl';
 
@@ -27,9 +28,19 @@ export function TrackArt({
   discSize,
   draggable,
 }: TrackArtProps) {
-  const resolved = useImage('album', title, artist);
-  const src = thumbUrl
-    ? getImageUrl(thumbUrl, thumbHash ?? null)
+  const [primaryErrored, setPrimaryErrored] = useState(false);
+  const hasPrimaryArtwork = Boolean(thumbUrl || thumbHash);
+
+  useEffect(() => {
+    setPrimaryErrored(false);
+  }, [thumbUrl, thumbHash, title, artist]);
+
+  const resolved = useImage('album', title, artist, hasPrimaryArtwork && !primaryErrored);
+  const primarySrc = hasPrimaryArtwork
+    ? getImageUrl(thumbUrl ?? '', thumbHash ?? null)
+    : null;
+  const src = (!primaryErrored && primarySrc)
+    ? primarySrc
     : (resolved ? getImageUrl(resolved) : null);
 
   if (src) {
@@ -39,7 +50,15 @@ export function TrackArt({
         : size === 'fill'
           ? 'w-full h-full object-cover'
           : 'w-full max-w-[400px] aspect-square object-cover rounded border border-[#222]';
-    return <img src={src} alt={title} className={imgClass} draggable={draggable} />;
+    return (
+      <img
+        src={src}
+        alt={title}
+        className={imgClass}
+        draggable={draggable}
+        onError={() => setPrimaryErrored(true)}
+      />
+    );
   }
 
   if (size === 'sm') {
