@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { ReleaseDetailView } from '../pages/Library';
+import { ReleaseDetailView } from '../components/library/ReleaseDetailView';
 
 export const Route = createFileRoute('/library/release/$id')({
   component: ReleaseDetailRoute,

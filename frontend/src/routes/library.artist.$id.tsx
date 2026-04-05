@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { ArtistDetail } from '../pages/Library';
+import { ArtistDetail } from '../components/library/ArtistDetail';
 
 export const Route = createFileRoute('/library/artist/$id')({
   component: ArtistDetailRoute,
