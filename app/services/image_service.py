@@ -386,9 +386,80 @@ def _entity_key(entity_type: str, name: str, artist: str) -> str:
     return name.lower() if entity_type == "artist" else f"{artist.lower()}|||{name.lower()}"
 
 
-def _fetch_and_cache(entity_type: str, name: str, artist: str) -> None:
+def _entity_keys(entity_type: str, name: str, artist: str) -> tuple[list[str], int | None]:
+    """
+    Return candidate cache keys ordered by preference plus match_confidence.
+
+    Preference:
+      1. Stable DB id key (when resolvable)
+      2. Legacy normalized name key
+    """
+    legacy_key = _entity_key(entity_type, name, artist)
+    keys: list[str] = []
+    confidence: int | None = None
+
+    try:
+        with rythmx_store._connect() as conn:
+            if entity_type == "artist":
+                row = conn.execute(
+                    """
+                    SELECT id, match_confidence
+                    FROM lib_artists
+                    WHERE removed_at IS NULL
+                      AND lower(name) = lower(?)
+                    LIMIT 1
+                    """,
+                    (name,),
+                ).fetchone()
+                if row:
+                    keys.append(str(row["id"]))
+                    confidence = int(row["match_confidence"] or 0)
+            elif entity_type == "album":
+                row = conn.execute(
+                    """
+                    SELECT al.id, al.match_confidence
+                    FROM lib_albums al
+                    JOIN lib_artists ar ON ar.id = al.artist_id
+                    WHERE al.removed_at IS NULL
+                      AND ar.removed_at IS NULL
+                      AND lower(ar.name) = lower(?)
+                      AND lower(al.title) = lower(?)
+                    LIMIT 1
+                    """,
+                    (artist, name),
+                ).fetchone()
+                if row:
+                    keys.append(str(row["id"]))
+                    confidence = int(row["match_confidence"] or 0)
+    except Exception as exc:
+        logger.debug("image key resolve failed (%s/%s): %s", entity_type, name, exc)
+
+    if legacy_key not in keys:
+        keys.append(legacy_key)
+    return keys, confidence
+
+
+def _cache_not_found(entity_type: str, cache_keys: list[str]) -> None:
+    """Persist a not-found marker so repeated resolve attempts do not keep re-queueing."""
+    for key in cache_keys:
+        rythmx_store.set_image_cache_entry(
+            entity_type,
+            key,
+            "",
+            local_path=None,
+            content_hash=None,
+            artwork_source="not_found",
+        )
+
+
+def _fetch_and_cache(
+    entity_type: str,
+    name: str,
+    artist: str,
+    cache_keys: list[str],
+    in_flight_key: str,
+) -> None:
     """Background worker: fetch image from best available source and write to cache."""
-    key = _entity_key(entity_type, name, artist)
     try:
         url = ""
 
@@ -513,22 +584,26 @@ def _fetch_and_cache(entity_type: str, name: str, artist: str) -> None:
             except Exception as exc:
                 logger.warning("L3 ingest failed for %s/%s: %s", entity_type, name, exc)
 
-            if content_hash:
-                rythmx_store.set_image_cache_entry(
-                    entity_type, key, url,
-                    local_path=local_path,
-                    content_hash=content_hash,
-                    artwork_source="runtime",
-                )
-            else:
-                rythmx_store.set_image_cache(entity_type, key, url)
-
-            # Promote to L1 so subsequent requests skip SQLite entirely
-            _mem_cache_put(key, url, time.time())
-        logger.debug("Image cached: [%s] %s — %s", entity_type, name, url[:60] if url else "(none)")
+            for key in cache_keys:
+                if content_hash:
+                    rythmx_store.set_image_cache_entry(
+                        entity_type,
+                        key,
+                        url,
+                        local_path=local_path,
+                        content_hash=content_hash,
+                        artwork_source="runtime",
+                    )
+                else:
+                    rythmx_store.set_image_cache(entity_type, key, url)
+                _mem_cache_put(key, url, time.time())
+            logger.debug("Image cached: [%s] %s -> %s", entity_type, name, url[:60])
+        else:
+            _cache_not_found(entity_type, cache_keys)
+            logger.info("Image search not found: type=%s artist='%s' name='%s'", entity_type, artist, name)
     finally:
         with _in_flight_lock:
-            _in_flight.discard(key)
+            _in_flight.discard(in_flight_key)
 
 
 # ---------------------------------------------------------------------------
@@ -570,25 +645,41 @@ def resolve_image(entity_type: str, name: str, artist: str = "") -> tuple[str, b
     name:        artist name, album title, or track title
     artist:      artist name (required for album and track lookups)
     """
-    key = _entity_key(entity_type, name, artist)
+    keys, confidence = _entity_keys(entity_type, name, artist)
+    inflight_key = keys[0]
     now = time.time()
 
-    # --- L1: in-memory dict (instant, ~0ms) ---
-    entry = _mem_cache.get(key)
-    if entry and (now - entry[1]) < _MEM_TTL:
-        return entry[0], False
+    # --- L1: in-memory dict (instant, ~0ms), check all alias keys ---
+    for key in keys:
+        entry = _mem_cache.get(key)
+        if entry and (now - entry[1]) < _MEM_TTL:
+            return entry[0], False
 
-    # --- L2: SQLite image_cache (~1ms) ---
-    cached = rythmx_store.get_image_cache(entity_type, key)
-    if cached is not None:
-        _mem_cache_put(key, cached, now)  # promote to L1
-        return cached, False
+    # --- L2: SQLite image_cache (~1ms), check all alias keys ---
+    for key in keys:
+        row = rythmx_store.get_image_cache_entry(entity_type, key) or {}
+        cached_url = str(row.get("image_url") or "").strip()
+        if cached_url:
+            for alias in keys:
+                _mem_cache_put(alias, cached_url, now)
+            return cached_url, False
+        if str(row.get("artwork_source") or "") == "not_found":
+            return "", False
+
+    # Gate live lookups to higher-confidence metadata only.
+    if entity_type in ("artist", "album"):
+        if confidence is None or confidence < 85:
+            logger.debug(
+                "resolve_image: skip live lookup for low-confidence %s '%s' (artist='%s', confidence=%s)",
+                entity_type, name, artist, confidence,
+            )
+            return "", False
 
     # --- L3: API fetch (background thread, ~200-500ms) ---
     with _in_flight_lock:
-        if key in _in_flight:
+        if inflight_key in _in_flight:
             return "", True  # Already queued — caller retries
-        _in_flight.add(key)
+        _in_flight.add(inflight_key)
 
-    _executor.submit(_fetch_and_cache, entity_type, name, artist)
+    _executor.submit(_fetch_and_cache, entity_type, name, artist, keys, inflight_key)
     return "", True
