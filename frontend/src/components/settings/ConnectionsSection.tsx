@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Loader2, Radio, Database } from 'lucide-react';
-import { settingsApi, libraryApi } from '../../services/api';
-import { useApi } from '../../hooks/useApi';
+import { settingsApi } from '../../services/api';
 import type { LibraryPlatform, Settings } from '../../types';
 
 export const PLATFORM_LABELS: Record<string, string> = {
@@ -68,24 +67,9 @@ function ServiceCard({ name, subtitle, icon, configured, onTest, onResult }: Ser
   );
 }
 
-interface PlatformCardProps {
-  platform: LibraryPlatform;
-  active: boolean;
-  configured: boolean;
-  disabled?: boolean;
-  onClick: (platform: LibraryPlatform) => void;
-}
-
-function PlatformCard({ platform, active, configured, disabled, onClick }: PlatformCardProps) {
+function ActivePlatformCard({ platform, configured }: { platform: LibraryPlatform; configured: boolean }) {
   return (
-    <button
-      type="button"
-      onClick={() => onClick(platform)}
-      disabled={disabled}
-      className={`bg-[#0e0e0e] border p-4 text-left transition-colors disabled:opacity-70 disabled:cursor-not-allowed ${
-        active ? 'border-accent/60' : 'border-[#1a1a1a] hover:border-[#303030]'
-      }`}
-    >
+    <div className="bg-[#0e0e0e] border border-accent/60 p-4">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2.5">
           <div className="w-7 h-7 bg-[#181818] flex items-center justify-center flex-shrink-0">
@@ -98,22 +82,15 @@ function PlatformCard({ platform, active, configured, disabled, onClick }: Platf
             </p>
           </div>
         </div>
-        <span
-          className={`text-[10px] font-mono uppercase tracking-wider ${
-            active ? 'text-accent' : 'text-text-muted'
-          }`}
-        >
-          {active ? 'Active' : 'Set Active'}
-        </span>
+        <span className="text-[10px] font-mono uppercase tracking-wider text-accent">Active</span>
       </div>
-    </button>
+    </div>
   );
 }
 
 export interface ConnectionsSectionProps {
   platform: LibraryPlatform;
   settingsStatus: Settings | null;
-  onPlatformChange: (p: LibraryPlatform) => void;
   onServiceTestResult: (label: string, result: { connected: boolean; message?: string }) => void;
   toast: { success: (m: string) => void; error: (m: string) => void };
 }
@@ -121,27 +98,9 @@ export interface ConnectionsSectionProps {
 export function ConnectionsSection({
   platform,
   settingsStatus,
-  onPlatformChange,
   onServiceTestResult,
   toast,
 }: ConnectionsSectionProps) {
-  const [switchingBackend, setSwitchingBackend] = useState(false);
-  const { refetch: refetchLibrary } = useApi(() => libraryApi.getStatus());
-
-  const handlePlatformChange = async (p: LibraryPlatform) => {
-    setSwitchingBackend(true);
-    try {
-      await settingsApi.setLibraryPlatform(p);
-      onPlatformChange(p);
-      toast.success(`Switched to ${PLATFORM_LABELS[p] ?? p}`);
-      refetchLibrary();
-    } catch {
-      toast.error('Failed to switch platform');
-    } finally {
-      setSwitchingBackend(false);
-    }
-  };
-
   const platformConfigured = (p: LibraryPlatform): boolean => {
     if (p === 'navidrome') return Boolean(settingsStatus?.navidrome_configured);
     if (p === 'plex') return Boolean(settingsStatus?.plex_configured);
@@ -160,17 +119,8 @@ export function ConnectionsSection({
     <section>
       <h2 className="text-text-muted text-xs font-semibold uppercase tracking-widest mb-3">Connections</h2>
       <h3 className="text-[10px] font-mono text-text-muted uppercase tracking-wider mb-2">Library Platform</h3>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-5">
-        {(['plex', 'navidrome', 'jellyfin'] as LibraryPlatform[]).map((p) => (
-          <PlatformCard
-            key={p}
-            platform={p}
-            active={platform === p}
-            configured={platformConfigured(p)}
-            disabled={switchingBackend}
-            onClick={(pl) => void handlePlatformChange(pl)}
-          />
-        ))}
+      <div className="mb-5">
+        <ActivePlatformCard platform={platform} configured={platformConfigured(platform)} />
       </div>
 
       <h3 className="text-[10px] font-mono text-text-muted uppercase tracking-wider mb-2">Services</h3>

@@ -28,13 +28,10 @@ export function SettingsPage({ toast }: SettingsPageProps) {
   const { initFromApi } = useSettingsStore();
 
   useEffect(() => {
-    if (libraryStatus?.platform) setPlatform(libraryStatus.platform as LibraryPlatform);
-  }, [libraryStatus?.platform]);
-
-  useEffect(() => {
     settingsApi.get().then(s => {
       setSettingsStatus(s);
       initFromApi(s);
+      if (s.library_platform) setPlatform(s.library_platform);
     }).catch(() => {});
   }, []);
 
@@ -43,10 +40,6 @@ export function SettingsPage({ toast }: SettingsPageProps) {
       .then(r => setAuditTotal(r.total))
       .catch(() => {});
   }, []);
-
-  const handlePlatformChange = (p: LibraryPlatform) => {
-    setPlatform(p);
-  };
 
   const handleServiceTestResult = (
     label: string,
@@ -73,7 +66,6 @@ export function SettingsPage({ toast }: SettingsPageProps) {
       <ConnectionsSection
         platform={platform}
         settingsStatus={settingsStatus}
-        onPlatformChange={handlePlatformChange}
         onServiceTestResult={handleServiceTestResult}
         toast={toast}
       />

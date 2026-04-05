@@ -36,7 +36,7 @@ def get_status() -> dict:
     return {
         "synced": track_count > 0,
         "last_synced": last_synced,
-        "backend": backend,
+        "platform": platform,
         "track_count": track_count,
         "total_albums": total_albums,
         "enriched_albums": enriched_albums,
