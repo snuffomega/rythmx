@@ -17,6 +17,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { usePlayerStore } from '../stores/usePlayerStore';
 import { getApiKey } from '../services/api';
+import { getImageUrl } from '../utils/imageUrl';
 
 function buildStreamUrl(trackId: string): string {
   const key = getApiKey();
@@ -110,12 +111,15 @@ export function useAudioEngine() {
 
     // MediaSession API — wires OS/browser media controls
     if ('mediaSession' in navigator) {
+      const mediaArtwork = currentTrack.thumb_url || currentTrack.thumb_hash
+        ? getImageUrl(currentTrack.thumb_url ?? '', currentTrack.thumb_hash ?? null, 512)
+        : '';
       navigator.mediaSession.metadata = new MediaMetadata({
         title: currentTrack.title,
         artist: currentTrack.artist,
         album: currentTrack.album,
-        artwork: currentTrack.thumb_url
-          ? [{ src: currentTrack.thumb_url, sizes: '512x512', type: 'image/jpeg' }]
+        artwork: mediaArtwork
+          ? [{ src: mediaArtwork, sizes: '512x512', type: 'image/jpeg' }]
           : [],
       });
       navigator.mediaSession.setActionHandler('play',           () => audio.play());

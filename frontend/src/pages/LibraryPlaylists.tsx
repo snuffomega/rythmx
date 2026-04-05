@@ -29,6 +29,7 @@ import { libraryPlaylistsApi } from '../services/api';
 import { usePlayerStore } from '../stores/usePlayerStore';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { ApiErrorBanner } from '../components/common';
+import { getImageUrl } from '../utils/imageUrl';
 import type { LibPlaylist, LibPlaylistTrack } from '../types';
 
 interface LibraryPlaylistsProps {
@@ -141,7 +142,7 @@ function PlaylistDetail({
         artist: t.artist_name ?? '',
         album: t.album_title ?? '',
         duration: t.duration,
-        thumb_url: null,
+        thumb_url: playlist.cover_url ?? null,
         thumb_hash: null,
         source_platform: playlist.source_platform,
       })),
@@ -377,7 +378,7 @@ function PlaylistCard({
       <div className="w-full aspect-square rounded-lg bg-[#1a1a1a] flex items-center justify-center mb-3 overflow-hidden">
         {playlist.cover_url ? (
           <img
-            src={playlist.cover_url}
+            src={getImageUrl(playlist.cover_url)}
             alt={playlist.name}
             className="w-full h-full object-cover"
           />
