@@ -155,6 +155,37 @@ def get_deezer_album_info(deezer_album_id: str) -> dict | None:
     }
 
 
+def get_deezer_album_credit_info(deezer_album_id: str) -> dict | None:
+    """
+    Fetch release-level artist credits for a Deezer album.
+
+    Returns:
+      {
+        "primary_artist_id": "<id>" | "",
+        "contributor_ids": ["<id>", ...],
+      }
+    """
+    data = _deezer_get(f"/album/{deezer_album_id}")
+    if not data:
+        return None
+
+    primary_artist_id = str((data.get("artist") or {}).get("id") or "").strip()
+
+    contributor_ids: set[str] = set()
+    for contributor in data.get("contributors") or []:
+        cid = str((contributor or {}).get("id") or "").strip()
+        if cid:
+            contributor_ids.add(cid)
+
+    if primary_artist_id:
+        contributor_ids.add(primary_artist_id)
+
+    return {
+        "primary_artist_id": primary_artist_id,
+        "contributor_ids": sorted(contributor_ids),
+    }
+
+
 def get_deezer_artist_info(deezer_artist_id: str) -> dict | None:
     """Fetch artist-level stats from Deezer."""
     data = _deezer_get(f"/artist/{deezer_artist_id}")

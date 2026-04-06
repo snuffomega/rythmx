@@ -1,12 +1,12 @@
 ﻿"""
-new_music_runner.py â€” New Music pipeline for the Forge.
+new_music_runner.py - New Music pipeline for the Forge.
 
 Discovers recent releases from artists in the user's own listening history.
 
 Pipeline:
-  1. get_seed_artists()          â€” top artists from Last.fm or Plex play counts
-  2. fetch_releases_for_seeds()  â€” Deezer albums for those seed artists directly
-  3. write_discovered()          â€” write to forge_discovered_artists + forge_discovered_releases
+  1. get_seed_artists()          - top artists from Last.fm or Plex play counts
+  2. fetch_releases_for_seeds()  - Deezer albums for those seed artists directly
+  3. write_discovered()          - write to forge_discovered_artists + forge_discovered_releases
 
 No ORM. All SQL uses ? placeholders.
 """
@@ -217,7 +217,7 @@ def get_seed_artists(period: str, min_scrobbles: int) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Step 2 (EARMARKED â€” Custom Discovery engine)
+# Step 2 (EARMARKED - Custom Discovery engine)
 # ---------------------------------------------------------------------------
 
 def expand_neighbors(seed_names: list[str]) -> list[str]:
@@ -226,7 +226,7 @@ def expand_neighbors(seed_names: list[str]) -> list[str]:
     Returns a deduplicated list of neighbor artist names (lowercase) not in library.
 
     EARMARKED: This is the core of the future Custom Discovery engine.
-    New Music uses seed artists directly â€” this function is NOT called from
+    New Music uses seed artists directly - this function is NOT called from
     run_new_music_pipeline(). Do not delete or repurpose until Custom Discovery
     is implemented.
     """
@@ -277,9 +277,9 @@ def expand_neighbors(seed_names: list[str]) -> list[str]:
 def _apply_kind_preference(artist_releases: list[dict], kinds_mode: str) -> list[dict]:
     """
     Filter/prefer releases by mode:
-      all            â€” return everything
-      album_preferred â€” return albums if any exist in window, else return singles/EPs
-      album          â€” hard filter: albums only (includes 'compile')
+      all            - return everything
+      album_preferred - return albums if any exist in window, else return singles/EPs
+      album          - hard filter: albums only (includes 'compile')
     """
     if kinds_mode == "all":
         return artist_releases
@@ -289,6 +289,26 @@ def _apply_kind_preference(artist_releases: list[dict], kinds_mode: str) -> list
         albums = [r for r in artist_releases if r["record_type"] in ("album", "compile")]
         return albums if albums else artist_releases
     return artist_releases
+
+
+def _release_matches_mode(*, album_id: str, artist_deezer_id: str, match_mode: str, credit_cache: dict[str, dict | None]) -> bool:
+    """
+    Return True when a release should be included for the configured match mode.
+
+    loose:
+      Keep release as returned by Deezer artist albums endpoint.
+    strict:
+      Keep only when album primary artist is the seed artist.
+    """
+    if match_mode != "strict":
+        return True
+
+    if album_id not in credit_cache:
+        credit_cache[album_id] = music_client.get_deezer_album_credit_info(album_id)
+
+    credit = credit_cache.get(album_id) or {}
+    primary_artist_id = str(credit.get("primary_artist_id") or "").strip()
+    return bool(primary_artist_id and primary_artist_id == str(artist_deezer_id))
 
 
 def fetch_releases_for_neighbors(
@@ -304,7 +324,7 @@ def fetch_releases_for_neighbors(
     """
     For each artist name, resolve Deezer ID and fetch recent albums.
     Fast path: checks lib_artists.deezer_artist_id first to avoid redundant API searches.
-    release_kinds: mode string â€” 'all' | 'album_preferred' | 'album'
+    release_kinds: mode string - 'all' | 'album_preferred' | 'album'
     Returns: (discovered_artists, discovered_releases, keyword_filtered_releases)
     """
     cutoff_date = (datetime.now() - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
@@ -331,6 +351,8 @@ def fetch_releases_for_neighbors(
     discovered_releases = []
     keyword_filtered = []
     seen_artist_ids = set()
+    credit_cache: dict[str, dict | None] = {}
+    strict_filtered = 0
 
     # Limit to avoid hammering Deezer API on first run
     names_to_process = neighbor_names[:100]
@@ -350,7 +372,7 @@ def fetch_releases_for_neighbors(
         if name.lower() in ignore_art:
             continue
 
-        # Resolve Deezer ID â€” fast path first, then API search fallback
+        # Resolve Deezer ID - fast path first, then API search fallback
         stored_id = stored_deezer_ids.get(name.lower())
         if stored_id and stored_id not in seen_artist_ids:
             deezer_id = stored_id
@@ -391,13 +413,25 @@ def fetch_releases_for_neighbors(
             if not rel_date or rel_date < cutoff_date:
                 continue
 
+            album_id = str(album.get("id") or "").strip()
+            if not album_id:
+                continue
+            if not _release_matches_mode(
+                album_id=album_id,
+                artist_deezer_id=deezer_id,
+                match_mode=match_mode,
+                credit_cache=credit_cache,
+            ):
+                strict_filtered += 1
+                continue
+
             record_type = (album.get("record_type") or "album").lower()
             title = album.get("title", "")
             title_lower = title.lower()
 
             if any(kw in title_lower for kw in ignore_kw):
                 keyword_filtered.append({
-                    "id": str(album["id"]),
+                    "id": album_id,
                     "artist_deezer_id": deezer_id,
                     "artist_name": display_name,
                     "title": title,
@@ -409,7 +443,7 @@ def fetch_releases_for_neighbors(
                 continue
 
             artist_releases_in_window.append({
-                "id": str(album["id"]),
+                "id": album_id,
                 "artist_deezer_id": deezer_id,
                 "artist_name": display_name,
                 "title": title,
@@ -433,8 +467,14 @@ def fetch_releases_for_neighbors(
             )
 
     logger.info(
-        "new_music: fetched artists=%d releases=%d filtered=%d (lookback=%dd, kinds_mode=%s)",
-        len(discovered_artists), len(discovered_releases), len(keyword_filtered), lookback_days, release_kinds
+        "new_music: fetched artists=%d releases=%d filtered=%d strict_filtered=%d (lookback=%dd, match_mode=%s, kinds_mode=%s)",
+        len(discovered_artists),
+        len(discovered_releases),
+        len(keyword_filtered),
+        strict_filtered,
+        lookback_days,
+        match_mode,
+        release_kinds,
     )
     return discovered_artists, discovered_releases, keyword_filtered
 
@@ -580,4 +620,5 @@ def run_new_music_pipeline(config_override: dict | None = None) -> dict:
     except Exception as exc:
         _emit_pipeline_error(pipeline="new_music", run_id=run_id, message=str(exc))
         raise
+
 
