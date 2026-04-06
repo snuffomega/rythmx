@@ -5,8 +5,9 @@
 data/
 
 # Local reference notes
-local-notes/
-docs/
+docs/.obsidian/
+docs/dev/
+docs/superpowers/
 
 # Logs
 logs/
@@ -24,6 +25,14 @@ build/
 .venv/
 venv/
 env/
+
+# Test / coverage artifacts
+.coverage
+htmlcov/
+.pytest_cache/
+.obsidian/ 
+.editorconfig
+.gitattributes
 
 # DB files
 *.db
@@ -43,4 +52,4 @@ Thumbs.db
 frontend/node_modules/
 frontend/dist/
 frontend/src/routeTree.gen.ts
-
+frontend/coverage/
