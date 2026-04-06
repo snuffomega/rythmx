@@ -274,7 +274,7 @@ function EmptyShelf({ message }: { message: string }) {
   return <p className="text-[#333] text-sm py-6">{message}</p>;
 }
 
-export function Discovery() {
+export function Dashboard() {
   const navigate = useNavigate();
   const topArtists = useApi(() => statsApi.getTopArtists('1month', 12));
   const lovedArtists = useApi(() => statsApi.getLovedArtists());

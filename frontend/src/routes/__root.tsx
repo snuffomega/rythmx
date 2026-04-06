@@ -14,7 +14,7 @@ import { useAudioEngine } from '../hooks/useAudioEngine';
 import type { LibraryStatus } from '../types';
 
 const NAV_ITEMS = [
-  { to: '/discovery', label: 'Discovery', icon: Compass },
+  { to: '/dashboard', label: 'Dashboard', icon: Compass },
   { to: '/library', label: 'Library', icon: Library },
   { to: '/forge', label: 'The Forge', icon: Zap },
   { to: '/activity', label: 'Activity', icon: Activity },

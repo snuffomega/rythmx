@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { Discovery } from '../pages/Discovery';
+import { Dashboard } from '../pages/Dashboard';
 
-export const Route = createFileRoute('/discovery')({
-  component: Discovery,
+export const Route = createFileRoute('/dashboard')({
+  component: Dashboard,
 });
