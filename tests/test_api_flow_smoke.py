@@ -12,6 +12,7 @@ from app.routes import forge
 from app.routes import library_enrich
 from app.routes import library_playlists
 from app.routes import library_stream
+from app.routes import settings as settings_route
 from app.routes.library import albums, artists, audit, releases, tracks
 
 
@@ -66,6 +67,63 @@ class _FakeUpstreamResponse:
 
     def close(self) -> None:
         return None
+
+
+def test_settings_get_hides_soulsync_when_env_not_set(monkeypatch):
+    class _FakeReader:
+        @staticmethod
+        def is_db_accessible() -> bool:
+            return True
+
+        @staticmethod
+        def get_track_count() -> int:
+            return 42
+
+    monkeypatch.setattr("app.db.get_library_reader", lambda: _FakeReader())
+    monkeypatch.setattr(settings_route.rythmx_store, "get_setting", lambda key, default=None: default)
+    monkeypatch.delenv("SOULSYNC_URL", raising=False)
+    monkeypatch.delenv("SOULSYNC_DB", raising=False)
+
+    called = {"soulsync_db": 0}
+    monkeypatch.setattr(
+        "app.db.soulsync_reader.is_db_accessible",
+        lambda: called.__setitem__("soulsync_db", called["soulsync_db"] + 1) or True,
+    )
+
+    result = settings_route.settings_get()
+    assert result["status"] == "ok"
+    assert result["soulsync_url"] is None
+    assert result["soulsync_db"] is None
+    assert result["soulsync_db_accessible"] is False
+    assert called["soulsync_db"] == 0
+
+
+def test_settings_get_shows_soulsync_when_env_set(monkeypatch):
+    class _FakeReader:
+        @staticmethod
+        def is_db_accessible() -> bool:
+            return True
+
+        @staticmethod
+        def get_track_count() -> int:
+            return 42
+
+    monkeypatch.setattr("app.db.get_library_reader", lambda: _FakeReader())
+    monkeypatch.setattr(settings_route.rythmx_store, "get_setting", lambda key, default=None: default)
+    monkeypatch.setenv("SOULSYNC_URL", "http://soulsync.local")
+    monkeypatch.delenv("SOULSYNC_DB", raising=False)
+
+    called = {"soulsync_db": 0}
+    monkeypatch.setattr(
+        "app.db.soulsync_reader.is_db_accessible",
+        lambda: called.__setitem__("soulsync_db", called["soulsync_db"] + 1) or True,
+    )
+
+    result = settings_route.settings_get()
+    assert result["status"] == "ok"
+    assert result["soulsync_url"] == "http://soulsync.local"
+    assert result["soulsync_db_accessible"] is True
+    assert called["soulsync_db"] == 1
 
 
 def test_acquisition_check_now_success(monkeypatch):
