@@ -495,9 +495,23 @@ export interface WsEnrichmentPhase {
 
 // New Music pipeline events (scheduler)
 export interface WsPipelineProgress {
+  pipeline?: 'new_music' | 'custom_discovery' | string;
+  run_id?: string;
   stage: string;
   processed: number;
   total: number;
+  message: string;
+}
+
+export interface WsPipelineComplete {
+  pipeline?: 'new_music' | 'custom_discovery' | string;
+  run_id?: string;
+  summary?: Record<string, unknown>;
+}
+
+export interface WsPipelineError {
+  pipeline?: 'new_music' | 'custom_discovery' | string;
+  run_id?: string;
   message: string;
 }
 

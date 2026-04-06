@@ -80,6 +80,64 @@ def _now_iso() -> str:
     return datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
 
 
+def _emit_pipeline_progress(
+    *,
+    run_id: str,
+    stage: str,
+    processed: int,
+    total: int,
+    message: str,
+) -> None:
+    try:
+        from app.routes.ws import broadcast
+
+        broadcast(
+            "pipeline_progress",
+            {
+                "pipeline": "custom_discovery",
+                "run_id": run_id,
+                "stage": stage,
+                "processed": int(processed),
+                "total": int(total),
+                "message": message,
+            },
+        )
+    except Exception:
+        pass
+
+
+def _emit_pipeline_complete(*, run_id: str, summary: dict[str, Any]) -> None:
+    try:
+        from app.routes.ws import broadcast
+
+        broadcast(
+            "pipeline_complete",
+            {
+                "pipeline": "custom_discovery",
+                "run_id": run_id,
+                "summary": summary,
+            },
+        )
+    except Exception:
+        pass
+
+
+def _emit_pipeline_error(*, run_id: str, message: str) -> None:
+    try:
+        from app.routes.ws import broadcast
+
+        broadcast(
+            "pipeline_error",
+            {
+                "pipeline": "custom_discovery",
+                "run_id": run_id,
+                "message": str(message or "Pipeline failed"),
+            },
+        )
+    except Exception:
+        pass
+
+
 def _normalize_name(value: str) -> str:
     return str(value or "").strip().lower()
 
@@ -826,10 +884,32 @@ def run_discovery_pipeline(config_override: dict[str, Any] | None = None) -> dic
     _upsert_run_start(run_id, cfg)
 
     try:
+        _emit_pipeline_progress(
+            run_id=run_id,
+            stage="seeds",
+            processed=0,
+            total=1,
+            message="Loading seed artists",
+        )
+
         seeds = new_music_runner.get_seed_artists(seed_period, min_scrobbles)[:_MAX_SEEDS]
         seed_names = [str(s.get("name") or "").strip() for s in seeds if str(s.get("name") or "").strip()]
         seed_set = {_normalize_name(name) for name in seed_names}
+        _emit_pipeline_progress(
+            run_id=run_id,
+            stage="seeds",
+            processed=1,
+            total=1,
+            message=f"Loaded {len(seed_names)} seeds",
+        )
 
+        _emit_pipeline_progress(
+            run_id=run_id,
+            stage="graph",
+            processed=0,
+            total=1,
+            message="Expanding artist graph",
+        )
         graph_candidates = _expand_artist_graph(
             seed_names=seed_names,
             max_hop=max_hop,
@@ -846,10 +926,31 @@ def run_discovery_pipeline(config_override: dict[str, Any] | None = None) -> dic
 
         graph_candidates = [c for c in graph_candidates if c["name_lower"] not in seed_set]
         graph_candidates = graph_candidates[: max(overfetch_target * 2, 120)]
+        _emit_pipeline_progress(
+            run_id=run_id,
+            stage="graph",
+            processed=1,
+            total=1,
+            message=f"Graph yielded {len(graph_candidates)} candidates",
+        )
 
+        _emit_pipeline_progress(
+            run_id=run_id,
+            stage="resolve",
+            processed=0,
+            total=max(len(graph_candidates), 1),
+            message="Resolving provider identities",
+        )
         resolved_artists = _resolve_deezer_artist_metadata(
             graph_candidates,
             cache_ttl_days=cache_ttl_days,
+        )
+        _emit_pipeline_progress(
+            run_id=run_id,
+            stage="resolve",
+            processed=len(resolved_artists),
+            total=max(len(graph_candidates), 1),
+            message=f"Resolved {len(resolved_artists)} artists",
         )
 
         history_index = _load_history_index()
@@ -862,9 +963,19 @@ def run_discovery_pipeline(config_override: dict[str, Any] | None = None) -> dic
         skipped_no_match_build_mode = 0
         band_cursor = 0
 
-        for artist in resolved_artists:
+        total_resolved = len(resolved_artists)
+        for idx, artist in enumerate(resolved_artists, start=1):
             if len(recommendations) >= max_tracks:
                 break
+
+            if idx == 1 or idx % 5 == 0 or idx == total_resolved:
+                _emit_pipeline_progress(
+                    run_id=run_id,
+                    stage="rank",
+                    processed=idx - 1,
+                    total=max(total_resolved, 1),
+                    message=f"Ranking tracks {idx - 1}/{total_resolved}",
+                )
 
             if wildcard:
                 primary_band = bands[band_cursor % len(bands)]
@@ -952,8 +1063,31 @@ def run_discovery_pipeline(config_override: dict[str, Any] | None = None) -> dic
             if len(recommendations) >= max_tracks:
                 break
 
+            if idx == total_resolved or idx % 5 == 0:
+                _emit_pipeline_progress(
+                    run_id=run_id,
+                    stage="rank",
+                    processed=idx,
+                    total=max(total_resolved, 1),
+                    message=f"Ranking tracks {idx}/{total_resolved}",
+                )
+
+        _emit_pipeline_progress(
+            run_id=run_id,
+            stage="persist",
+            processed=0,
+            total=1,
+            message="Saving discovery results",
+        )
         rythmx_store.set_setting(_RESULTS_KEY, json.dumps(recommendations))
         _persist_track_history(recommendations)
+        _emit_pipeline_progress(
+            run_id=run_id,
+            stage="persist",
+            processed=1,
+            total=1,
+            message="Saved discovery results",
+        )
 
         summary = {
             "artists_found": len(recommendations),
@@ -978,6 +1112,7 @@ def run_discovery_pipeline(config_override: dict[str, Any] | None = None) -> dic
             "cache_ttl_days": cache_ttl_days,
         }
         _upsert_run_finish(run_id, summary, status="completed")
+        _emit_pipeline_complete(run_id=run_id, summary=summary)
         logger.info(
             "discovery: run complete (run_id=%s, built=%d, target=%d, owned=%d, missing=%d, include_missing=%s)",
             run_id,
@@ -989,6 +1124,7 @@ def run_discovery_pipeline(config_override: dict[str, Any] | None = None) -> dic
         )
         return summary
     except Exception as exc:
+        _emit_pipeline_error(run_id=run_id, message=str(exc))
         _upsert_run_finish(
             run_id,
             {"error": str(exc), "run_id": run_id},

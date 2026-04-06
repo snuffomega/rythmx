@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { Zap, ChevronDown, ChevronUp, Music2, Trash2, X, ExternalLink } from 'lucide-react';
 import { useNavigate } from '@tanstack/react-router';
 import { forgeBuildsApi, forgeNewMusicApi } from '../services/api';
 import { useToastStore } from '../stores/useToastStore';
+import { useForgePipelineStore } from '../stores/useForgePipelineStore';
 import { Toggle } from '../components/common';
 import { getForgeReleaseTarget, openExternalReleaseUrl } from '../utils/forgeReleaseLinks';
 import type {
@@ -49,6 +50,7 @@ const DEFAULT_CONFIG: NewMusicConfig = {
 const STAGES = [
   { key: 'history', label: 'Reading your listening history' },
   { key: 'releases', label: 'Finding releases from your top artists' },
+  { key: 'persist', label: 'Saving discovered releases' },
   { key: 'done', label: 'Done' },
 ];
 
@@ -76,7 +78,8 @@ export function ForgeNewMusic() {
   const [running, setRunning] = useState(false);
   const [stageIdx, setStageIdx] = useState(0);
   const [progress, setProgress] = useState(0);
-  const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pipelineState = useForgePipelineStore(s => s.pipelines.new_music);
+  const resetPipeline = useForgePipelineStore(s => s.resetPipeline);
 
   const [results, setResults] = useState<DiscoveredRelease[] | null>(null);
   const [runSummary, setRunSummary] = useState<{ releases_found: number } | null>(null);
@@ -116,58 +119,41 @@ export function ForgeNewMusic() {
       .catch(() => {});
   }, []);
 
-  useEffect(() => () => {
-    if (progressTimerRef.current) clearInterval(progressTimerRef.current);
-  }, []);
+  useEffect(() => {
+    if (!running) return;
+    const stageKey = pipelineState.stage || 'history';
+    const idx = Math.max(0, STAGES.findIndex(s => s.key === stageKey));
+    setStageIdx(idx);
 
-  // ---------------------------------------------------------------------------
-  // Progress animation
-  // ---------------------------------------------------------------------------
-
-  const STAGE_PCTS = [10, 90, 100];
-
-  const startProgress = () => {
-    setStageIdx(0);
-    setProgress(0);
-    let currentPct = 0;
-    let currentStage = 0;
-
-    progressTimerRef.current = setInterval(() => {
-      const targetPct = STAGE_PCTS[currentStage] ?? 90;
-      if (currentPct < targetPct - 2) {
-        currentPct += 1;
-        setProgress(currentPct);
-      } else if (currentStage < STAGES.length - 2) {
-        currentStage += 1;
-        setStageIdx(currentStage);
-      }
-    }, 300);
-  };
-
-  const finishProgress = () => {
-    if (progressTimerRef.current) {
-      clearInterval(progressTimerRef.current);
-      progressTimerRef.current = null;
+    if (stageKey === 'done') {
+      setProgress(100);
+      return;
     }
-    setStageIdx(STAGES.length - 1);
-    setProgress(100);
-  };
+    const total = Math.max(1, pipelineState.total || 1);
+    const processed = Math.max(0, Math.min(total, pipelineState.processed || 0));
+    const stageProgress = (processed / total) * (100 / Math.max(STAGES.length - 1, 1));
+    const base = (idx / Math.max(STAGES.length - 1, 1)) * 100;
+    setProgress(Math.min(99, Math.round(base + stageProgress)));
+  }, [running, pipelineState.stage, pipelineState.processed, pipelineState.total]);
 
   // ---------------------------------------------------------------------------
   // Run handler
   // ---------------------------------------------------------------------------
 
   const handleRun = async () => {
+    resetPipeline('new_music');
     setRunning(true);
+    setStageIdx(0);
+    setProgress(0);
     setResults(null);
-    startProgress();
     toastInfo('Forge in progress: New Music run started');
 
     await forgeNewMusicApi.saveConfig(config).catch(() => {});
 
     try {
       const data = await forgeNewMusicApi.run(config);
-      finishProgress();
+      setStageIdx(STAGES.length - 1);
+      setProgress(100);
       setResults(data.releases);
       setRunSummary({ releases_found: data.releases_found });
       setFilteredReleases(data.filtered_releases ?? []);
@@ -200,7 +186,6 @@ export function ForgeNewMusic() {
           : `${data.releases_found} releases found`
       );
     } catch {
-      finishProgress();
       toastError('Pipeline failed - check logs');
     } finally {
       setRunning(false);
@@ -545,6 +530,9 @@ export function ForgeNewMusic() {
                   );
                 })}
               </div>
+              {pipelineState.message && (
+                <p className="text-[#555] text-xs">{pipelineState.message}</p>
+              )}
             </div>
           )}
         </div>

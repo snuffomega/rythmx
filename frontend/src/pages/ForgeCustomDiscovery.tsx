@@ -3,6 +3,7 @@ import { Play, Loader2, Sparkles, ChevronDown, ChevronUp, Save } from 'lucide-re
 import { forgeBuildsApi, forgeDiscoveryApi } from '../services/api';
 import { ArtistResultCard, DiscoveryPipelineViz } from '../components/forge';
 import { Toggle } from '../components/common';
+import { useForgePipelineStore } from '../stores/useForgePipelineStore';
 import type { ForgeDiscoveryConfig, ForgeDiscoveryResult } from '../types';
 
 const SEED_PERIODS: Array<{ value: ForgeDiscoveryConfig['seed_period']; label: string }> = [
@@ -68,6 +69,8 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
   const [loadingConfig, setLoadingConfig] = useState(true);
   const [running, setRunning] = useState(false);
   const [results, setResults] = useState<ForgeDiscoveryResult[] | null>(null);
+  const pipelineState = useForgePipelineStore(s => s.pipelines.custom_discovery);
+  const resetPipeline = useForgePipelineStore(s => s.resetPipeline);
 
   useEffect(() => {
     let cancelled = false;
@@ -116,6 +119,7 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
   };
 
   const handleRun = async () => {
+    resetPipeline('custom_discovery');
     setRunning(true);
     toast.info('Forge in progress: Custom Discovery run started');
     try {
@@ -167,6 +171,9 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
     : config.closeness <= 5
     ? 'Balanced'
     : 'More adventurous';
+  const pipelinePct = pipelineState.total > 0
+    ? Math.min(100, Math.max(0, Math.round((pipelineState.processed / pipelineState.total) * 100)))
+    : 0;
 
   return (
     <div className="space-y-8">
@@ -365,9 +372,21 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
       {/* History ledger: discovery results */}
       {running && (
         <div className="space-y-3 pt-4">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="h-[72px] bg-[#0d0d0d] border border-[#1a1a1a] animate-pulse" />
-          ))}
+          <div className="border border-[#1a1a1a] bg-[#0d0d0d] p-4 space-y-3">
+            <div className="w-full bg-[#1a1a1a] h-px">
+              <div
+                className="h-px bg-accent transition-all duration-300"
+                style={{ width: `${pipelinePct}%` }}
+              />
+            </div>
+            <p className="text-text-primary text-sm">
+              {pipelineState.message || 'Running custom discovery...'}
+            </p>
+            <p className="text-[#555] text-xs">
+              Stage: {pipelineState.stage || 'starting'}{' '}
+              {pipelineState.total > 0 ? `(${pipelineState.processed}/${pipelineState.total})` : ''}
+            </p>
+          </div>
         </div>
       )}
 

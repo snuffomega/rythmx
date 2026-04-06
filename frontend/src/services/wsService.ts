@@ -13,6 +13,7 @@
  *   useEffect(() => { wsConnect(); return () => wsDisconnect(); }, []);
  */
 import { useEnrichmentStore } from '../stores/useEnrichmentStore';
+import { useForgePipelineStore } from '../stores/useForgePipelineStore';
 import { enrichmentApi } from './api';
 // import { usePlayerStore } from '../stores/usePlayerStore';  // ← Phase 22+
 
@@ -32,6 +33,9 @@ const ROUTES: Record<string, (payload: unknown) => void> = {
   enrichment_complete: (p) => useEnrichmentStore.getState().handleComplete(p),
   enrichment_stopped:  ()  => useEnrichmentStore.getState().handleStopped(),
   enrichment_phase:    (p) => useEnrichmentStore.getState().handlePhase(p),
+  pipeline_progress:   (p) => useForgePipelineStore.getState().handleProgress(p),
+  pipeline_complete:   (p) => useForgePipelineStore.getState().handleComplete(p),
+  pipeline_error:      (p) => useForgePipelineStore.getState().handleError(p),
   // player_state: (p) => usePlayerStore.getState().handleState(p),
 };
 

@@ -1,17 +1,18 @@
-"""
-new_music_runner.py — New Music pipeline for the Forge.
+﻿"""
+new_music_runner.py â€” New Music pipeline for the Forge.
 
 Discovers recent releases from artists in the user's own listening history.
 
 Pipeline:
-  1. get_seed_artists()          — top artists from Last.fm or Plex play counts
-  2. fetch_releases_for_seeds()  — Deezer albums for those seed artists directly
-  3. write_discovered()          — write to forge_discovered_artists + forge_discovered_releases
+  1. get_seed_artists()          â€” top artists from Last.fm or Plex play counts
+  2. fetch_releases_for_seeds()  â€” Deezer albums for those seed artists directly
+  3. write_discovered()          â€” write to forge_discovered_artists + forge_discovered_releases
 
 No ORM. All SQL uses ? placeholders.
 """
 import json
 import logging
+import uuid
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -25,6 +26,65 @@ logger = logging.getLogger(__name__)
 
 def _connect():
     return rythmx_store._connect()
+
+
+def _emit_pipeline_progress(
+    *,
+    pipeline: str,
+    run_id: str,
+    stage: str,
+    processed: int,
+    total: int,
+    message: str,
+) -> None:
+    try:
+        from app.routes.ws import broadcast
+
+        broadcast(
+            "pipeline_progress",
+            {
+                "pipeline": pipeline,
+                "run_id": run_id,
+                "stage": stage,
+                "processed": int(processed),
+                "total": int(total),
+                "message": message,
+            },
+        )
+    except Exception:
+        pass
+
+
+def _emit_pipeline_complete(*, pipeline: str, run_id: str, summary: dict[str, Any]) -> None:
+    try:
+        from app.routes.ws import broadcast
+
+        broadcast(
+            "pipeline_complete",
+            {
+                "pipeline": pipeline,
+                "run_id": run_id,
+                "summary": summary,
+            },
+        )
+    except Exception:
+        pass
+
+
+def _emit_pipeline_error(*, pipeline: str, run_id: str, message: str) -> None:
+    try:
+        from app.routes.ws import broadcast
+
+        broadcast(
+            "pipeline_error",
+            {
+                "pipeline": pipeline,
+                "run_id": run_id,
+                "message": str(message or "Pipeline failed"),
+            },
+        )
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +217,7 @@ def get_seed_artists(period: str, min_scrobbles: int) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Step 2 (EARMARKED — Custom Discovery engine)
+# Step 2 (EARMARKED â€” Custom Discovery engine)
 # ---------------------------------------------------------------------------
 
 def expand_neighbors(seed_names: list[str]) -> list[str]:
@@ -166,7 +226,7 @@ def expand_neighbors(seed_names: list[str]) -> list[str]:
     Returns a deduplicated list of neighbor artist names (lowercase) not in library.
 
     EARMARKED: This is the core of the future Custom Discovery engine.
-    New Music uses seed artists directly — this function is NOT called from
+    New Music uses seed artists directly â€” this function is NOT called from
     run_new_music_pipeline(). Do not delete or repurpose until Custom Discovery
     is implemented.
     """
@@ -217,9 +277,9 @@ def expand_neighbors(seed_names: list[str]) -> list[str]:
 def _apply_kind_preference(artist_releases: list[dict], kinds_mode: str) -> list[dict]:
     """
     Filter/prefer releases by mode:
-      all            — return everything
-      album_preferred — return albums if any exist in window, else return singles/EPs
-      album          — hard filter: albums only (includes 'compile')
+      all            â€” return everything
+      album_preferred â€” return albums if any exist in window, else return singles/EPs
+      album          â€” hard filter: albums only (includes 'compile')
     """
     if kinds_mode == "all":
         return artist_releases
@@ -238,11 +298,13 @@ def fetch_releases_for_neighbors(
     release_kinds: str,
     ignore_keywords: str,
     ignore_artists: str,
+    *,
+    run_id: str | None = None,
 ) -> tuple[list[dict], list[dict], list[dict]]:
     """
     For each artist name, resolve Deezer ID and fetch recent albums.
     Fast path: checks lib_artists.deezer_artist_id first to avoid redundant API searches.
-    release_kinds: mode string — 'all' | 'album_preferred' | 'album'
+    release_kinds: mode string â€” 'all' | 'album_preferred' | 'album'
     Returns: (discovered_artists, discovered_releases, keyword_filtered_releases)
     """
     cutoff_date = (datetime.now() - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
@@ -272,12 +334,23 @@ def fetch_releases_for_neighbors(
 
     # Limit to avoid hammering Deezer API on first run
     names_to_process = neighbor_names[:100]
+    total_names = len(names_to_process)
 
-    for name in names_to_process:
+    for idx, name in enumerate(names_to_process, start=1):
+        if run_id:
+            _emit_pipeline_progress(
+                pipeline="new_music",
+                run_id=run_id,
+                stage="releases",
+                processed=idx - 1,
+                total=max(total_names, 1),
+                message=f"Checking releases for {name}",
+            )
+
         if name.lower() in ignore_art:
             continue
 
-        # Resolve Deezer ID — fast path first, then API search fallback
+        # Resolve Deezer ID â€” fast path first, then API search fallback
         stored_id = stored_deezer_ids.get(name.lower())
         if stored_id and stored_id not in seen_artist_ids:
             deezer_id = stored_id
@@ -349,6 +422,16 @@ def fetch_releases_for_neighbors(
         preferred = _apply_kind_preference(artist_releases_in_window, release_kinds)
         discovered_releases.extend(preferred)
 
+        if run_id and (idx == total_names or idx % 5 == 0):
+            _emit_pipeline_progress(
+                pipeline="new_music",
+                run_id=run_id,
+                stage="releases",
+                processed=idx,
+                total=max(total_names, 1),
+                message=f"Processed {idx}/{total_names} artists",
+            )
+
     logger.info(
         "new_music: fetched artists=%d releases=%d filtered=%d (lookback=%dd, kinds_mode=%s)",
         len(discovered_artists), len(discovered_releases), len(keyword_filtered), lookback_days, release_kinds
@@ -408,45 +491,93 @@ def write_discovered(artists: list[dict], releases: list[dict]) -> None:
 def run_new_music_pipeline(config_override: dict | None = None) -> dict:
     """
     Run the full New Music pipeline.
-    Returns summary: {artists_checked, releases_found, filtered_releases: [...]}
+    Returns summary: {artists_checked, releases_found, filtered_releases: [...]} 
     """
-    cfg = get_config()
-    if config_override:
-        cfg.update({k: v for k, v in config_override.items() if k in NM_DEFAULTS})
+    run_id = str(uuid.uuid4())
+    try:
+        cfg = get_config()
+        if config_override:
+            cfg.update({k: v for k, v in config_override.items() if k in NM_DEFAULTS})
 
-    period = cfg["nm_period"]
-    min_scrobbles = int(cfg["nm_min_scrobbles"])
-    lookback_days = int(cfg["nm_lookback_days"])
-    match_mode = cfg["nm_match_mode"]
-    release_kinds = cfg["nm_release_kinds"]
-    ignore_keywords = cfg["nm_ignore_keywords"]
-    ignore_artists = cfg["nm_ignore_artists"]
+        period = cfg["nm_period"]
+        min_scrobbles = int(cfg["nm_min_scrobbles"])
+        lookback_days = int(cfg["nm_lookback_days"])
+        match_mode = cfg["nm_match_mode"]
+        release_kinds = cfg["nm_release_kinds"]
+        ignore_keywords = cfg["nm_ignore_keywords"]
+        ignore_artists = cfg["nm_ignore_artists"]
 
-    # Clear stale results from previous runs (Tier 2 — rebuildable)
-    with _connect() as conn:
-        conn.execute("DELETE FROM forge_discovered_releases")
-        conn.execute("DELETE FROM forge_discovered_artists")
-    logger.info("new_music: cleared stale forge_discovered tables")
+        _emit_pipeline_progress(
+            pipeline="new_music",
+            run_id=run_id,
+            stage="history",
+            processed=0,
+            total=1,
+            message="Loading listening history",
+        )
 
-    # Step 1: seed artists from listening history
-    seeds = get_seed_artists(period, min_scrobbles)
-    seed_names = [s["name"] for s in seeds]
+        # Clear stale results from previous runs (Tier 2 - rebuildable)
+        with _connect() as conn:
+            conn.execute("DELETE FROM forge_discovered_releases")
+            conn.execute("DELETE FROM forge_discovered_artists")
+        logger.info("new_music: cleared stale forge_discovered tables")
 
-    # Step 2: fetch recent releases from those seed artists directly
-    artists, releases, filtered = fetch_releases_for_neighbors(
-        seed_names, lookback_days, match_mode, release_kinds, ignore_keywords, ignore_artists
-    )
+        # Step 1: seed artists from listening history
+        seeds = get_seed_artists(period, min_scrobbles)
+        seed_names = [s["name"] for s in seeds]
+        _emit_pipeline_progress(
+            pipeline="new_music",
+            run_id=run_id,
+            stage="history",
+            processed=1,
+            total=1,
+            message=f"Loaded {len(seeds)} seed artists",
+        )
 
-    # Step 3: persist to forge tables
-    write_discovered(artists, releases)
+        # Step 2: fetch recent releases from those seed artists directly
+        artists, releases, filtered = fetch_releases_for_neighbors(
+            seed_names,
+            lookback_days,
+            match_mode,
+            release_kinds,
+            ignore_keywords,
+            ignore_artists,
+            run_id=run_id,
+        )
 
-    logger.info(
-        "new_music: pipeline complete — seeds=%d artists_resolved=%d releases_stored=%d filtered=%d",
-        len(seeds), len(artists), len(releases), len(filtered)
-    )
+        _emit_pipeline_progress(
+            pipeline="new_music",
+            run_id=run_id,
+            stage="persist",
+            processed=0,
+            total=1,
+            message="Saving discovered releases",
+        )
 
-    return {
-        "artists_checked": len(seeds),
-        "releases_found": len(releases),
-        "filtered_releases": filtered,
-    }
+        # Step 3: persist to forge tables
+        write_discovered(artists, releases)
+        _emit_pipeline_progress(
+            pipeline="new_music",
+            run_id=run_id,
+            stage="persist",
+            processed=1,
+            total=1,
+            message="Saved discovered releases",
+        )
+
+        logger.info(
+            "new_music: pipeline complete - seeds=%d artists_resolved=%d releases_stored=%d filtered=%d",
+            len(seeds), len(artists), len(releases), len(filtered)
+        )
+
+        summary = {
+            "artists_checked": len(seeds),
+            "releases_found": len(releases),
+            "filtered_releases": filtered,
+        }
+        _emit_pipeline_complete(pipeline="new_music", run_id=run_id, summary=summary)
+        return summary
+    except Exception as exc:
+        _emit_pipeline_error(pipeline="new_music", run_id=run_id, message=str(exc))
+        raise
+
