@@ -938,6 +938,9 @@ def test_forge_build_resync_contract(monkeypatch):
     result = forge.forge_builds_resync("build-1")
     assert result["status"] == "ok"
     assert result["source"] == "spotify"
+    assert result["resync_policy"] == "replace"
+    assert result["added_count"] == 2
+    assert result["removed_count"] == 1
     assert result["track_count"] == 2
     assert result["owned_count"] == 1
     assert result["missing_count"] == 1
@@ -946,6 +949,134 @@ def test_forge_build_resync_contract(monkeypatch):
     assert calls["update"]["status"] == "ready"
     assert calls["update"]["run_mode"] == "build"
     assert len(calls["update"]["track_list"]) == 2
+
+
+def test_forge_build_resync_add_only_policy(monkeypatch):
+    fake_build = {
+        "id": "build-1",
+        "name": "Sync Build",
+        "source": "sync",
+        "status": "ready",
+        "run_mode": "build",
+        "track_list": [{"track_id": "trk-a", "track_name": "Track A (old)"}],
+        "summary": {
+            "source": "spotify",
+            "source_url": "https://open.spotify.com/playlist/abc",
+        },
+        "item_count": 1,
+        "created_at": "2026-04-02T20:00:00",
+        "updated_at": "2026-04-02T20:00:00",
+    }
+    fake_import = {
+        "status": "ok",
+        "track_count": 2,
+        "owned_count": 2,
+        "tracks": [
+            {
+                "track_name": "Track A",
+                "artist_name": "Artist A",
+                "album_name": "Album A",
+                "spotify_track_id": "sp-a",
+                "is_owned": True,
+                "plex_rating_key": "trk-a",
+            },
+            {
+                "track_name": "Track B",
+                "artist_name": "Artist B",
+                "album_name": "Album B",
+                "spotify_track_id": "sp-b",
+                "is_owned": True,
+                "plex_rating_key": "trk-b",
+            },
+        ],
+    }
+    calls = {"update": None}
+
+    monkeypatch.setattr(forge.rythmx_store, "get_forge_build", lambda build_id: fake_build if build_id == "build-1" else None)
+    monkeypatch.setattr(forge, "_import_sync_source", lambda source, source_url: fake_import)
+    monkeypatch.setattr(
+        forge.rythmx_store,
+        "update_forge_build",
+        lambda build_id, **kwargs: calls.__setitem__("update", {"build_id": build_id, **kwargs}) or {"id": build_id, **kwargs},
+    )
+
+    result = forge.forge_builds_resync("build-1", {"resync_policy": "add_only"})
+    assert result["status"] == "ok"
+    assert result["resync_policy"] == "add_only"
+    assert result["added_count"] == 1
+    assert result["removed_count"] == 0
+    assert result["track_count"] == 2
+    assert calls["update"] is not None
+    assert len(calls["update"]["track_list"]) == 2
+
+
+def test_forge_build_resync_replace_policy(monkeypatch):
+    fake_build = {
+        "id": "build-1",
+        "name": "Sync Build",
+        "source": "sync",
+        "status": "ready",
+        "run_mode": "build",
+        "track_list": [{"track_id": "trk-a"}, {"track_id": "trk-b"}],
+        "summary": {
+            "source": "spotify",
+            "source_url": "https://open.spotify.com/playlist/abc",
+        },
+        "item_count": 2,
+        "created_at": "2026-04-02T20:00:00",
+        "updated_at": "2026-04-02T20:00:00",
+    }
+    fake_import = {
+        "status": "ok",
+        "track_count": 2,
+        "owned_count": 1,
+        "tracks": [
+            {
+                "track_name": "Track B",
+                "artist_name": "Artist B",
+                "album_name": "Album B",
+                "spotify_track_id": "sp-b",
+                "is_owned": True,
+                "plex_rating_key": "trk-b",
+            },
+            {
+                "track_name": "Track C",
+                "artist_name": "Artist C",
+                "album_name": "Album C",
+                "spotify_track_id": "sp-c",
+                "is_owned": False,
+                "plex_rating_key": "trk-c",
+            },
+        ],
+    }
+    calls = {"update": None}
+
+    monkeypatch.setattr(forge.rythmx_store, "get_forge_build", lambda build_id: fake_build if build_id == "build-1" else None)
+    monkeypatch.setattr(forge, "_import_sync_source", lambda source, source_url: fake_import)
+    monkeypatch.setattr(
+        forge.rythmx_store,
+        "update_forge_build",
+        lambda build_id, **kwargs: calls.__setitem__("update", {"build_id": build_id, **kwargs}) or {"id": build_id, **kwargs},
+    )
+
+    result = forge.forge_builds_resync("build-1", {"resync_policy": "replace"})
+    assert result["status"] == "ok"
+    assert result["resync_policy"] == "replace"
+    assert result["added_count"] == 1
+    assert result["removed_count"] == 1
+    assert result["track_count"] == 2
+    assert calls["update"] is not None
+    assert len(calls["update"]["track_list"]) == 2
+    assert calls["update"]["track_list"][0]["track_id"] == "trk-b"
+    assert calls["update"]["track_list"][1]["track_id"] == "trk-c"
+
+
+def test_forge_build_resync_rejects_invalid_policy():
+    result = forge.forge_builds_resync("build-1", {"resync_policy": "keep_existing"})
+    assert isinstance(result, JSONResponse)
+    assert result.status_code == 400
+    body = json.loads(result.body.decode("utf-8"))
+    assert body["code"] == "FORGE_VALIDATION_ERROR"
 
 
 def test_forge_build_resync_validation_and_missing(monkeypatch):
@@ -1060,6 +1191,9 @@ def test_forge_sync_load_create_build_contract(monkeypatch):
     assert result["status"] == "ok"
     assert result["source"] == "spotify"
     assert result["track_count"] == 2
+    assert result["source_track_count"] == 2
+    assert result["applied_max_tracks"] is None
+    assert result["resync_policy"] == "replace"
     assert result["owned_count"] == 1
     assert result["missing_count"] == 1
     assert result["queue_build"] is True
@@ -1069,6 +1203,72 @@ def test_forge_sync_load_create_build_contract(monkeypatch):
     assert calls["create"] is not None
     assert calls["create"]["source"] == "sync"
     assert calls["create"]["run_mode"] == "build"
+    assert calls["create"]["summary"]["load_mode"] == "all"
+
+
+def test_forge_sync_load_applies_first_n_and_uses_partial_policy(monkeypatch):
+    fake_import = {
+        "status": "ok",
+        "name": "Imported Playlist",
+        "track_count": 3,
+        "owned_count": 2,
+        "tracks": [
+            {
+                "track_name": "Track A",
+                "artist_name": "Artist A",
+                "album_name": "Album A",
+                "spotify_track_id": "sp-a",
+                "is_owned": True,
+                "plex_rating_key": "trk-a",
+            },
+            {
+                "track_name": "Track B",
+                "artist_name": "Artist B",
+                "album_name": "Album B",
+                "spotify_track_id": "sp-b",
+                "is_owned": False,
+                "plex_rating_key": "trk-b",
+            },
+            {
+                "track_name": "Track C",
+                "artist_name": "Artist C",
+                "album_name": "Album C",
+                "spotify_track_id": "sp-c",
+                "is_owned": True,
+                "plex_rating_key": "trk-c",
+            },
+        ],
+    }
+    calls = {"create": None}
+
+    monkeypatch.setattr(forge, "_import_sync_source", lambda source, source_url: fake_import)
+    monkeypatch.setattr(
+        forge.rythmx_store,
+        "create_forge_build",
+        lambda **kwargs: calls.__setitem__("create", kwargs) or {"id": "sync-build-1", **kwargs},
+    )
+
+    result = forge.forge_sync_load({"source_url": "https://open.spotify.com/playlist/abc", "max_tracks": 2})
+    assert result["status"] == "ok"
+    assert result["mode"] == "immediate"
+    assert result["track_count"] == 2
+    assert result["source_track_count"] == 3
+    assert result["applied_max_tracks"] == 2
+    assert result["owned_count"] == 1
+    assert result["missing_count"] == 1
+    assert result["resync_policy"] == "add_only"
+    assert len(result["tracks"]) == 2
+    assert calls["create"] is not None
+    assert calls["create"]["summary"]["load_mode"] == "first_n"
+    assert calls["create"]["summary"]["resync_policy"] == "add_only"
+
+
+def test_forge_sync_load_rejects_invalid_max_tracks():
+    result = forge.forge_sync_load({"source_url": "https://open.spotify.com/playlist/abc", "max_tracks": 0})
+    assert isinstance(result, JSONResponse)
+    assert result.status_code == 400
+    body = json.loads(result.body.decode("utf-8"))
+    assert body["code"] == "FORGE_VALIDATION_ERROR"
 
 
 def test_forge_sync_load_no_queue_build(monkeypatch):
