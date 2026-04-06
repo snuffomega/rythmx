@@ -17,6 +17,9 @@ router = APIRouter()
 _SYNC_BATCH_DEFAULT_CHUNK_SIZE = 500
 _SYNC_BATCH_MIN_CHUNK_SIZE = 100
 _SYNC_BATCH_MAX_CHUNK_SIZE = 2000
+_SYNC_FIRST_N_DEFAULT = 500
+_SYNC_FIRST_N_MAX = 10000
+_SYNC_RESYNC_POLICIES = {"auto", "add_only", "replace"}
 _SYNC_BATCH_JOBS: dict[str, dict[str, Any]] = {}
 _SYNC_BATCH_LOCK = threading.Lock()
 
@@ -31,6 +34,89 @@ def _clamp_chunk_size(raw: Any) -> int:
     except (TypeError, ValueError):
         value = _SYNC_BATCH_DEFAULT_CHUNK_SIZE
     return max(_SYNC_BATCH_MIN_CHUNK_SIZE, min(value, _SYNC_BATCH_MAX_CHUNK_SIZE))
+
+
+def _coerce_max_tracks(raw: Any) -> int | None:
+    if raw is None or str(raw).strip() == "":
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    if value < 1:
+        return None
+    return min(value, _SYNC_FIRST_N_MAX)
+
+
+def _track_signature(item: dict[str, Any]) -> str:
+    track_id = str(item.get("track_id") or item.get("plex_rating_key") or item.get("navidrome_track_id") or "").strip()
+    if track_id:
+        return f"id:{track_id}"
+    spotify_track_id = str(item.get("spotify_track_id") or "").strip()
+    if spotify_track_id:
+        return f"sp:{spotify_track_id}"
+    artist = str(item.get("artist_name") or "").strip().lower()
+    title = str(item.get("track_name") or "").strip().lower()
+    album = str(item.get("album_name") or "").strip().lower()
+    return f"text:{artist}|{title}|{album}"
+
+
+def _merge_add_only(existing: list[dict[str, Any]], incoming: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    ordered_keys: list[str] = []
+    by_key: dict[str, dict[str, Any]] = {}
+    for item in existing:
+        safe = dict(item or {})
+        key = _track_signature(safe)
+        if key in by_key:
+            continue
+        ordered_keys.append(key)
+        by_key[key] = safe
+
+    added_count = 0
+    for item in incoming:
+        safe = dict(item or {})
+        key = _track_signature(safe)
+        if key in by_key:
+            merged = dict(by_key[key])
+            merged.update(safe)
+            by_key[key] = merged
+            continue
+        ordered_keys.append(key)
+        by_key[key] = safe
+        added_count += 1
+
+    merged_list = [by_key[k] for k in ordered_keys]
+    return merged_list, added_count
+
+
+def _diff_counts(existing: list[dict[str, Any]], incoming: list[dict[str, Any]]) -> tuple[int, int]:
+    existing_keys = {_track_signature(dict(item or {})) for item in existing}
+    incoming_keys = {_track_signature(dict(item or {})) for item in incoming}
+    added = len(incoming_keys - existing_keys)
+    removed = len(existing_keys - incoming_keys)
+    return added, removed
+
+
+def _default_resync_policy(*, batch_mode: bool, track_count: int, partial_load: bool = False) -> str:
+    if batch_mode or partial_load or track_count > _SYNC_FIRST_N_DEFAULT:
+        return "add_only"
+    return "replace"
+
+
+def _resolve_resync_policy(*, requested: str | None, summary: dict[str, Any], track_count: int) -> str:
+    req = str(requested or "").strip().lower()
+    if req in {"add_only", "replace"}:
+        return req
+    summary_policy = str(summary.get("resync_policy") or "").strip().lower()
+    if summary_policy in {"add_only", "replace"}:
+        return summary_policy
+    summary_load_mode = str(summary.get("load_mode") or "").strip().lower()
+    summary_partial = summary_load_mode == "first_n" or summary.get("applied_max_tracks") not in {None, "", 0}
+    return _default_resync_policy(
+        batch_mode=bool(summary.get("batch_mode")),
+        track_count=track_count,
+        partial_load=summary_partial,
+    )
 
 
 def _set_sync_job_state(job_id: str, **updates: Any) -> dict[str, Any] | None:
@@ -57,6 +143,8 @@ def _run_sync_batch_job(
     source_url: str,
     chunk_size: int,
     build_id: str | None,
+    max_tracks: int | None,
+    resync_policy: str,
 ) -> None:
     from app.routes import forge as facade
 
@@ -89,7 +177,10 @@ def _run_sync_batch_job(
             return
 
         shaped_tracks = [facade._shape_sync_track(t) for t in (result.get("tracks") or [])]
-        total = int(result.get("track_count") or len(shaped_tracks))
+        source_total = int(result.get("track_count") or len(shaped_tracks))
+        if max_tracks and max_tracks > 0:
+            shaped_tracks = shaped_tracks[:max_tracks]
+        total = len(shaped_tracks)
         total_chunks = (total + chunk_size - 1) // chunk_size if total > 0 else 0
 
         processed_tracks = 0
@@ -100,6 +191,7 @@ def _run_sync_batch_job(
         _set_sync_job_state(
             job_id,
             status="running",
+            source_track_count=source_total,
             total_tracks=total,
             total_chunks=total_chunks,
             message=f"Processing {total_chunks} chunk(s)",
@@ -123,7 +215,11 @@ def _run_sync_batch_job(
                         "source": source,
                         "source_url": source_url,
                         "batch_mode": True,
+                        "load_mode": "batch",
                         "chunk_size": chunk_size,
+                        "source_track_count": source_total,
+                        "applied_max_tracks": max_tracks,
+                        "resync_policy": resync_policy,
                         "total_chunks": total_chunks,
                         "completed_chunks": completed_chunks,
                         "track_count": processed_tracks,
@@ -154,7 +250,11 @@ def _run_sync_batch_job(
                     "source": source,
                     "source_url": source_url,
                     "batch_mode": True,
+                    "load_mode": "batch",
                     "chunk_size": chunk_size,
+                    "source_track_count": source_total,
+                    "applied_max_tracks": max_tracks,
+                    "resync_policy": resync_policy,
                     "total_chunks": total_chunks,
                     "completed_chunks": completed_chunks,
                     "track_count": total,
@@ -166,6 +266,7 @@ def _run_sync_batch_job(
         _set_sync_job_state(
             job_id,
             status="completed",
+            source_track_count=source_total,
             total_tracks=total,
             processed_tracks=processed_tracks,
             total_chunks=total_chunks,
@@ -196,7 +297,7 @@ def _run_sync_batch_job(
 def forge_sync_load(data: Optional[dict[str, Any]] = Body(default=None)):
     from app.routes import forge as facade
 
-    payload = data or {}
+    payload = data if isinstance(data, dict) else {}
     source_url = str(payload.get("source_url") or "").strip()
     if not source_url:
         return facade._error(
@@ -216,6 +317,18 @@ def forge_sync_load(data: Optional[dict[str, Any]] = Body(default=None)):
     batch_mode = bool(payload.get("batch_mode", False))
     queue_build = bool(payload.get("queue_build", True))
     chunk_size = _clamp_chunk_size(payload.get("chunk_size"))
+    max_tracks = _coerce_max_tracks(payload.get("max_tracks"))
+    if payload.get("max_tracks") is not None and max_tracks is None:
+        return facade._error(
+            f"max_tracks must be an integer between 1 and {_SYNC_FIRST_N_MAX}",
+            status_code=400,
+            code="FORGE_VALIDATION_ERROR",
+        )
+    default_policy = _default_resync_policy(
+        batch_mode=batch_mode,
+        track_count=max_tracks or (_SYNC_FIRST_N_DEFAULT + 1 if batch_mode else _SYNC_FIRST_N_DEFAULT),
+        partial_load=bool(max_tracks),
+    )
 
     if batch_mode:
         explicit_name = str(payload.get("name") or "").strip()
@@ -233,7 +346,11 @@ def forge_sync_load(data: Optional[dict[str, Any]] = Body(default=None)):
                     "source": source,
                     "source_url": source_url,
                     "batch_mode": True,
+                    "load_mode": "batch",
                     "chunk_size": chunk_size,
+                    "source_track_count": 0,
+                    "applied_max_tracks": max_tracks,
+                    "resync_policy": default_policy,
                     "track_count": 0,
                     "owned_count": 0,
                     "missing_count": 0,
@@ -253,6 +370,8 @@ def forge_sync_load(data: Optional[dict[str, Any]] = Body(default=None)):
                 "source_url": source_url,
                 "queue_build": queue_build,
                 "chunk_size": chunk_size,
+                "max_tracks": max_tracks,
+                "resync_policy": default_policy,
                 "build_id": build_id,
                 "build": build,
                 "total_tracks": 0,
@@ -276,6 +395,8 @@ def forge_sync_load(data: Optional[dict[str, Any]] = Body(default=None)):
                 "source_url": source_url,
                 "chunk_size": chunk_size,
                 "build_id": build_id,
+                "max_tracks": max_tracks,
+                "resync_policy": default_policy,
             },
             daemon=True,
             name=f"forge-sync-batch-{job_id[:8]}",
@@ -293,6 +414,9 @@ def forge_sync_load(data: Optional[dict[str, Any]] = Body(default=None)):
             "missing_count": 0,
             "queue_build": queue_build,
             "chunk_size": chunk_size,
+            "source_track_count": 0,
+            "applied_max_tracks": max_tracks,
+            "resync_policy": default_policy,
             "build": build,
             "tracks": [],
         }
@@ -306,9 +430,18 @@ def forge_sync_load(data: Optional[dict[str, Any]] = Body(default=None)):
         )
 
     shaped_tracks = [facade._shape_sync_track(t) for t in (result.get("tracks") or [])]
-    total = int(result.get("track_count") or len(shaped_tracks))
-    owned = int(result.get("owned_count") or sum(1 for t in shaped_tracks if t.get("is_owned")))
+    source_total = int(result.get("track_count") or len(shaped_tracks))
+    if max_tracks and max_tracks > 0:
+        shaped_tracks = shaped_tracks[:max_tracks]
+    total = len(shaped_tracks)
+    owned = int(sum(1 for t in shaped_tracks if t.get("is_owned")))
     missing = max(0, total - owned)
+    partial_load = bool(max_tracks and source_total > total)
+    resolved_policy = _default_resync_policy(
+        batch_mode=False,
+        track_count=source_total,
+        partial_load=partial_load,
+    )
 
     build = None
     if queue_build:
@@ -324,6 +457,11 @@ def forge_sync_load(data: Optional[dict[str, Any]] = Body(default=None)):
             summary={
                 "source": source,
                 "source_url": source_url,
+                "batch_mode": False,
+                "load_mode": "first_n" if max_tracks else "all",
+                "source_track_count": source_total,
+                "applied_max_tracks": max_tracks,
+                "resync_policy": resolved_policy,
                 "track_count": total,
                 "owned_count": owned,
                 "missing_count": missing,
@@ -338,6 +476,9 @@ def forge_sync_load(data: Optional[dict[str, Any]] = Body(default=None)):
         "track_count": total,
         "owned_count": owned,
         "missing_count": missing,
+        "source_track_count": source_total,
+        "applied_max_tracks": max_tracks,
+        "resync_policy": resolved_policy,
         "queue_build": queue_build,
         "build": build,
         "tracks": shaped_tracks,
@@ -518,8 +659,17 @@ def forge_builds_publish(build_id: str, data: Optional[dict[str, Any]] = Body(de
 
 
 @router.post("/forge/builds/{build_id}/resync")
-def forge_builds_resync(build_id: str):
+def forge_builds_resync(build_id: str, data: Optional[dict[str, Any]] = Body(default=None)):
     from app.routes import forge as facade
+
+    payload = data if isinstance(data, dict) else {}
+    requested_policy = str(payload.get("resync_policy") or "").strip().lower()
+    if requested_policy and requested_policy not in _SYNC_RESYNC_POLICIES:
+        return facade._error(
+            f"resync_policy must be one of: {', '.join(sorted(_SYNC_RESYNC_POLICIES))}",
+            status_code=400,
+            code="FORGE_VALIDATION_ERROR",
+        )
 
     build = facade.rythmx_store.get_forge_build(build_id)
     if not build:
@@ -558,8 +708,23 @@ def forge_builds_resync(build_id: str):
         )
 
     shaped_tracks = [facade._shape_sync_track(t) for t in (result.get("tracks") or [])]
-    total = int(result.get("track_count") or len(shaped_tracks))
-    owned = int(result.get("owned_count") or sum(1 for t in shaped_tracks if t.get("is_owned")))
+    source_total = int(result.get("track_count") or len(shaped_tracks))
+
+    existing_tracks = [dict(item or {}) for item in (build.get("track_list") or []) if isinstance(item, dict)]
+    resync_policy = _resolve_resync_policy(
+        requested=requested_policy if requested_policy != "auto" else None,
+        summary=summary,
+        track_count=source_total,
+    )
+    if resync_policy == "add_only":
+        final_tracks, added_count = _merge_add_only(existing_tracks, shaped_tracks)
+        removed_count = 0
+    else:
+        final_tracks = list(shaped_tracks)
+        added_count, removed_count = _diff_counts(existing_tracks, shaped_tracks)
+
+    total = len(final_tracks)
+    owned = int(sum(1 for t in final_tracks if t.get("is_owned")))
     missing = max(0, total - owned)
 
     updated_summary = dict(summary)
@@ -567,9 +732,14 @@ def forge_builds_resync(build_id: str):
         {
             "source": source,
             "source_url": source_url,
+            "source_track_count": source_total,
             "track_count": total,
             "owned_count": owned,
             "missing_count": missing,
+            "resync_policy": resync_policy,
+            "last_resync_policy": resync_policy,
+            "last_resync_added": added_count,
+            "last_resync_removed": removed_count,
         }
     )
 
@@ -577,7 +747,7 @@ def forge_builds_resync(build_id: str):
         build_id,
         status="ready",
         run_mode="build",
-        track_list=shaped_tracks,
+        track_list=final_tracks,
         summary=updated_summary,
     )
     if not updated:
@@ -587,6 +757,9 @@ def forge_builds_resync(build_id: str):
         "status": "ok",
         "build": updated,
         "source": source,
+        "resync_policy": resync_policy,
+        "added_count": added_count,
+        "removed_count": removed_count,
         "track_count": total,
         "owned_count": owned,
         "missing_count": missing,
