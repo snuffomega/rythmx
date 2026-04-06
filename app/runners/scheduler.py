@@ -283,8 +283,11 @@ def _loop():
     """Background loop - checks every hour whether a CC cycle should run."""
     while not _stop_event.is_set():
         ran_cc = False
+        ran_forge = False
+        settings = rythmx_store.get_all_settings()
+
+        # Legacy Cruise Control remains env-gated.
         if config.SCHEDULER_ENABLED:
-            settings = rythmx_store.get_all_settings()
             ran_cc = _scheduler_helpers.run_scheduler_tick(
                 settings=settings,
                 run_cycle_fn=run_cycle,
@@ -292,10 +295,18 @@ def _loop():
                 logger=logger,
             )
 
+        # Forge schedules are settings-driven and remain active even when
+        # legacy cruise control is disabled.
+        ran_forge = _scheduler_helpers.run_forge_scheduler_tick(
+            settings=settings,
+            store=rythmx_store,
+            logger=logger,
+        )
+
         _scheduler_helpers.run_acquisition_worker(logger)
 
         # Warm image cache during idle hours - no-op if everything is already cached.
-        if not ran_cc:
+        if not ran_cc and not ran_forge:
             _scheduler_helpers.warm_image_cache(logger)
         _stop_event.wait(timeout=3600)  # Check every hour
 
@@ -315,7 +326,7 @@ def start():
         )
     else:
         logger.info(
-            "Background maintenance thread started (cruise disabled; acquisition/image warmer still active)"
+            "Background maintenance thread started (cruise disabled; Forge schedules + acquisition/image warmer active)"
         )
 
 
