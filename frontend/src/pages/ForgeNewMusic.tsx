@@ -4,6 +4,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { forgeBuildsApi, forgeNewMusicApi } from '../services/api';
 import { useToastStore } from '../stores/useToastStore';
 import { Toggle } from '../components/common';
+import { getForgeReleaseTarget, openExternalReleaseUrl } from '../utils/forgeReleaseLinks';
 import type { NewMusicConfig, DiscoveredRelease } from '../types';
 
 // ---------------------------------------------------------------------------
@@ -219,6 +220,16 @@ export function ForgeNewMusic() {
   // ---------------------------------------------------------------------------
 
   const hasResults = results !== null && results.length > 0;
+
+  const openRelease = (release: DiscoveredRelease) => {
+    const target = getForgeReleaseTarget(release);
+    if (!target) return;
+    if (target.kind === 'library-artist') {
+      navigate({ to: '/library/artist/$id', params: { id: target.artistId } });
+      return;
+    }
+    openExternalReleaseUrl(target.url);
+  };
 
   return (
     <div className="space-y-6">
@@ -493,7 +504,7 @@ export function ForgeNewMusic() {
       {/* Results grid */}
       {!running && hasResults && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-          {results!.map(r => <ReleaseCard key={r.id} release={r} />)}
+          {results!.map(r => <ReleaseCard key={r.id} release={r} onOpen={() => openRelease(r)} />)}
         </div>
       )}
 
@@ -549,10 +560,30 @@ export function ForgeNewMusic() {
 // Release card
 // ---------------------------------------------------------------------------
 
-function ReleaseCard({ release }: { release: DiscoveredRelease }) {
+function ReleaseCard({
+  release,
+  onOpen,
+}: {
+  release: DiscoveredRelease;
+  onOpen?: () => void;
+}) {
+  const interactive = Boolean(onOpen);
+
   return (
-    <div className="group flex flex-col gap-0">
-      <div className="relative overflow-hidden bg-[#181818] aspect-square border border-[#1e1e1e]">
+    <div
+      className={`group flex flex-col gap-0 ${interactive ? 'cursor-pointer' : ''}`}
+      onClick={onOpen}
+      onKeyDown={(e) => {
+        if (!onOpen) return;
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+      role={interactive ? 'button' : undefined}
+      tabIndex={interactive ? 0 : undefined}
+    >
+      <div className="relative overflow-hidden bg-[#181818] aspect-square border border-[#1e1e1e] group-hover:border-[#3a3a3a] transition-colors">
         {release.cover_url ? (
           <img
             src={release.cover_url}

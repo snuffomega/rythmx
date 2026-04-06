@@ -261,6 +261,7 @@ def _get_discovered_releases() -> list[dict]:
                 r.id,
                 r.artist_deezer_id,
                 da.name        AS artist_name,
+                la.id          AS library_artist_id,
                 r.title,
                 r.record_type,
                 r.release_date,
@@ -315,4 +316,3 @@ router.include_router(_pipeline_history_router)
 router.include_router(_new_music_router)
 router.include_router(_discovery_router)
 router.include_router(_sync_build_router)
-

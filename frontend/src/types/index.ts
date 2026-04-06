@@ -552,6 +552,7 @@ export interface NewMusicConfig {
 export interface DiscoveredRelease {
   id: string;
   artist_deezer_id: string;
+  library_artist_id?: string | null;
   artist_name: string;
   title: string;
   record_type: string | null;

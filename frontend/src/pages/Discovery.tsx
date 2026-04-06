@@ -4,9 +4,10 @@ import { useNavigate } from '@tanstack/react-router';
 import { useApi } from '../hooks/useApi';
 import { useImage } from '../hooks/useImage';
 import { statsApi, forgeNewMusicApi, acquisitionApi } from '../services/api';
+import { getForgeReleaseTarget, openExternalReleaseUrl } from '../utils/forgeReleaseLinks';
 import { getImageUrl } from '../utils/imageUrl';
 import { ApiErrorBanner } from '../components/common';
-import type { Artist, Track, QueueItem } from '../types';
+import type { Artist, Track, QueueItem, DiscoveredRelease } from '../types';
 
 function placeholderGradient(seed: string) {
   const hues = [200, 160, 220, 180, 30, 270, 340];
@@ -35,12 +36,14 @@ function AlbumTile({
   image,
   sub,
   wide,
+  onClick,
 }: {
   artist: string;
   title: string;
   image?: string;
   sub?: string;
   wide?: boolean;
+  onClick?: () => void;
 }) {
   const { ref, inView } = useInView();
   const hasImage = Boolean(image);
@@ -48,8 +51,23 @@ function AlbumTile({
   const src = image || resolvedImg;
   const w = wide ? 'w-48' : 'w-40';
   const h = wide ? 'h-48' : 'h-40';
+  const interactive = Boolean(onClick);
+
   return (
-    <div ref={ref} className={`flex-shrink-0 ${w} snap-start group cursor-pointer`}>
+    <div
+      ref={ref}
+      className={`flex-shrink-0 ${w} snap-start group ${interactive ? 'cursor-pointer' : ''}`}
+      onClick={onClick}
+      onKeyDown={(e) => {
+        if (!onClick) return;
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onClick();
+        }
+      }}
+      role={interactive ? 'button' : undefined}
+      tabIndex={interactive ? 0 : undefined}
+    >
       <div
         className={`${w} ${h} overflow-hidden relative`}
         style={!src ? { background: placeholderGradient(artist) } : undefined}
@@ -266,6 +284,16 @@ export function Discovery() {
 
   const newReleases = forgeReleases.data?.length ? forgeReleases.data.slice(0, 14) : null;
 
+  const openRelease = (release: DiscoveredRelease) => {
+    const target = getForgeReleaseTarget(release);
+    if (!target) return;
+    if (target.kind === 'library-artist') {
+      navigate({ to: '/library/artist/$id', params: { id: target.artistId } });
+      return;
+    }
+    openExternalReleaseUrl(target.url);
+  };
+
   return (
     <div className="py-8 space-y-12">
 
@@ -297,6 +325,7 @@ export function Discovery() {
                 title={item.title}
                 image={item.cover_url ?? undefined}
                 sub={item.release_date?.slice(0, 7) ?? ''}
+                onClick={() => openRelease(item)}
               />
             ))}
           </HScrollShelf>
