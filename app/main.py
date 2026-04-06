@@ -8,6 +8,7 @@ Never log secret values.
 import asyncio
 import logging
 import re
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -347,13 +348,22 @@ app.include_router(ws_router)
 # Health check
 # ---------------------------------------------------------------------------
 
+# Always-on daemon threads expected to be alive for the process lifetime.
+# Missing either → status: degraded.
+_ALWAYS_ON_THREADS = frozenset({"maintenance-scheduler", "ws-heartbeat"})
+
+
 @app.get("/health")
 def health():
+    alive = {t.name for t in threading.enumerate() if t.is_alive()}
+    threads = {name: name in alive for name in _ALWAYS_ON_THREADS}
+    thread_ok = all(threads.values())
     try:
         from app.db.rythmx_store import _connect
         with _connect() as conn:
             wal = conn.execute("PRAGMA journal_mode").fetchone()[0]
-        return {"status": "ok", "db": "connected", "wal": wal == "wal"}
+        status = "ok" if thread_ok else "degraded"
+        return {"status": status, "db": "connected", "wal": wal == "wal", "threads": threads}
     except Exception as exc:
         logger.error("Health check failed: %s", exc)
         return JSONResponse({"status": "error", "detail": str(exc)}, status_code=500)
