@@ -453,16 +453,20 @@ export const forgeBuildsApi = {
     request<{ status: string; message: string }>(`/forge/builds/${encodeURIComponent(id)}/fetch`, {
       method: 'POST',
     }),
-  resync: (id: string) =>
+  resync: (id: string, resyncPolicy?: 'auto' | 'add_only' | 'replace') =>
     request<{
       status: string;
       build: ForgeBuild;
       source: string;
+      resync_policy: 'add_only' | 'replace';
+      added_count: number;
+      removed_count: number;
       track_count: number;
       owned_count: number;
       missing_count: number;
     }>(`/forge/builds/${encodeURIComponent(id)}/resync`, {
       method: 'POST',
+      body: JSON.stringify(resyncPolicy ? { resync_policy: resyncPolicy } : {}),
     }),
 };
 
@@ -474,6 +478,7 @@ export const forgeSyncApi = {
     name?: string;
     batch_mode?: boolean;
     chunk_size?: number;
+    max_tracks?: number;
   }) =>
     request<{
       status: string;
@@ -486,6 +491,9 @@ export const forgeSyncApi = {
       missing_count: number;
       queue_build: boolean;
       chunk_size?: number;
+      source_track_count?: number;
+      applied_max_tracks?: number | null;
+      resync_policy?: 'add_only' | 'replace';
       build?: ForgeBuild | null;
       tracks: Array<{
         track_id?: string;
@@ -510,6 +518,9 @@ export const forgeSyncApi = {
         source_url: string;
         queue_build: boolean;
         chunk_size: number;
+        max_tracks?: number | null;
+        source_track_count?: number;
+        resync_policy?: 'add_only' | 'replace';
         build_id?: string | null;
         build?: ForgeBuild | null;
         total_tracks: number;

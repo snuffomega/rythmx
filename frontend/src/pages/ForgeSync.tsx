@@ -16,6 +16,7 @@ export function ForgeSync() {
   const [loading, setLoading] = useState(false);
   const [batchMode, setBatchMode] = useState(true);
   const [chunkSize, setChunkSize] = useState(500);
+  const [firstN, setFirstN] = useState(500);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [job, setJob] = useState<{
     status: 'queued' | 'running' | 'completed' | 'failed';
@@ -87,6 +88,7 @@ export function ForgeSync() {
         queue_build: true,
         batch_mode: batchMode,
         chunk_size: batchMode ? chunkSize : undefined,
+        max_tracks: batchMode ? undefined : Math.max(1, Number(firstN) || 1),
       });
       if (result.mode === 'batch' && result.job_id) {
         setActiveJobId(result.job_id);
@@ -103,8 +105,13 @@ export function ForgeSync() {
         });
         toast.info('Batch sync started in background. You can keep using the app.');
       } else {
+        const sourceTotal = Number(result.source_track_count || result.track_count || 0);
+        const loadedTotal = Number(result.track_count || 0);
+        const wasTrimmed = sourceTotal > loadedTotal;
         toast.success(
-          `Loaded ${result.track_count} tracks (${result.owned_count} owned) and queued build in Builder`
+          wasTrimmed
+            ? `Loaded first ${loadedTotal}/${sourceTotal} tracks (${result.owned_count} owned) and queued build in Builder`
+            : `Loaded ${loadedTotal} tracks (${result.owned_count} owned) and queued build in Builder`
         );
         setTimeout(() => navigate({ to: '/forge/builder' }), 400);
       }
@@ -149,6 +156,20 @@ export function ForgeSync() {
                 <option value={750}>750</option>
                 <option value={1000}>1000</option>
               </select>
+            </label>
+          )}
+          {!batchMode && (
+            <label className="inline-flex items-center gap-2 text-sm text-text-primary">
+              First N Tracks
+              <input
+                type="number"
+                min={1}
+                max={10000}
+                step={1}
+                value={firstN}
+                onChange={e => setFirstN(Number(e.target.value || 1))}
+                className="w-24 bg-[#111] border border-[#2a2a2a] text-text-primary text-sm px-2 py-1 focus:outline-none focus:border-accent"
+              />
             </label>
           )}
         </div>

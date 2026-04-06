@@ -309,9 +309,9 @@ export function ForgeBuilder() {
   const handleResync = async (build: ForgeBuild) => {
     setResyncingId(build.id);
     try {
-      const result = await forgeBuildsApi.resync(build.id);
+      const result = await forgeBuildsApi.resync(build.id, 'auto');
       toastSuccess(
-        `Re-synced ${result.track_count} tracks (${result.owned_count} owned, ${result.missing_count} missing)`
+        `Re-synced (${result.resync_policy}): ${result.track_count} tracks (${result.owned_count} owned, ${result.missing_count} missing, +${result.added_count}/-${result.removed_count})`
       );
       refetch();
     } catch (err) {
