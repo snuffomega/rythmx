@@ -5,6 +5,7 @@ import { forgeBuildsApi, forgeNewMusicApi } from '../services/api';
 import { useToastStore } from '../stores/useToastStore';
 import { useForgePipelineStore } from '../stores/useForgePipelineStore';
 import { Toggle } from '../components/common';
+import { FormInput } from '../components/forms';
 import { getForgeReleaseTarget, openExternalReleaseUrl } from '../utils/forgeReleaseLinks';
 import type {
   NewMusicConfig,
@@ -436,18 +437,16 @@ export function ForgeNewMusic() {
             <p className="text-[#444] text-[11px] mt-1.5">How far back to look for new releases.</p>
           </div>
           <div className="flex-shrink-0">
-            <label className="block text-xs font-semibold text-text-muted uppercase tracking-widest mb-2">
-              Min listens
-            </label>
-            <input
+            <FormInput
+              label="Min listens"
               type="number"
               min={1}
               max={500}
               value={config.nm_min_scrobbles}
               onChange={e => update('nm_min_scrobbles', parseInt(e.target.value) || 1)}
-              className="w-20 bg-[#111] border border-[#2a2a2a] text-text-primary text-sm px-3 py-1.5 focus:outline-none focus:border-accent"
+              className="w-20"
+              helperText="Min plays to qualify."
             />
-            <p className="text-[#444] text-[11px] mt-1">Min plays to qualify.</p>
           </div>
         </div>
 
@@ -494,33 +493,25 @@ export function ForgeNewMusic() {
 
           {advancedOpen && (
             <div className="mt-5 space-y-5 border-l border-[#1a1a1a] pl-4">
-              <div>
-                <label className="block text-xs font-semibold text-text-muted uppercase tracking-widest mb-2">
-                  Ignore keywords
-                </label>
-                <input
-                  type="text"
-                  value={config.nm_ignore_keywords}
-                  onChange={e => update('nm_ignore_keywords', e.target.value)}
-                  placeholder="live, christmas, remix"
-                  className="w-full bg-[#111] border border-[#2a2a2a] text-text-primary text-sm px-3 py-1.5 placeholder:text-[#333] focus:outline-none focus:border-accent"
-                />
-                <p className="text-[#444] text-[11px] mt-1">Comma-separated. Releases containing these words are excluded.</p>
-              </div>
+              <FormInput
+                label="Ignore keywords"
+                type="text"
+                value={config.nm_ignore_keywords}
+                onChange={e => update('nm_ignore_keywords', e.target.value)}
+                placeholder="live, christmas, remix"
+                className="w-full"
+                helperText="Comma-separated. Releases containing these words are excluded."
+              />
 
-              <div>
-                <label className="block text-xs font-semibold text-text-muted uppercase tracking-widest mb-2">
-                  Ignore artists
-                </label>
-                <input
-                  type="text"
-                  value={config.nm_ignore_artists}
-                  onChange={e => update('nm_ignore_artists', e.target.value)}
-                  placeholder="Artist Name, Another Artist"
-                  className="w-full bg-[#111] border border-[#2a2a2a] text-text-primary text-sm px-3 py-1.5 placeholder:text-[#333] focus:outline-none focus:border-accent"
-                />
-                <p className="text-[#444] text-[11px] mt-1">Comma-separated artist names to skip.</p>
-              </div>
+              <FormInput
+                label="Ignore artists"
+                type="text"
+                value={config.nm_ignore_artists}
+                onChange={e => update('nm_ignore_artists', e.target.value)}
+                placeholder="Artist Name, Another Artist"
+                className="w-full"
+                helperText="Comma-separated artist names to skip."
+              />
 
               {/* Clear results */}
               <div>
