@@ -98,15 +98,6 @@ def _log_level() -> str:
 
 LOG_LEVEL = _log_level()
 
-# --- Scheduler / legacy new-music cycle defaults (gated by SCHEDULER_ENABLED) ---
-SCHEDULER_ENABLED = _optional("SCHEDULER_ENABLED", "false").lower() == "true"
-CYCLE_HOURS = int(_optional("CYCLE_HOURS", "24"))
-MAX_PER_CYCLE = int(_optional("MAX_PER_CYCLE", "10"))
-MIN_LISTENS = int(_optional("MIN_LISTENS", "5"))
-LOOKBACK_DAYS = int(_optional("LOOKBACK_DAYS", "90"))
-IGNORE_KEYWORDS = _optional("IGNORE_KEYWORDS", "remix,remaster,live,karaoke,instrumental")
-RELEASE_KINDS = _optional("RELEASE_KINDS", "album,single,ep")
-
 # --- Catalog primary source ---
 # Which API catalog populates lib_releases for gap analysis (missing shelf).
 # The OTHER source still has its IDs captured in lib_artist_catalog for enrichment.
@@ -125,6 +116,8 @@ DEEZER_BPM_ENABLED = _optional("DEEZER_BPM_ENABLED", "false").lower() in ("true"
 # --- Music catalog API ---
 # auto = Spotify if credentials set, otherwise Deezer, MusicBrainz as fallback
 MUSIC_API_PROVIDER = _optional("MUSIC_API_PROVIDER", "auto")  # auto|deezer|spotify|musicbrainz
+# Release kinds filter for discovery (used by Forge new-music pipeline and artist release lookups).
+RELEASE_KINDS = _optional("RELEASE_KINDS", "album,single,ep")
 
 # --- Library platform ---
 # Which media server platform populates the library (lib_* tables).
@@ -330,7 +323,6 @@ def log_config_summary():
         ("FANART_API_KEY", FANART_API_KEY),
         ("MUSIC_DIR", MUSIC_DIR or "NOT SET (file-aware features disabled)"),
         ("ARTWORK_DIR", ARTWORK_DIR),
-        ("SCHEDULER_ENABLED", SCHEDULER_ENABLED),
         ("CATALOG_PRIMARY", CATALOG_PRIMARY),
     ]
 

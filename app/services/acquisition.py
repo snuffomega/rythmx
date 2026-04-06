@@ -10,7 +10,7 @@ To add a downloader later:
   3. The re-check loop (_recheck_submitted) will flip 'submitted' → 'found'
      once the owned-check confirms the album is in the library
 
-check_queue() is called by scheduler._loop() after each CC cycle.
+check_queue() is called by scheduler._loop() on each hourly tick.
 It can also be called on-demand from main.py (e.g. via a future
 POST /api/acquisition/check-now route).
 """
