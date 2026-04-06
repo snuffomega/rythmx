@@ -1107,6 +1107,100 @@ def test_forge_sync_load_no_queue_build(monkeypatch):
     assert calls["create_called"] is False
 
 
+def test_forge_sync_load_batch_mode_runs_and_reports_status(monkeypatch):
+    from app.routes import forge_sync_build_routes as sync_routes
+
+    fake_import = {
+        "status": "ok",
+        "name": "Imported Playlist",
+        "track_count": 3,
+        "owned_count": 2,
+        "tracks": [
+            {
+                "track_name": "Track A",
+                "artist_name": "Artist A",
+                "album_name": "Album A",
+                "spotify_track_id": "sp-a",
+                "is_owned": True,
+                "plex_rating_key": "trk-a",
+            },
+            {
+                "track_name": "Track B",
+                "artist_name": "Artist B",
+                "album_name": "Album B",
+                "spotify_track_id": "sp-b",
+                "is_owned": False,
+                "plex_rating_key": "trk-b",
+            },
+            {
+                "track_name": "Track C",
+                "artist_name": "Artist C",
+                "album_name": "Album C",
+                "spotify_track_id": "sp-c",
+                "is_owned": True,
+                "plex_rating_key": "trk-c",
+            },
+        ],
+    }
+
+    build_row: dict[str, object] = {}
+
+    def _fake_create(**kwargs):
+        row = {"id": "sync-build-batch-1", **kwargs}
+        build_row.clear()
+        build_row.update(row)
+        return dict(row)
+
+    def _fake_update(build_id, **kwargs):
+        assert build_id == "sync-build-batch-1"
+        build_row.update({k: v for k, v in kwargs.items() if v is not None})
+        build_row["id"] = build_id
+        return dict(build_row)
+
+    class _InlineThread:
+        def __init__(self, target=None, args=(), kwargs=None, daemon=None, name=None):
+            self._target = target
+            self._args = args
+            self._kwargs = kwargs or {}
+            self.daemon = daemon
+            self.name = name
+
+        def start(self):
+            if self._target:
+                self._target(*self._args, **self._kwargs)
+
+    sync_routes._SYNC_BATCH_JOBS.clear()
+    monkeypatch.setattr(sync_routes.threading, "Thread", _InlineThread)
+    monkeypatch.setattr(forge, "_import_sync_source", lambda source, source_url: fake_import)
+    monkeypatch.setattr(forge.rythmx_store, "create_forge_build", _fake_create)
+    monkeypatch.setattr(forge.rythmx_store, "update_forge_build", _fake_update)
+
+    result = forge.forge_sync_load(
+        {"source_url": "https://open.spotify.com/playlist/abc", "batch_mode": True, "chunk_size": 2}
+    )
+    assert result["status"] == "ok"
+    assert result["mode"] == "batch"
+    assert isinstance(result.get("job_id"), str)
+    assert result["chunk_size"] == 100
+
+    job_result = forge.forge_sync_job_get(result["job_id"])
+    assert job_result["status"] == "ok"
+    job = job_result["job"]
+    assert job["status"] == "completed"
+    assert job["total_tracks"] == 3
+    assert job["processed_tracks"] == 3
+    assert job["completed_chunks"] == 1
+    assert job["build"]["status"] == "ready"
+
+
+def test_forge_sync_job_get_not_found():
+    result = forge.forge_sync_job_get("missing-sync-job")
+    assert isinstance(result, JSONResponse)
+    assert result.status_code == 404
+    body = json.loads(result.body.decode("utf-8"))
+    assert body["code"] == "FORGE_SYNC_JOB_NOT_FOUND"
+
+
 def test_library_stream_navidrome_forwards_range_and_returns_partial(monkeypatch):
     captured: dict[str, object] = {"url": None, "headers": None}
 
