@@ -287,6 +287,7 @@ from app.routes.forge_pipeline_history_routes import get_pipeline_history, route
 from app.routes.forge_new_music_routes import (
     nm_clear,
     nm_get_config,
+    nm_get_release_tracks,
     nm_get_results,
     nm_run,
     nm_save_config,

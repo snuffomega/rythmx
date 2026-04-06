@@ -561,6 +561,19 @@ export interface DiscoveredRelease {
   in_library: boolean;
 }
 
+export interface ReleasePreviewSource {
+  provider: 'deezer' | 'itunes' | string;
+  url: string;
+}
+
+export interface ReleasePreviewTrack {
+  title: string;
+  track_number: number;
+  disc_number: number;
+  duration_ms: number;
+  preview_url: string;
+}
+
 // ---------------------------------------------------------------------------
 // The Forge - Builds and pipeline history
 // ---------------------------------------------------------------------------

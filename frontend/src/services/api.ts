@@ -32,6 +32,8 @@ import type {
   SimilarArtist,
   NewMusicConfig,
   DiscoveredRelease,
+  ReleasePreviewSource,
+  ReleasePreviewTrack,
   ForgeBuild,
   ForgeBuildSource,
   ForgeBuildStatus,
@@ -384,6 +386,14 @@ export const forgeNewMusicApi = {
   getResults: () =>
     request<{ status: string; releases: DiscoveredRelease[] }>('/forge/new-music/results')
       .then(r => r.releases),
+  getReleaseTracks: (releaseId: string) =>
+    request<{
+      status: string;
+      release_id: string;
+      source: string;
+      sources: ReleasePreviewSource[];
+      tracks: ReleasePreviewTrack[];
+    }>(`/forge/new-music/releases/${encodeURIComponent(releaseId)}/tracks`),
   clear: () =>
     request<{ status: string }>('/forge/new-music/clear', { method: 'POST' }),
 };

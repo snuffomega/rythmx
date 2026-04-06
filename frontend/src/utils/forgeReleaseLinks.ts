@@ -29,9 +29,16 @@ export function getForgeReleaseTarget(release: DiscoveredRelease): ForgeReleaseT
   return null;
 }
 
+let lastExternalUrl = '';
+let lastExternalOpenAt = 0;
+
 export function openExternalReleaseUrl(url: string): void {
-  const child = window.open(url, '_blank', 'noopener,noreferrer');
-  if (!child) {
-    window.location.href = url;
+  const now = Date.now();
+  if (lastExternalUrl === url && now - lastExternalOpenAt < 800) {
+    return;
   }
+
+  lastExternalUrl = url;
+  lastExternalOpenAt = now;
+  window.open(url, '_blank', 'noopener,noreferrer');
 }

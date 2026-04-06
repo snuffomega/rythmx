@@ -90,6 +90,38 @@ def nm_get_results():
     return {"status": "ok", "releases": releases}
 
 
+@router.get("/forge/new-music/releases/{release_id}/tracks")
+def nm_get_release_tracks(release_id: str):
+    """
+    Return track listing for a discovered release (currently Deezer album ID based).
+    """
+    from app.clients.music_client import get_album_tracks_deezer
+    from app.routes import forge as facade
+
+    release_id = str(release_id or "").strip()
+    if not release_id:
+        return facade._error("release_id is required", status_code=400, code="FORGE_VALIDATION_ERROR")
+
+    try:
+        tracks = get_album_tracks_deezer(release_id)
+    except Exception as exc:
+        logger.error("new_music/release_tracks: failed for release_id=%s: %s", release_id, exc, exc_info=True)
+        return facade._error("Failed to load release tracks", status_code=502, code="FORGE_RELEASE_TRACKS_FAILED")
+
+    return {
+        "status": "ok",
+        "release_id": release_id,
+        "source": "deezer",
+        "sources": [
+            {
+                "provider": "deezer",
+                "url": f"https://www.deezer.com/album/{release_id}",
+            }
+        ],
+        "tracks": tracks or [],
+    }
+
+
 @router.post("/forge/new-music/clear")
 def nm_clear():
     """Clear all discovered releases and artists (Tier 2, rebuildable)."""
@@ -100,4 +132,3 @@ def nm_clear():
         conn.execute("DELETE FROM forge_discovered_artists")
     logger.info("new_music: manually cleared forge_discovered tables")
     return {"status": "ok"}
-

@@ -1,11 +1,16 @@
 import { useState, useEffect, useRef } from 'react';
-import { Zap, ChevronDown, ChevronUp, Music2, Trash2 } from 'lucide-react';
+import { Zap, ChevronDown, ChevronUp, Music2, Trash2, X, ExternalLink } from 'lucide-react';
 import { useNavigate } from '@tanstack/react-router';
 import { forgeBuildsApi, forgeNewMusicApi } from '../services/api';
 import { useToastStore } from '../stores/useToastStore';
 import { Toggle } from '../components/common';
 import { getForgeReleaseTarget, openExternalReleaseUrl } from '../utils/forgeReleaseLinks';
-import type { NewMusicConfig, DiscoveredRelease } from '../types';
+import type {
+  NewMusicConfig,
+  DiscoveredRelease,
+  ReleasePreviewTrack,
+  ReleasePreviewSource,
+} from '../types';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -47,6 +52,13 @@ const STAGES = [
   { key: 'done', label: 'Done' },
 ];
 
+function formatDuration(ms: number | null | undefined): string {
+  const totalSeconds = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -55,6 +67,7 @@ export function ForgeNewMusic() {
   const navigate = useNavigate();
   const toastSuccess = useToastStore(s => s.success);
   const toastError = useToastStore(s => s.error);
+  const toastInfo = useToastStore(s => s.info);
 
   const [config, setConfig] = useState<NewMusicConfig>(DEFAULT_CONFIG);
   const [configLoaded, setConfigLoaded] = useState(false);
@@ -69,6 +82,11 @@ export function ForgeNewMusic() {
   const [runSummary, setRunSummary] = useState<{ releases_found: number } | null>(null);
   const [filteredReleases, setFilteredReleases] = useState<DiscoveredRelease[]>([]);
   const [filteredOpen, setFilteredOpen] = useState(false);
+  const [previewRelease, setPreviewRelease] = useState<DiscoveredRelease | null>(null);
+  const [previewTracks, setPreviewTracks] = useState<ReleasePreviewTrack[]>([]);
+  const [previewSources, setPreviewSources] = useState<ReleasePreviewSource[]>([]);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
 
   const update = <K extends keyof NewMusicConfig>(key: K, value: NewMusicConfig[K]) =>
     setConfig(c => ({ ...c, [key]: value }));
@@ -143,6 +161,7 @@ export function ForgeNewMusic() {
     setRunning(true);
     setResults(null);
     startProgress();
+    toastInfo('Forge in progress: New Music run started');
 
     await forgeNewMusicApi.saveConfig(config).catch(() => {});
 
@@ -177,16 +196,13 @@ export function ForgeNewMusic() {
 
       toastSuccess(
         queued
-          ? `${data.releases_found} releases found and queued in Builder`
+          ? `${data.releases_found} releases found. Build queued in Builder.`
           : `${data.releases_found} releases found`
       );
-
-      setTimeout(() => {
-        navigate({ to: '/forge/builder' });
-      }, 900);
     } catch {
       finishProgress();
-      toastError('Pipeline failed — check logs');
+      toastError('Pipeline failed - check logs');
+    } finally {
       setRunning(false);
     }
   };
@@ -221,14 +237,47 @@ export function ForgeNewMusic() {
 
   const hasResults = results !== null && results.length > 0;
 
-  const openRelease = (release: DiscoveredRelease) => {
-    const target = getForgeReleaseTarget(release);
-    if (!target) return;
-    if (target.kind === 'library-artist') {
-      navigate({ to: '/library/artist/$id', params: { id: target.artistId } });
-      return;
+  const closePreview = () => {
+    setPreviewRelease(null);
+    setPreviewTracks([]);
+    setPreviewSources([]);
+    setPreviewError(null);
+    setPreviewLoading(false);
+  };
+
+  const openPreview = async (release: DiscoveredRelease) => {
+    setPreviewRelease(release);
+    setPreviewTracks([]);
+    setPreviewError(null);
+    setPreviewLoading(true);
+
+    const fallbackTarget = getForgeReleaseTarget(release);
+    const fallbackSources: ReleasePreviewSource[] =
+      fallbackTarget?.kind === 'external'
+        ? [{ provider: 'deezer', url: fallbackTarget.url }]
+        : [];
+    setPreviewSources(fallbackSources);
+
+    try {
+      const data = await forgeNewMusicApi.getReleaseTracks(release.id);
+      setPreviewTracks(data.tracks || []);
+      setPreviewSources((data.sources && data.sources.length > 0) ? data.sources : fallbackSources);
+    } catch {
+      setPreviewError('Could not load track list for this release.');
+    } finally {
+      setPreviewLoading(false);
     }
-    openExternalReleaseUrl(target.url);
+  };
+
+  const openLibraryArtist = (release: DiscoveredRelease) => {
+    const target = getForgeReleaseTarget(release);
+    if (target?.kind !== 'library-artist') return;
+    closePreview();
+    navigate({ to: '/library/artist/$id', params: { id: target.artistId } });
+  };
+
+  const openProviderLink = (source: ReleasePreviewSource) => {
+    openExternalReleaseUrl(source.url);
   };
 
   return (
@@ -504,7 +553,7 @@ export function ForgeNewMusic() {
       {/* Results grid */}
       {!running && hasResults && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-          {results!.map(r => <ReleaseCard key={r.id} release={r} onOpen={() => openRelease(r)} />)}
+          {results!.map(r => <ReleaseCard key={r.id} release={r} onOpen={() => { void openPreview(r); }} />)}
         </div>
       )}
 
@@ -550,6 +599,77 @@ export function ForgeNewMusic() {
           <p className="text-[#444] text-xs text-center max-w-xs">
             Try expanding the release window, lowering minimum listens, or choosing a longer listening period.
           </p>
+        </div>
+      )}
+
+      {previewRelease && (
+        <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl bg-[#0b0b0b] border border-[#1d1d1d] max-h-[85vh] overflow-hidden flex flex-col">
+            <div className="flex items-start justify-between gap-4 px-5 py-4 border-b border-[#181818]">
+              <div className="min-w-0">
+                <p className="text-text-primary text-base font-semibold truncate">{previewRelease.title}</p>
+                <p className="text-text-muted text-sm truncate">{previewRelease.artist_name}</p>
+              </div>
+              <button
+                onClick={closePreview}
+                className="text-[#666] hover:text-text-primary transition-colors"
+                aria-label="Close release preview"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="px-5 py-4 space-y-4 overflow-y-auto">
+              <div className="flex flex-wrap gap-2">
+                {previewSources.map(source => (
+                  <button
+                    key={`${source.provider}-${source.url}`}
+                    onClick={() => openProviderLink(source)}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-widest border border-[#2a2a2a] text-[#bbb] hover:border-accent hover:text-accent transition-colors"
+                  >
+                    {source.provider}
+                    <ExternalLink size={11} />
+                  </button>
+                ))}
+                {previewRelease.library_artist_id && (
+                  <button
+                    onClick={() => openLibraryArtist(previewRelease)}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-widest border border-[#2a2a2a] text-[#bbb] hover:border-accent hover:text-accent transition-colors"
+                  >
+                    library artist
+                  </button>
+                )}
+              </div>
+
+              {previewLoading && (
+                <p className="text-[#555] text-sm">Loading tracks...</p>
+              )}
+
+              {!previewLoading && previewError && (
+                <p className="text-danger text-sm">{previewError}</p>
+              )}
+
+              {!previewLoading && !previewError && previewTracks.length === 0 && (
+                <p className="text-[#555] text-sm">No track listing available for this release.</p>
+              )}
+
+              {!previewLoading && !previewError && previewTracks.length > 0 && (
+                <div className="border border-[#161616] divide-y divide-[#121212]">
+                  {previewTracks.map((track, idx) => (
+                    <div key={`${track.title}-${idx}`} className="flex items-center gap-3 px-3 py-2.5">
+                      <span className="text-[#666] text-xs tabular-nums w-8 text-right">
+                        {track.track_number || idx + 1}
+                      </span>
+                      <p className="text-text-primary text-sm truncate flex-1">{track.title}</p>
+                      <span className="text-[#555] text-xs tabular-nums">
+                        {formatDuration(track.duration_ms)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

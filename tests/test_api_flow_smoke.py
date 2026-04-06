@@ -377,6 +377,31 @@ def test_forge_new_music_run_contract(monkeypatch):
     assert result["releases"] == expected_releases
 
 
+def test_forge_new_music_release_tracks_contract(monkeypatch):
+    expected_tracks = [
+        {
+            "title": "Track One",
+            "track_number": 1,
+            "disc_number": 1,
+            "duration_ms": 123000,
+            "preview_url": "",
+        }
+    ]
+
+    monkeypatch.setattr(
+        "app.clients.music_client.get_album_tracks_deezer",
+        lambda _release_id: expected_tracks,
+    )
+
+    result = forge.nm_get_release_tracks("123")
+    assert result["status"] == "ok"
+    assert result["release_id"] == "123"
+    assert result["source"] == "deezer"
+    assert result["sources"][0]["provider"] == "deezer"
+    assert result["sources"][0]["url"] == "https://www.deezer.com/album/123"
+    assert result["tracks"] == expected_tracks
+
+
 def test_forge_discovery_runtime_error_contract(monkeypatch):
     def _raise(_override=None):
         raise RuntimeError("boom")

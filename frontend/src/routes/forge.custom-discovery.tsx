@@ -10,6 +10,7 @@ function ForgeCustomDiscoveryRoute() {
   const toast = {
     success: useToastStore(s => s.success),
     error: useToastStore(s => s.error),
+    info: useToastStore(s => s.info),
   };
   return <ForgeCustomDiscovery toast={toast} />;
 }

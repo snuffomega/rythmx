@@ -39,7 +39,7 @@ interface PDConfig extends ForgeDiscoveryConfig {
 }
 
 interface ForgeCustomDiscoveryProps {
-  toast: { success: (m: string) => void; error: (m: string) => void };
+  toast: { success: (m: string) => void; error: (m: string) => void; info: (m: string) => void };
 }
 
 export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
@@ -73,13 +73,19 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
     let cancelled = false;
     const load = async () => {
       try {
-        const server = await forgeDiscoveryApi.getConfig();
+        const [server, persistedResults] = await Promise.all([
+          forgeDiscoveryApi.getConfig(),
+          forgeDiscoveryApi.getResults().catch(() => [] as ForgeDiscoveryResult[]),
+        ]);
         if (cancelled) return;
         setConfig(prev => ({
           ...prev,
           ...server,
           run_mode: server.run_mode === 'fetch' ? 'fetch' : 'build',
         }));
+        if (persistedResults.length > 0) {
+          setResults(persistedResults);
+        }
       } catch {
         if (!cancelled) {
           toast.error('Failed to load Custom Discovery config');
@@ -111,6 +117,7 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
 
   const handleRun = async () => {
     setRunning(true);
+    toast.info('Forge in progress: Custom Discovery run started');
     try {
       const data = await forgeDiscoveryApi.run({ ...config, run_mode: 'build' });
       setResults(data.artists);
