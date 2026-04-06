@@ -32,7 +32,14 @@ class _SecretRedactionFilter(logging.Filter):
     Scrubs known secret values from ALL log records before they are emitted —
     including messages from third-party libraries (urllib3, requests, spotipy)
     that may log full request URLs containing API keys as query parameters.
+
+    Also scrubs the Rythmx app api_key query parameter by regex — the key is
+    a DB value not available at module load time, so pattern-based redaction
+    is used rather than value-based.
     """
+
+    # Matches ?api_key=<value> or &api_key=<value> in any logged URL
+    _QS_API_KEY_RE = re.compile(r'([\?&]api_key=)[^& "\']+')
 
     def __init__(self):
         super().__init__()
@@ -45,6 +52,10 @@ class _SecretRedactionFilter(logging.Filter):
         ] if v]
 
     def filter(self, record: logging.LogRecord) -> bool:
+        # Redact api_key query param (Rythmx app key passed in stream URLs)
+        if isinstance(record.msg, str) and "api_key=" in record.msg:
+            record.msg = self._QS_API_KEY_RE.sub(r"\1[REDACTED]", record.msg)
+
         for secret in self._secrets:
             if isinstance(record.msg, str) and secret in record.msg:
                 record.msg = record.msg.replace(secret, "[REDACTED]")
@@ -76,6 +87,7 @@ class _AccessNoiseFilter(logging.Filter):
       - /static/*
       - *.svg, *.ico, *.png
       - /api/v1/artwork/* 404 (expected when stale hashes are being repaired)
+      - /api/v1/forge/sync/jobs/* (frontend polls every 2s during active sync)
     """
 
     _REQ_RE = re.compile(r'"[A-Z]+ ([^ ]+) HTTP/[^"]+"(?: (\d{3}))?')
@@ -96,6 +108,8 @@ class _AccessNoiseFilter(logging.Filter):
         if path.endswith(self._SUFFIXES):
             return False
         if path.startswith("/api/v1/artwork/") and status == "404":
+            return False
+        if path.startswith("/api/v1/forge/sync/jobs/"):
             return False
         return True
 
@@ -139,15 +153,25 @@ def _configure_logging() -> None:
     for handler in root_logger.handlers:
         handler.setFormatter(formatter)
 
+    # Attach filters directly to uvicorn logger objects, not their handlers.
+    # This file loads before uvicorn starts, so uv_logger.handlers is empty at
+    # module load time — logger-level filters are applied before handler dispatch
+    # and therefore work regardless of when uvicorn adds its handlers.
+    _access_log = logging.getLogger("uvicorn.access")
+    _access_log.setLevel(level)
+    _access_log.addFilter(_AccessNoiseFilter())
+    _access_log.addFilter(_ClientAddressRedactionFilter())
+
+    _error_log = logging.getLogger("uvicorn.error")
+    _error_log.setLevel(level)
+    _error_log.addFilter(_ClientAddressRedactionFilter())
+
+    logging.getLogger("uvicorn").setLevel(level)
+
+    # Apply formatter to any handlers already attached (usually none at this point)
     for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
-        uv_logger = logging.getLogger(name)
-        uv_logger.setLevel(level)
-        for handler in uv_logger.handlers:
+        for handler in logging.getLogger(name).handlers:
             handler.setFormatter(formatter)
-            if name in ("uvicorn.error", "uvicorn.access"):
-                handler.addFilter(_ClientAddressRedactionFilter())
-            if name == "uvicorn.access":
-                handler.addFilter(_AccessNoiseFilter())
 
     logging.getLogger("spotipy").setLevel(logging.WARNING)
     logging.getLogger("spotipy.client").setLevel(logging.WARNING)
