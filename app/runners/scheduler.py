@@ -1,17 +1,17 @@
 """
-scheduler.py - background cruise control cycle runner.
+scheduler.py - background maintenance and scheduling thread.
 
 Threading-based, same pattern used by SoulSync's wishlist/watchlist timers.
 Guards against concurrent cycles with is_running flag.
 
-Cruise Control pipeline (7 stages):
-  1. Poll Last.fm - top artists filtered by min-listens threshold
-  2. Resolve artist identities - Last.fm name -> Deezer/Spotify/MB IDs (cached)
-  3. Find new releases - within lookback_days, via music_client provider chain
-  4. Owned-check - library platform (Plex/Navidrome/Jellyfin), case-insensitive artist + album name
-  5. Build download queue - unowned releases, capped at max_per_cycle
-  6. Queue downloads - acquisition worker (stub)
-  7. Save history - rythmx.db; playlist from owned candidates
+Active responsibilities:
+  - Forge scheduled runs: New Music (nm_schedule_*) and Custom Discovery (fd_schedule_*)
+  - Acquisition worker tick
+  - Image cache warming during idle hours
+
+Legacy gated path (SCHEDULER_ENABLED=true only):
+  - New music cycle: Last.fm top artists → releases → owned-check → playlist/queue
+  - 7 stages; disabled by default; replaced by Forge new-music pipeline
 """
 import threading
 import logging
@@ -50,19 +50,19 @@ def run_cycle(
     triggered_by: str = "manual",
 ) -> dict:
     """
-    Execute one cruise control cycle.
+    Execute one legacy new-music cycle (SCHEDULER_ENABLED-gated).
     run_mode: "preview" | "build" | "fetch"
       preview - scan only, no playlist saved
       build   - scan + build named playlist from owned new releases
       fetch   - build + queue downloads for unowned releases
-    force_refresh - bypass 7-day release cache, re-fetch from provider
+    force_refresh - re-fetch releases from provider even if recently scanned
     triggered_by  - "manual" | "schedule"
     Returns a result summary dict.
     """
     global _is_running, _last_run, _last_result, _current_stage, _current_run_mode
 
     if _is_running:
-        logger.warning("Cruise control cycle already running - skipping")
+        logger.warning("New music cycle already running - skipping")
         return {"status": "skipped", "reason": "already_running"}
 
     _is_running = True
@@ -84,7 +84,7 @@ def run_cycle(
         _last_result = result
         return result
     except Exception as e:
-        logger.exception("Cruise control cycle failed: %s", e)
+        logger.exception("New music cycle failed: %s", e)
         error_msg = str(e)
         _last_result = {"status": "error", "message": error_msg}
         return _last_result
@@ -101,7 +101,7 @@ def run_cycle(
 
 def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict:
     """
-    Full 7-stage Cruise Control pipeline.
+    Full 7-stage legacy new-music pipeline (SCHEDULER_ENABLED-gated).
     Imports inline to avoid circular imports.
     run_mode: "preview" | "build" | "fetch"
     """
@@ -112,7 +112,7 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
     from app.services import identity_resolver
     from datetime import date as _date
 
-    logger.info("Cruise control cycle starting (run_mode=%s, force_refresh=%s)",
+    logger.info("Legacy new-music cycle starting (run_mode=%s, force_refresh=%s)",
                 run_mode, force_refresh)
 
     # Load settings from rythmx.db (user overrides via UI take precedence over config defaults)
@@ -280,13 +280,13 @@ def _should_library_sync(settings: dict) -> bool:
 
 
 def _loop():
-    """Background loop - checks every hour whether a CC cycle should run."""
+    """Background loop - checks every hour for scheduled Forge runs and legacy new-music cycle."""
     while not _stop_event.is_set():
         ran_cc = False
         ran_forge = False
         settings = rythmx_store.get_all_settings()
 
-        # Legacy Cruise Control remains env-gated.
+        # Legacy new-music cycle is env-gated (SCHEDULER_ENABLED=true).
         if config.SCHEDULER_ENABLED:
             ran_cc = _scheduler_helpers.run_scheduler_tick(
                 settings=settings,
@@ -295,8 +295,7 @@ def _loop():
                 logger=logger,
             )
 
-        # Forge schedules are settings-driven and remain active even when
-        # legacy cruise control is disabled.
+        # Forge schedules are settings-driven and always active.
         ran_forge = _scheduler_helpers.run_forge_scheduler_tick(
             settings=settings,
             store=rythmx_store,
@@ -317,23 +316,23 @@ def start():
     if _thread and _thread.is_alive():
         return
     _stop_event.clear()
-    _thread = threading.Thread(target=_loop, daemon=True, name="cc-scheduler")
+    _thread = threading.Thread(target=_loop, daemon=True, name="maintenance-scheduler")
     _thread.start()
     if config.SCHEDULER_ENABLED:
         logger.info(
-            "Background scheduler started (cruise enabled, interval=%dh)",
+            "Background scheduler started (legacy new-music cycle enabled, interval=%dh)",
             config.CYCLE_HOURS,
         )
     else:
         logger.info(
-            "Background maintenance thread started (cruise disabled; Forge schedules + acquisition/image warmer active)"
+            "Background scheduler started (legacy new-music cycle disabled; Forge schedules + acquisition/image warmer active)"
         )
 
 
 def stop():
     """Signal the background thread to stop."""
     _stop_event.set()
-    logger.info("Cruise control scheduler stop requested")
+    logger.info("Background scheduler stop requested")
 
 
 

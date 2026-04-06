@@ -8,7 +8,7 @@ Confirmed endpoints (from rythmx_ui reference implementation):
   GET  /api/download/{id}   — specific job status
 
 track_name is required for track-level downloads.
-For album-level (Cruise Control), pass artist_name + album_name only.
+For album-level downloads, pass artist_name + album_name only.
 409 = already queued — treated as ok.
 """
 import requests
@@ -31,7 +31,7 @@ def queue_download(track: dict) -> dict:
     For track-level (Discovery page):
         track_name, artist_name, spotify_track_id, album_name
 
-    For album-level (Cruise Control):
+    For album-level:
         artist_name, album_name, source_url, deezer_album_id, spotify_album_id
         (track_name omitted — SoulSync downloads full album)
 

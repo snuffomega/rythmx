@@ -129,7 +129,7 @@ def update_playlist(playlist_key: str, rating_keys: list[str]) -> bool:
 def create_or_update_playlist(name: str, rating_keys: list[str]) -> str | None:
     """
     Create or update a named Plex playlist. Returns the playlist ratingKey or None.
-    This is the main entry point for cruise control playlist push.
+    This is the main entry point for playlist push from the scheduler.
     """
     if not config.PLEX_URL or not config.PLEX_TOKEN:
         logger.warning("Plex not configured — skipping playlist push")

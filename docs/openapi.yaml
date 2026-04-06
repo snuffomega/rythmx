@@ -23,10 +23,6 @@ tags:
     description: Server health check
   - name: discovery
     description: Music discovery pool and playlist management
-  - name: cruise-control
-    description: Cruise Control pipeline — automated new release acquisition
-  - name: release-cache
-    description: Release cache management
   - name: acquisition
     description: Acquisition queue — tracks pending download
   - name: images
@@ -246,107 +242,6 @@ paths:
               schema:
                 type: string
                 format: binary
-        '500':
-          $ref: '#/components/responses/ServerError'
-
-  # ── Cruise Control ────────────────────────────────────────────────────────
-
-  /api/v1/cruise-control/status:
-    get:
-      tags: [cruise-control]
-      summary: Get Cruise Control pipeline run status
-      operationId: getCruiseControlStatus
-      responses:
-        '200':
-          description: Current CC pipeline status
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/ApiSuccess'
-                  - $ref: '#/components/schemas/CruiseControlStatus'
-        '500':
-          $ref: '#/components/responses/ServerError'
-
-  /api/v1/cruise-control/config:
-    get:
-      tags: [cruise-control]
-      summary: Get Cruise Control configuration
-      operationId: getCruiseControlConfig
-      responses:
-        '200':
-          description: CC configuration with defaults
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/ApiSuccess'
-                  - $ref: '#/components/schemas/CruiseControlConfig'
-        '500':
-          $ref: '#/components/responses/ServerError'
-    post:
-      tags: [cruise-control]
-      summary: Save Cruise Control configuration
-      operationId: saveCruiseControlConfig
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CruiseControlConfig'
-      responses:
-        '200':
-          $ref: '#/components/responses/Ok'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '500':
-          $ref: '#/components/responses/ServerError'
-
-  /api/v1/cruise-control/run-now:
-    post:
-      tags: [cruise-control]
-      summary: Trigger a Cruise Control cycle immediately
-      operationId: runCruiseControlNow
-      responses:
-        '202':
-          $ref: '#/components/responses/Accepted'
-        '409':
-          $ref: '#/components/responses/Conflict'
-        '500':
-          $ref: '#/components/responses/ServerError'
-
-  /api/v1/cruise-control/history:
-    get:
-      tags: [cruise-control]
-      summary: Get Cruise Control run history
-      operationId: getCruiseControlHistory
-      responses:
-        '200':
-          description: CC run history entries
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/ApiSuccess'
-                  - type: object
-                    properties:
-                      history:
-                        type: array
-                        items:
-                          $ref: '#/components/schemas/HistoryItem'
-        '500':
-          $ref: '#/components/responses/ServerError'
-
-  # ── Release Cache ─────────────────────────────────────────────────────────
-
-  /api/v1/release-cache/clear:
-    post:
-      tags: [release-cache]
-      summary: Clear the release cache
-      operationId: clearReleaseCache
-      responses:
-        '200':
-          $ref: '#/components/responses/Ok'
         '500':
           $ref: '#/components/responses/ServerError'
 
@@ -1163,7 +1058,7 @@ paths:
   /api/v1/settings/clear-history:
     post:
       tags: [settings]
-      summary: Clear Cruise Control run history
+      summary: Clear pipeline run history
       operationId: clearHistory
       responses:
         '200':
@@ -1850,88 +1745,6 @@ components:
           format: float
         acquisition_status:
           $ref: '#/components/schemas/AcquisitionStatus'
-
-    # ── Cruise Control ───────────────────────────────────────────────────────
-
-    CruiseControlConfig:
-      type: object
-      properties:
-        run_mode:
-          type: string
-          enum: [build, fetch]
-        playlist_prefix:
-          type: string
-        min_listens:
-          type: integer
-        period:
-          $ref: '#/components/schemas/Period'
-        lookback_days:
-          type: integer
-        max_per_cycle:
-          type: integer
-        max_playlist_tracks:
-          type: integer
-        auto_push_playlist:
-          type: boolean
-        schedule_weekday:
-          type: integer
-          minimum: 0
-          maximum: 6
-        schedule_hour:
-          type: integer
-          minimum: 0
-          maximum: 23
-        enabled:
-          type: boolean
-        dry_run:
-          type: boolean
-        release_cache_refresh_weekday:
-          type: integer
-          minimum: 0
-          maximum: 6
-        release_cache_refresh_hour:
-          type: integer
-          minimum: 0
-          maximum: 23
-        nr_ignore_keywords:
-          type: string
-        nr_ignore_artists:
-          type: string
-        include_features:
-          type: boolean
-        release_kinds:
-          type: string
-          description: Comma-separated list of ReleaseKind values to include
-
-    CruiseControlStatus:
-      type: object
-      required: [state]
-      properties:
-        state:
-          type: string
-          enum: [idle, running, error, completed]
-        stage:
-          type: integer
-        stage_label:
-          type: string
-        total_stages:
-          type: integer
-        last_run:
-          type: string
-          format: date-time
-        summary:
-          type: object
-          properties:
-            artists_checked:
-              type: integer
-            new_releases:
-              type: integer
-            owned:
-              type: integer
-            queued:
-              type: integer
-        error:
-          type: string
 
     HistoryItem:
       type: object

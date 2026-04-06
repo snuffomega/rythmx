@@ -98,7 +98,7 @@ def _log_level() -> str:
 
 LOG_LEVEL = _log_level()
 
-# --- Cruise Control / app defaults ---
+# --- Scheduler / legacy new-music cycle defaults (gated by SCHEDULER_ENABLED) ---
 SCHEDULER_ENABLED = _optional("SCHEDULER_ENABLED", "false").lower() == "true"
 CYCLE_HOURS = int(_optional("CYCLE_HOURS", "24"))
 MAX_PER_CYCLE = int(_optional("MAX_PER_CYCLE", "10"))
