@@ -1,4 +1,5 @@
 import logging
+import os
 from typing import Any, Optional
 
 from fastapi import APIRouter, Body, Depends
@@ -17,8 +18,16 @@ router = APIRouter(dependencies=[Depends(verify_api_key)])
 @router.get("/settings")
 def settings_get():
     from app.db import get_library_reader
+    from app.db import soulsync_reader as _ss_reader
+
     lr = get_library_reader()
     accessible = lr.is_db_accessible()
+
+    soulsync_url = (os.environ.get("SOULSYNC_URL", "") or "").strip() or None
+    soulsync_db = (os.environ.get("SOULSYNC_DB", "") or "").strip() or None
+    soulsync_configured = bool(soulsync_url or soulsync_db)
+    soulsync_db_accessible = _ss_reader.is_db_accessible() if soulsync_configured else False
+
     return {
         "status": "ok",
         "lastfm_username": config.LASTFM_USERNAME,
@@ -26,9 +35,9 @@ def settings_get():
         "plex_url": config.PLEX_URL,
         "plex_configured": bool(config.PLEX_URL and config.PLEX_TOKEN),
         "navidrome_configured": bool(config.NAVIDROME_URL and config.NAVIDROME_USER and config.NAVIDROME_PASS),
-        "soulsync_url": config.SOULSYNC_URL,
-        "soulsync_db": config.SOULSYNC_DB,
-        "soulsync_db_accessible": accessible,
+        "soulsync_url": soulsync_url,
+        "soulsync_db": soulsync_db,
+        "soulsync_db_accessible": soulsync_db_accessible,
         "spotify_configured": bool(config.SPOTIFY_CLIENT_ID and config.SPOTIFY_CLIENT_SECRET),
         "fanart_configured": bool(config.FANART_API_KEY),
         "library_platform": rythmx_store.get_setting("library_platform") or config.LIBRARY_PLATFORM,
