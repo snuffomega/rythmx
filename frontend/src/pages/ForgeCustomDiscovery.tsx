@@ -3,6 +3,7 @@ import { Play, Loader2, Sparkles, ChevronDown, ChevronUp, Save } from 'lucide-re
 import { forgeBuildsApi, forgeDiscoveryApi } from '../services/api';
 import { ArtistResultCard, DiscoveryPipelineViz } from '../components/forge';
 import { Toggle } from '../components/common';
+import { FormInput, FormSelect, FormToggle } from '../components/forms';
 import { useForgePipelineStore } from '../stores/useForgePipelineStore';
 import type { ForgeDiscoveryConfig, ForgeDiscoveryResult } from '../types';
 
@@ -278,20 +279,27 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div>
-              <label className="label">Scrobbling Period</label>
-              <select className="select" value={config.seed_period} onChange={e => update('seed_period', e.target.value as ForgeDiscoveryConfig['seed_period'])}>
-                {SEED_PERIODS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="label">Min Artist Scrobbles</label>
-              <input type="number" className="input" min={1} value={config.min_scrobbles} onChange={e => update('min_scrobbles', Number(e.target.value))} />
-            </div>
-            <div>
-              <label className="label">Max Build Size</label>
-              <input type="number" className="input" min={5} max={200} value={config.max_tracks} onChange={e => update('max_tracks', Number(e.target.value))} />
-            </div>
+            <FormSelect
+              label="Scrobbling Period"
+              options={SEED_PERIODS}
+              value={config.seed_period}
+              onChange={e => update('seed_period', e.target.value as ForgeDiscoveryConfig['seed_period'])}
+            />
+            <FormInput
+              label="Min Artist Scrobbles"
+              type="number"
+              min={1}
+              value={config.min_scrobbles}
+              onChange={e => update('min_scrobbles', Number(e.target.value))}
+            />
+            <FormInput
+              label="Max Build Size"
+              type="number"
+              min={5}
+              max={200}
+              value={config.max_tracks}
+              onChange={e => update('max_tracks', Number(e.target.value))}
+            />
           </div>
         </div>
       </div>
@@ -301,13 +309,12 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
       <section className="border-t border-[#1a1a1a] pt-6">
         <h2 className="text-text-muted text-xs font-semibold uppercase tracking-widest mb-5">Automation</h2>
         <div className="flex items-center gap-6 flex-wrap">
-          <div className="flex items-center gap-3">
-            <Toggle on={config.auto_publish} onChange={v => update('auto_publish', v)} />
-            <div>
-              <p className="text-text-primary text-sm font-medium">Auto Publish</p>
-              <p className="text-[#444] text-xs">Publish automatically after build approval (Phase 27d)</p>
-            </div>
-          </div>
+          <FormToggle
+            label="Auto Publish"
+            description="Publish automatically after build approval (Phase 27d)"
+            on={config.auto_publish}
+            onChange={v => update('auto_publish', v)}
+          />
           <div className="w-px h-8 bg-[#1a1a1a] self-center" />
           <div className="flex items-center gap-3">
             <Toggle on={config.schedule_enabled} onChange={v => update('schedule_enabled', v)} />
@@ -340,96 +347,80 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
         </button>
         {advanced && (
           <div className="mt-5 space-y-5">
-            <div>
-              <label className="label">Ignore Keywords</label>
-              <input
-                className="input"
-                placeholder="christmas, tribute, karaoke"
-                value={config.ignore_keywords}
-                onChange={e => update('ignore_keywords', e.target.value)}
-              />
-              <p className="text-[#444] text-xs mt-1">Comma-separated - artists matching any keyword will be skipped</p>
-            </div>
-            <div>
-              <label className="label">Ignore Artists</label>
-              <input
-                className="input"
-                placeholder="Artist One, Artist Two"
-                value={config.ignore_artists}
-                onChange={e => update('ignore_artists', e.target.value)}
-              />
-              <p className="text-[#444] text-xs mt-1">Comma-separated - these artists will never surface in results</p>
-            </div>
-            <div>
-              <label className="label">Custom Build Name</label>
-              <input
-                className="input"
-                placeholder="My Discovery"
-                value={config.build_name_override}
-                onChange={e => update('build_name_override', e.target.value)}
-              />
-              <p className="text-[#444] text-xs mt-1">Override the default build name shown in Builder</p>
-            </div>
+            <FormInput
+              label="Ignore Keywords"
+              placeholder="christmas, tribute, karaoke"
+              value={config.ignore_keywords}
+              onChange={e => update('ignore_keywords', e.target.value)}
+              helperText="Comma-separated - artists matching any keyword will be skipped"
+            />
+            <FormInput
+              label="Ignore Artists"
+              placeholder="Artist One, Artist Two"
+              value={config.ignore_artists}
+              onChange={e => update('ignore_artists', e.target.value)}
+              helperText="Comma-separated - these artists will never surface in results"
+            />
+            <FormInput
+              label="Custom Build Name"
+              placeholder="My Discovery"
+              value={config.build_name_override}
+              onChange={e => update('build_name_override', e.target.value)}
+              helperText="Override the default build name shown in Builder"
+            />
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-t border-[#1a1a1a] pt-5">
               <div className="space-y-3">
-                <div className="flex items-center gap-3">
-                  <Toggle on={config.exclude_owned_artists} onChange={v => update('exclude_owned_artists', v)} />
-                  <div>
-                    <p className="text-text-primary text-sm font-medium">Exclude Owned Artists</p>
-                    <p className="text-[#444] text-xs mt-0.5">Skip artists already present in your library</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <Toggle on={config.avoid_repeat_tracks} onChange={v => update('avoid_repeat_tracks', v)} />
-                  <div>
-                    <p className="text-text-primary text-sm font-medium">Avoid Repeat Tracks</p>
-                    <p className="text-[#444] text-xs mt-0.5">Prefer tracks not recently recommended</p>
-                  </div>
-                </div>
+                <FormToggle
+                  label="Exclude Owned Artists"
+                  description="Skip artists already present in your library"
+                  on={config.exclude_owned_artists}
+                  onChange={v => update('exclude_owned_artists', v)}
+                />
+                <FormToggle
+                  label="Avoid Repeat Tracks"
+                  description="Prefer tracks not recently recommended"
+                  on={config.avoid_repeat_tracks}
+                  onChange={v => update('avoid_repeat_tracks', v)}
+                />
               </div>
               <div className="space-y-3">
-                <div>
-                  <label className="label">Track Repeat Cooldown (days)</label>
-                  <input
-                    type="number"
-                    className="input"
-                    min={1}
-                    max={365}
-                    value={config.track_repeat_cooldown_days}
-                    onChange={e => update('track_repeat_cooldown_days', Number(e.target.value))}
-                  />
-                </div>
-                <div>
-                  <label className="label">Discovery Cache TTL (days)</label>
-                  <input
-                    type="number"
-                    className="input"
-                    min={1}
-                    max={365}
-                    value={config.cache_ttl_days}
-                    onChange={e => update('cache_ttl_days', Number(e.target.value))}
-                  />
-                </div>
+                <FormInput
+                  label="Track Repeat Cooldown (days)"
+                  type="number"
+                  min={1}
+                  max={365}
+                  value={config.track_repeat_cooldown_days}
+                  onChange={e => update('track_repeat_cooldown_days', Number(e.target.value))}
+                />
+                <FormInput
+                  label="Discovery Cache TTL (days)"
+                  type="number"
+                  min={1}
+                  max={365}
+                  value={config.cache_ttl_days}
+                  onChange={e => update('cache_ttl_days', Number(e.target.value))}
+                />
               </div>
             </div>
             <div className="border-t border-[#1a1a1a] pt-5">
-              <label className="label">Fetch Wait Timeout (seconds)</label>
-              <input
+              <FormInput
+                label="Fetch Wait Timeout (seconds)"
                 type="number"
-                className="input max-w-[220px]"
+                className="max-w-[220px]"
                 min={30}
                 max={7200}
                 value={config.fetch_wait_timeout_s}
                 onChange={e => update('fetch_wait_timeout_s', Number(e.target.value))}
+                helperText="Reserved for Build+Fetch orchestration flow."
               />
-              <p className="text-[#444] text-xs mt-1">Reserved for Build+Fetch orchestration flow.</p>
             </div>
-            <div className="border-t border-[#1a1a1a] pt-5 flex items-center gap-3">
-              <Toggle on={config.dry_run} onChange={v => update('dry_run', v)} />
-              <div>
-                <p className="text-text-primary text-sm font-medium">Dry Run</p>
-                <p className="text-[#444] text-xs mt-0.5">Simulate a run without making any changes</p>
-              </div>
+            <div className="border-t border-[#1a1a1a] pt-5">
+              <FormToggle
+                label="Dry Run"
+                description="Simulate a run without making any changes"
+                on={config.dry_run}
+                onChange={v => update('dry_run', v)}
+              />
             </div>
           </div>
         )}

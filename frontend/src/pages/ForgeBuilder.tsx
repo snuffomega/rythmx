@@ -5,6 +5,7 @@ import { useApi } from '../hooks/useApi';
 import { forgeBuildsApi, forgeDiscoveryApi, forgeNewMusicApi, settingsApi } from '../services/api';
 import { useToastStore } from '../stores/useToastStore';
 import type { ForgeBuild } from '../types';
+import { FormInput, FormSelect, FormButton } from '../components/forms';
 
 const SOURCE_LABELS: Record<string, string> = {
   new_music: 'New Music',
@@ -33,6 +34,13 @@ const HOURS = Array.from({ length: 24 }, (_, i) => {
   const ampm = i < 12 ? 'AM' : 'PM';
   return { value: i, label: `${h}:00 ${ampm}` };
 });
+const STATUS_OPTIONS = [
+  { value: 'queued', label: 'queued' },
+  { value: 'building', label: 'building' },
+  { value: 'ready', label: 'ready' },
+  { value: 'published', label: 'published' },
+  { value: 'failed', label: 'failed' },
+];
 
 function toStringValue(value: unknown): string {
   if (value === null || value === undefined) return '-';
@@ -534,39 +542,28 @@ export function ForgeBuilder() {
                 </div>
 
                 <div className="space-y-3 bg-[#0b0b0b] border border-[#1a1a1a] p-3">
-                  <div>
-                    <p className="text-text-muted text-xs uppercase tracking-wide mb-1.5">Build Name</p>
-                    <input
-                      value={editName}
-                      onChange={e => setEditName(e.target.value)}
-                      className="w-full bg-[#111] border border-[#2a2a2a] text-text-primary text-sm px-3 py-1.5 focus:outline-none focus:border-accent"
-                    />
-                  </div>
+                  <FormInput
+                    label="Build Name"
+                    value={editName}
+                    onChange={e => setEditName(e.target.value)}
+                  />
 
-                  <div>
-                    <p className="text-text-muted text-xs uppercase tracking-wide mb-1.5">Status</p>
-                    <select
-                      value={editStatus}
-                      onChange={e => setEditStatus(e.target.value as ForgeBuild['status'])}
-                      className="bg-[#111] border border-[#2a2a2a] text-text-primary text-sm px-3 py-1.5 focus:outline-none focus:border-accent"
-                    >
-                      <option value="queued">queued</option>
-                      <option value="building">building</option>
-                      <option value="ready">ready</option>
-                      <option value="published">published</option>
-                      <option value="failed">failed</option>
-                    </select>
-                  </div>
+                  <FormSelect
+                    label="Status"
+                    value={editStatus}
+                    onChange={e => setEditStatus(e.target.value as ForgeBuild['status'])}
+                    options={STATUS_OPTIONS}
+                  />
 
                   <div className="flex items-center gap-2">
-                    <button
+                    <FormButton
                       onClick={() => handleSave(selectedBuild)}
-                      disabled={!isDirty || savingId === selectedBuild.id}
-                      className="btn-secondary inline-flex items-center gap-2 text-xs w-fit disabled:opacity-40"
+                      disabled={!isDirty}
+                      loading={savingId === selectedBuild.id}
+                      className="text-xs w-fit"
                     >
-                      {savingId === selectedBuild.id ? <Loader2 size={12} className="animate-spin" /> : null}
                       Save
-                    </button>
+                    </FormButton>
                     {!isDirty && <span className="text-[#444] text-[11px]">No unsaved changes</span>}
                   </div>
                 </div>
@@ -600,43 +597,29 @@ export function ForgeBuilder() {
                         </label>
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <div>
-                            <p className="text-text-muted text-xs uppercase tracking-wide mb-1.5">Day</p>
-                            <select
-                              value={scheduleDraft.weekday}
-                              onChange={e => updateScheduleDraft({ weekday: Number(e.target.value) })}
-                              className="bg-[#111] border border-[#2a2a2a] text-text-primary text-sm px-3 py-1.5 focus:outline-none focus:border-accent w-full"
-                            >
-                              {WEEKDAYS.map((day, idx) => (
-                                <option key={day} value={idx}>{day}</option>
-                              ))}
-                            </select>
-                          </div>
-                          <div>
-                            <p className="text-text-muted text-xs uppercase tracking-wide mb-1.5">Hour</p>
-                            <select
-                              value={scheduleDraft.hour}
-                              onChange={e => updateScheduleDraft({ hour: Number(e.target.value) })}
-                              className="bg-[#111] border border-[#2a2a2a] text-text-primary text-sm px-3 py-1.5 focus:outline-none focus:border-accent w-full"
-                            >
-                              {HOURS.map(hour => (
-                                <option key={hour.value} value={hour.value}>{hour.label}</option>
-                              ))}
-                            </select>
-                          </div>
+                          <FormSelect
+                            label="Day"
+                            value={scheduleDraft.weekday}
+                            onChange={e => updateScheduleDraft({ weekday: Number(e.target.value) })}
+                            options={WEEKDAYS.map((day, idx) => ({ value: idx, label: day }))}
+                          />
+                          <FormSelect
+                            label="Hour"
+                            value={scheduleDraft.hour}
+                            onChange={e => updateScheduleDraft({ hour: Number(e.target.value) })}
+                            options={HOURS}
+                          />
                         </div>
 
                         <div className="flex items-center gap-2">
-                          <button
+                          <FormButton
                             onClick={handleSaveSchedule}
-                            disabled={!scheduleDirty || scheduleSavingSource === selectedScheduleSource}
-                            className="btn-secondary inline-flex items-center gap-2 text-xs w-fit disabled:opacity-40"
+                            disabled={!scheduleDirty}
+                            loading={scheduleSavingSource === selectedScheduleSource}
+                            className="text-xs w-fit"
                           >
-                            {scheduleSavingSource === selectedScheduleSource ? (
-                              <Loader2 size={12} className="animate-spin" />
-                            ) : null}
                             Save Schedule
-                          </button>
+                          </FormButton>
                           {!scheduleDirty && <span className="text-[#444] text-[11px]">No unsaved schedule changes</span>}
                         </div>
                       </>

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { settingsApi } from '../../services/api';
 import { useSettingsStore } from '../../stores/useSettingsStore';
+import { Toggle } from '../common/Toggle';
 
 interface CapabilitiesSectionProps {
   toast: { success: (m: string) => void; error: (m: string) => void };
@@ -35,20 +36,10 @@ export function CapabilitiesSection({ toast }: CapabilitiesSectionProps) {
             Show download actions in the Forge. Requires a downloader plugin (Lidarr, Soulseek).
           </p>
         </div>
-        <button
-          onClick={() => void handleFetchToggle()}
-          disabled={fetchToggling}
-          className={`relative inline-flex items-center w-10 h-5 rounded-full transition-colors duration-200 flex-shrink-0 ${
-            fetchEnabled ? 'bg-accent' : 'bg-[#2a2a2a]'
-          } ${fetchToggling ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
-          aria-label={fetchEnabled ? 'Disable fetch' : 'Enable fetch'}
-        >
-          <span
-            className={`inline-block w-4 h-4 rounded-full bg-white shadow transition-transform duration-200 ${
-              fetchEnabled ? 'translate-x-5' : 'translate-x-0.5'
-            }`}
-          />
-        </button>
+        <Toggle
+          on={fetchEnabled}
+          onChange={fetchToggling ? () => {} : () => void handleFetchToggle()}
+        />
       </div>
     </section>
   );
