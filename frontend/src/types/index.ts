@@ -186,7 +186,8 @@ export interface Settings {
   plex_token?: string;
   plex_configured?: boolean;
   navidrome_configured?: boolean;
-  soulsync_url?: string;
+  soulsync_url?: string | null;
+  soulsync_db?: string | null;
   soulsync_db_accessible?: boolean;
   spotify_client_id?: string;
   spotify_client_secret?: string;

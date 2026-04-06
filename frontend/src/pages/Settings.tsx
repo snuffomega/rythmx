@@ -22,6 +22,7 @@ export function SettingsPage({ toast }: SettingsPageProps) {
   const { data: libraryStatus } = useApi(() => libraryApi.getStatus());
   const [platform, setPlatform] = useState<LibraryPlatform>('plex');
   const [settingsStatus, setSettingsStatus] = useState<Settings | null>(null);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [auditTotal, setAuditTotal] = useState(0);
   const [auditReviewOpen, setAuditReviewOpen] = useState(false);
 
@@ -32,7 +33,11 @@ export function SettingsPage({ toast }: SettingsPageProps) {
       setSettingsStatus(s);
       initFromApi(s);
       if (s.library_platform) setPlatform(s.library_platform);
-    }).catch(() => {});
+    }).catch(() => {
+      toast.error('Failed to load settings');
+    }).finally(() => {
+      setSettingsLoaded(true);
+    });
   }, []);
 
   useEffect(() => {
@@ -66,6 +71,7 @@ export function SettingsPage({ toast }: SettingsPageProps) {
       <ConnectionsSection
         platform={platform}
         settingsStatus={settingsStatus}
+        settingsLoaded={settingsLoaded}
         onServiceTestResult={handleServiceTestResult}
         toast={toast}
       />
