@@ -76,8 +76,10 @@ def nm_run(data: Optional[dict[str, Any]] = Body(default=None)):
         "artists_checked": summary.get("artists_checked", 0),
         "neighbors_found": summary.get("neighbors_found", 0),
         "releases_found": summary.get("releases_found", 0),
+        "prerelease_filtered_count": summary.get("prerelease_filtered_count", 0),
         "releases": releases,
         "filtered_releases": summary.get("filtered_releases", []),
+        "prerelease_filtered_releases": summary.get("prerelease_filtered_releases", []),
     }
 
 

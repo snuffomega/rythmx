@@ -40,9 +40,9 @@ def test_fetch_releases_strict_filters_to_primary_artist(monkeypatch):
         new_music_runner.music_client,
         "get_artist_albums_deezer",
         lambda _aid: [
-            {"id": "a1", "title": "Main Credit Album", "record_type": "album", "release_date": "2099-01-01"},
-            {"id": "a2", "title": "Feature Credit Single", "record_type": "single", "release_date": "2099-01-01"},
-            {"id": "a3", "title": "Unknown Credit", "record_type": "single", "release_date": "2099-01-01"},
+            {"id": "a1", "title": "Main Credit Album", "record_type": "album", "release_date": "2026-01-01"},
+            {"id": "a2", "title": "Feature Credit Single", "record_type": "single", "release_date": "2026-01-01"},
+            {"id": "a3", "title": "Unknown Credit", "record_type": "single", "release_date": "2026-01-01"},
         ],
     )
 
@@ -57,7 +57,7 @@ def test_fetch_releases_strict_filters_to_primary_artist(monkeypatch):
         lambda album_id: credit_map.get(album_id),
     )
 
-    _artists, releases, _filtered = new_music_runner.fetch_releases_for_neighbors(
+    _artists, releases, _filtered, prerelease_filtered = new_music_runner.fetch_releases_for_neighbors(
         neighbor_names=["test artist"],
         lookback_days=99999,
         match_mode="strict",
@@ -67,6 +67,7 @@ def test_fetch_releases_strict_filters_to_primary_artist(monkeypatch):
     )
 
     assert [r["id"] for r in releases] == ["a1"]
+    assert prerelease_filtered == []
 
 
 def test_fetch_releases_loose_skips_credit_enforcement(monkeypatch):
@@ -84,8 +85,8 @@ def test_fetch_releases_loose_skips_credit_enforcement(monkeypatch):
         new_music_runner.music_client,
         "get_artist_albums_deezer",
         lambda _aid: [
-            {"id": "a1", "title": "Main Credit Album", "record_type": "album", "release_date": "2099-01-01"},
-            {"id": "a2", "title": "Feature Credit Single", "record_type": "single", "release_date": "2099-01-01"},
+            {"id": "a1", "title": "Main Credit Album", "record_type": "album", "release_date": "2026-01-01"},
+            {"id": "a2", "title": "Feature Credit Single", "record_type": "single", "release_date": "2026-01-01"},
         ],
     )
 
@@ -101,7 +102,7 @@ def test_fetch_releases_loose_skips_credit_enforcement(monkeypatch):
         _credit_lookup,
     )
 
-    _artists, releases, _filtered = new_music_runner.fetch_releases_for_neighbors(
+    _artists, releases, _filtered, prerelease_filtered = new_music_runner.fetch_releases_for_neighbors(
         neighbor_names=["test artist"],
         lookback_days=99999,
         match_mode="loose",
@@ -112,3 +113,37 @@ def test_fetch_releases_loose_skips_credit_enforcement(monkeypatch):
 
     assert sorted(r["id"] for r in releases) == ["a1", "a2"]
     assert credit_calls["count"] == 0
+    assert prerelease_filtered == []
+
+
+def test_fetch_releases_filters_prerelease_before_persist(monkeypatch):
+    monkeypatch.setattr(
+        new_music_runner,
+        "_connect",
+        lambda: _FakeConn([{"name_lower": "test artist", "deezer_artist_id": "42"}]),
+    )
+    monkeypatch.setattr(
+        new_music_runner.music_client,
+        "search_artist_candidates_deezer",
+        lambda _name, limit=1: [],
+    )
+    monkeypatch.setattr(
+        new_music_runner.music_client,
+        "get_artist_albums_deezer",
+        lambda _aid: [
+            {"id": "past1", "title": "Already Out", "record_type": "album", "release_date": "2025-01-01"},
+            {"id": "future1", "title": "Coming Soon", "record_type": "single", "release_date": "2099-01-01"},
+        ],
+    )
+
+    _artists, releases, _filtered, prerelease_filtered = new_music_runner.fetch_releases_for_neighbors(
+        neighbor_names=["test artist"],
+        lookback_days=99999,
+        match_mode="loose",
+        release_kinds="all",
+        ignore_keywords="",
+        ignore_artists="",
+    )
+
+    assert [r["id"] for r in releases] == ["past1"]
+    assert [r["id"] for r in prerelease_filtered] == ["future1"]

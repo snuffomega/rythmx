@@ -320,14 +320,15 @@ def fetch_releases_for_neighbors(
     ignore_artists: str,
     *,
     run_id: str | None = None,
-) -> tuple[list[dict], list[dict], list[dict]]:
+) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
     """
     For each artist name, resolve Deezer ID and fetch recent albums.
     Fast path: checks lib_artists.deezer_artist_id first to avoid redundant API searches.
     release_kinds: mode string - 'all' | 'album_preferred' | 'album'
-    Returns: (discovered_artists, discovered_releases, keyword_filtered_releases)
+    Returns: (discovered_artists, discovered_releases, keyword_filtered_releases, prerelease_filtered_releases)
     """
     cutoff_date = (datetime.now() - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+    today_date = datetime.now().strftime("%Y-%m-%d")
 
     # Parse ignore lists
     ignore_kw = [kw.strip().lower() for kw in ignore_keywords.split(",") if kw.strip()]
@@ -350,6 +351,7 @@ def fetch_releases_for_neighbors(
     discovered_artists = []
     discovered_releases = []
     keyword_filtered = []
+    prerelease_filtered = []
     seen_artist_ids = set()
     credit_cache: dict[str, dict | None] = {}
     strict_filtered = 0
@@ -429,6 +431,19 @@ def fetch_releases_for_neighbors(
             title = album.get("title", "")
             title_lower = title.lower()
 
+            if rel_date > today_date:
+                prerelease_filtered.append({
+                    "id": album_id,
+                    "artist_deezer_id": deezer_id,
+                    "artist_name": display_name,
+                    "title": title,
+                    "record_type": record_type,
+                    "release_date": rel_date or None,
+                    "cover_url": album.get("artwork_url") or None,
+                    "in_library": False,
+                })
+                continue
+
             if any(kw in title_lower for kw in ignore_kw):
                 keyword_filtered.append({
                     "id": album_id,
@@ -467,16 +482,17 @@ def fetch_releases_for_neighbors(
             )
 
     logger.info(
-        "new_music: fetched artists=%d releases=%d filtered=%d strict_filtered=%d (lookback=%dd, match_mode=%s, kinds_mode=%s)",
+        "new_music: fetched artists=%d releases=%d filtered=%d prerelease_filtered=%d strict_filtered=%d (lookback=%dd, match_mode=%s, kinds_mode=%s)",
         len(discovered_artists),
         len(discovered_releases),
         len(keyword_filtered),
+        len(prerelease_filtered),
         strict_filtered,
         lookback_days,
         match_mode,
         release_kinds,
     )
-    return discovered_artists, discovered_releases, keyword_filtered
+    return discovered_artists, discovered_releases, keyword_filtered, prerelease_filtered
 
 
 # ---------------------------------------------------------------------------
@@ -575,7 +591,7 @@ def run_new_music_pipeline(config_override: dict | None = None) -> dict:
         )
 
         # Step 2: fetch recent releases from those seed artists directly
-        artists, releases, filtered = fetch_releases_for_neighbors(
+        artists, releases, filtered, prerelease_filtered = fetch_releases_for_neighbors(
             seed_names,
             lookback_days,
             match_mode,
@@ -606,14 +622,16 @@ def run_new_music_pipeline(config_override: dict | None = None) -> dict:
         )
 
         logger.info(
-            "new_music: pipeline complete - seeds=%d artists_resolved=%d releases_stored=%d filtered=%d",
-            len(seeds), len(artists), len(releases), len(filtered)
+            "new_music: pipeline complete - seeds=%d artists_resolved=%d releases_stored=%d filtered=%d prerelease_filtered=%d",
+            len(seeds), len(artists), len(releases), len(filtered), len(prerelease_filtered)
         )
 
         summary = {
             "artists_checked": len(seeds),
             "releases_found": len(releases),
             "filtered_releases": filtered,
+            "prerelease_filtered_count": len(prerelease_filtered),
+            "prerelease_filtered_releases": prerelease_filtered,
         }
         _emit_pipeline_complete(pipeline="new_music", run_id=run_id, summary=summary)
         return summary
