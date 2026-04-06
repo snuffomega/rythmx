@@ -309,6 +309,7 @@ from app.routes.forge_sync_build_routes import (
     forge_builds_publish,
     forge_builds_resync,
     forge_builds_update,
+    forge_sync_job_get,
     forge_sync_load,
     router as _sync_build_router,
 )
