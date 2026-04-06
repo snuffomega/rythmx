@@ -185,11 +185,8 @@ def auto_sync_playlist(
 
     Dispatches by source:
       new_music - re-expand owned_releases to tracks using current library state
-      taste - rebuild using latest Last.fm top artists + current library
       deezer / spotify / lastfm - re-import from source_url
     """
-    from app.clients import last_fm_client
-    from app.services import engine
 
     name = pl.get("name") or pl.get("playlist_name")
     source = pl.get("source", "")
@@ -218,42 +215,10 @@ def auto_sync_playlist(
             logger.info("Stage 8: auto-synced Forge playlist '%s' (%d tracks)", name, len(playlist_tracks))
 
         elif source == "taste":
-            meta = store.get_playlist_meta(name) or {}
-            max_tracks = int(meta.get("max_tracks") or 50)
-            max_per_artist = int(meta.get("max_per_artist") or 2)
-            loved = last_fm_client.get_loved_artist_names()
-
-            artist_tracks = {}
-            for artist_name in top_artists:
-                cached = store.get_cached_artist(artist_name) or {}
-                ss_id = cached.get("soulsync_artist_id") or library_reader.get_native_artist_id(artist_name)
-                if ss_id:
-                    tracks = library_reader.get_all_tracks_for_artist(ss_id)
-                    if tracks:
-                        artist_tracks[artist_name] = tracks
-
-            scored = engine.build_taste_playlist(
-                top_artists,
-                loved,
-                artist_tracks,
-                limit=max_tracks,
-                max_per_artist=max_per_artist,
+            logger.info(
+                "Stage 8: skipping legacy taste playlist '%s' (autosync path retired)",
+                name,
             )
-            to_save = [
-                {
-                    "plex_rating_key": t["plex_rating_key"],
-                    "spotify_track_id": t.get("spotify_track_id"),
-                    "track_name": t["track_name"],
-                    "artist_name": t["artist_name"],
-                    "album_name": t["album_name"],
-                    "album_cover_url": t.get("album_cover_url", ""),
-                    "score": t["score"],
-                }
-                for t in scored
-            ]
-            store.save_playlist(to_save, playlist_name=name)
-            store.mark_playlist_synced(name)
-            logger.info("Stage 8: auto-synced taste playlist '%s' (%d tracks)", name, len(to_save))
 
         elif source in ("spotify", "lastfm", "deezer"):
             from app.services import playlist_importer
