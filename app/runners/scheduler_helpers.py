@@ -747,7 +747,7 @@ def queue_unowned_releases(
             playlist_name=playlist_name_date,
         )
         queued_count += 1
-        logger.info("Stage 6: queued '%s — %s' (queue_id=%d)", r.artist, r.title, queue_id)
+        logger.info("Stage 6: queued '%s - %s' (queue_id=%d)", r.artist, r.title, queue_id)
 
     logger.info("Stage 6: %d releases added to acquisition queue", queued_count)
     return queued_count, to_queue

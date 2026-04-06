@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Zap, ChevronDown, ChevronUp, Music2, Trash2, X, ExternalLink, Loader2 } from 'lucide-react';
 import { useNavigate } from '@tanstack/react-router';
 import { forgeBuildsApi, forgeNewMusicApi } from '../services/api';
@@ -54,6 +54,64 @@ const STAGES = [
   { key: 'done', label: 'Done' },
 ];
 
+type NewMusicSortKey =
+  | 'release_desc'
+  | 'artist_az'
+  | 'artist_za'
+  | 'album_first'
+  | 'single_first';
+
+function compareDateDesc(a: string | null | undefined, b: string | null | undefined): number {
+  const av = String(a || '');
+  const bv = String(b || '');
+  if (av === bv) return 0;
+  return av > bv ? -1 : 1;
+}
+
+function compareStringAsc(a: string | null | undefined, b: string | null | undefined): number {
+  return String(a || '').localeCompare(String(b || ''), undefined, { sensitivity: 'base' });
+}
+
+function releaseTypeRank(recordType: string | null | undefined, singleFirst: boolean): number {
+  const rt = String(recordType || '').toLowerCase();
+  if (singleFirst) {
+    if (rt === 'single' || rt === 'ep') return 0;
+    if (rt === 'album' || rt === 'compile') return 1;
+    return 2;
+  }
+  if (rt === 'album' || rt === 'compile') return 0;
+  if (rt === 'ep') return 1;
+  if (rt === 'single') return 2;
+  return 3;
+}
+
+function compareNewMusicRelease(
+  a: DiscoveredRelease,
+  b: DiscoveredRelease,
+  sortKey: NewMusicSortKey
+): number {
+  if (sortKey === 'artist_az') {
+    const byArtist = compareStringAsc(a.artist_name, b.artist_name);
+    return byArtist !== 0 ? byArtist : compareDateDesc(a.release_date, b.release_date);
+  }
+  if (sortKey === 'artist_za') {
+    const byArtist = compareStringAsc(b.artist_name, a.artist_name);
+    return byArtist !== 0 ? byArtist : compareDateDesc(a.release_date, b.release_date);
+  }
+  if (sortKey === 'album_first' || sortKey === 'single_first') {
+    const typeDiff =
+      releaseTypeRank(a.record_type, sortKey === 'single_first')
+      - releaseTypeRank(b.record_type, sortKey === 'single_first');
+    if (typeDiff !== 0) return typeDiff;
+    const byDate = compareDateDesc(a.release_date, b.release_date);
+    if (byDate !== 0) return byDate;
+    return compareStringAsc(a.artist_name, b.artist_name);
+  }
+  const byDate = compareDateDesc(a.release_date, b.release_date);
+  if (byDate !== 0) return byDate;
+  return compareStringAsc(a.artist_name, b.artist_name);
+}
+
 function formatDuration(ms: number | null | undefined): string {
   const totalSeconds = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
   const minutes = Math.floor(totalSeconds / 60);
@@ -83,6 +141,7 @@ export function ForgeNewMusic() {
   const resetPipeline = useForgePipelineStore(s => s.resetPipeline);
 
   const [results, setResults] = useState<DiscoveredRelease[] | null>(null);
+  const [resultSort, setResultSort] = useState<NewMusicSortKey>('release_desc');
   const [runSummary, setRunSummary] = useState<{ releases_found: number } | null>(null);
   const [filteredReleases, setFilteredReleases] = useState<DiscoveredRelease[]>([]);
   const [filteredOpen, setFilteredOpen] = useState(false);
@@ -238,6 +297,14 @@ export function ForgeNewMusic() {
   // ---------------------------------------------------------------------------
 
   const hasResults = results !== null && results.length > 0;
+  const sortedResults = useMemo(
+    () => (results ?? []).slice().sort((a, b) => compareNewMusicRelease(a, b, resultSort)),
+    [results, resultSort]
+  );
+  const sortedFilteredReleases = useMemo(
+    () => filteredReleases.slice().sort((a, b) => compareNewMusicRelease(a, b, resultSort)),
+    [filteredReleases, resultSort]
+  );
 
   const closePreview = () => {
     setPreviewRelease(null);
@@ -294,10 +361,10 @@ export function ForgeNewMusic() {
         </p>
       </div>
 
-      {/* Config panel — always visible */}
+      {/* Config panel - always visible */}
       <div className="bg-[#0a0a0a] border border-[#1a1a1a] p-5 space-y-6">
 
-        {/* Listening period — custom dot slider */}
+        {/* Listening period - custom dot slider */}
         <div>
           <div className="flex items-end justify-between mb-4">
             <label className="text-xs font-semibold text-text-muted uppercase tracking-widest">
@@ -355,7 +422,7 @@ export function ForgeNewMusic() {
           <p className="text-[#444] text-[11px] mt-2">How far back in your listening history to look for seed artists.</p>
         </div>
 
-        {/* Release window + Min listens — same row, left-aligned */}
+        {/* Release window + Min listens - same row, left-aligned */}
         <div className="flex items-start gap-8">
           <div>
             <label className="block text-xs font-semibold text-text-muted uppercase tracking-widest mb-2">
@@ -384,7 +451,7 @@ export function ForgeNewMusic() {
           </div>
         </div>
 
-        {/* Release types + Match mode — same row, left-aligned */}
+        {/* Release types + Match mode - same row, left-aligned */}
         <div className="flex items-start gap-8 flex-wrap">
           <div>
             <label className="block text-xs font-semibold text-text-muted uppercase tracking-widest mb-2">
@@ -415,7 +482,7 @@ export function ForgeNewMusic() {
           </div>
         </div>
 
-        {/* Advanced — ignore criteria + schedule only */}
+        {/* Advanced - ignore criteria + schedule only */}
         <div>
           <button
             onClick={() => setAdvancedOpen(v => !v)}
@@ -529,7 +596,7 @@ export function ForgeNewMusic() {
               className="flex items-center gap-2 px-5 py-2 text-sm font-semibold bg-accent text-black hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Zap size={14} />
-              {running ? 'Running…' : 'Run'}
+              {running ? 'Running...' : 'Run'}
             </button>
             {!running && (
               <p className="text-[#333] text-xs">Run saves full config; Set Schedule saves schedule immediately.</p>
@@ -575,24 +642,42 @@ export function ForgeNewMusic() {
 
       {/* Results grid */}
       {!running && hasResults && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-          {results!.map(r => <ReleaseCard key={r.id} release={r} onOpen={() => { void openPreview(r); }} />)}
-        </div>
+        <>
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-[#555] text-xs uppercase tracking-widest">Sort Results</p>
+            <select
+              value={resultSort}
+              onChange={e => setResultSort(e.target.value as NewMusicSortKey)}
+              className="bg-[#111] border border-[#2a2a2a] text-text-primary text-xs px-2.5 py-1.5 focus:outline-none focus:border-accent"
+            >
+              <option value="release_desc">Release date (newest)</option>
+              <option value="artist_az">Artist A-Z</option>
+              <option value="artist_za">Artist Z-A</option>
+              <option value="album_first">Type: album first</option>
+              <option value="single_first">Type: single first</option>
+            </select>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+            {sortedResults.map(r => <ReleaseCard key={r.id} release={r} onOpen={() => { void openPreview(r); }} />)}
+          </div>
+        </>
       )}
 
       {/* Filtered releases accordion */}
-      {!running && filteredReleases.length > 0 && (
+      {!running && sortedFilteredReleases.length > 0 && (
         <div className="border border-[#1a1a1a]">
           <button
             onClick={() => setFilteredOpen(v => !v)}
             className="w-full flex items-center justify-between px-4 py-3 text-xs font-semibold text-[#444] hover:text-[#666] uppercase tracking-widest transition-colors"
           >
-            <span>Filtered out — {filteredReleases.length} release{filteredReleases.length !== 1 ? 's' : ''}</span>
+            <span>
+              Filtered out - {sortedFilteredReleases.length} release{sortedFilteredReleases.length !== 1 ? 's' : ''}
+            </span>
             {filteredOpen ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
           </button>
           {filteredOpen && (
             <div className="border-t border-[#1a1a1a] divide-y divide-[#111]">
-              {filteredReleases.map(r => (
+              {sortedFilteredReleases.map(r => (
                 <div key={r.id} className="flex items-center gap-3 px-4 py-2.5 opacity-40">
                   {r.cover_url ? (
                     <img src={r.cover_url} alt={r.title} className="w-8 h-8 object-cover flex-shrink-0" />

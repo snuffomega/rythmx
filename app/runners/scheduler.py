@@ -1,17 +1,17 @@
 """
-scheduler.py — background cruise control cycle runner.
+scheduler.py - background cruise control cycle runner.
 
 Threading-based, same pattern used by SoulSync's wishlist/watchlist timers.
 Guards against concurrent cycles with is_running flag.
 
 Cruise Control pipeline (7 stages):
-  1. Poll Last.fm — top artists filtered by min-listens threshold
-  2. Resolve artist identities — Last.fm name → Deezer/Spotify/MB IDs (cached)
-  3. Find new releases — within lookback_days, via music_client provider chain
-  4. Owned-check — library platform (Plex/Navidrome/Jellyfin), case-insensitive artist + album name
-  5. Build download queue — unowned releases, capped at max_per_cycle
-  6. Queue downloads — acquisition worker (stub)
-  7. Save history — rythmx.db; playlist from owned candidates
+  1. Poll Last.fm - top artists filtered by min-listens threshold
+  2. Resolve artist identities - Last.fm name -> Deezer/Spotify/MB IDs (cached)
+  3. Find new releases - within lookback_days, via music_client provider chain
+  4. Owned-check - library platform (Plex/Navidrome/Jellyfin), case-insensitive artist + album name
+  5. Build download queue - unowned releases, capped at max_per_cycle
+  6. Queue downloads - acquisition worker (stub)
+  7. Save history - rythmx.db; playlist from owned candidates
 """
 import threading
 import logging
@@ -52,17 +52,17 @@ def run_cycle(
     """
     Execute one cruise control cycle.
     run_mode: "preview" | "build" | "fetch"
-      preview — scan only, no playlist saved
-      build   — scan + build named playlist from owned new releases
-      fetch   — build + queue downloads for unowned releases
-    force_refresh — bypass 7-day release cache, re-fetch from provider
-    triggered_by  — "manual" | "schedule"
+      preview - scan only, no playlist saved
+      build   - scan + build named playlist from owned new releases
+      fetch   - build + queue downloads for unowned releases
+    force_refresh - bypass 7-day release cache, re-fetch from provider
+    triggered_by  - "manual" | "schedule"
     Returns a result summary dict.
     """
     global _is_running, _last_run, _last_result, _current_stage, _current_run_mode
 
     if _is_running:
-        logger.warning("Cruise control cycle already running — skipping")
+        logger.warning("Cruise control cycle already running - skipping")
         return {"status": "skipped", "reason": "already_running"}
 
     _is_running = True
@@ -130,7 +130,7 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
     include_features = parsed["include_features"]
 
     # -------------------------------------------------------------------------
-    # Stage 1 — Last.fm top artists filtered by min_listens
+    # Stage 1 - Last.fm top artists filtered by min_listens
     # -------------------------------------------------------------------------
     _current_stage = 1
     top_artists = last_fm_client.get_top_artists(period=period, limit=200)
@@ -139,12 +139,12 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
                 len(qualified), min_listens, period)
 
     if not qualified:
-        logger.warning("No artists met the minimum listen threshold — skipping cycle")
+        logger.warning("No artists met the minimum listen threshold - skipping cycle")
         return {"status": "ok", "message": "no_qualified_artists",
                 "artists": 0, "releases_found": 0, "queued": 0}
 
     # -------------------------------------------------------------------------
-    # Stage 2-3 — Resolve identities + get new releases
+    # Stage 2-3 - Resolve identities + get new releases
     # -------------------------------------------------------------------------
     _current_stage = 2
     unique_releases, artists_with_releases = _scheduler_helpers.discover_releases_for_qualified_artists(
@@ -167,7 +167,7 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
 
 
     # -------------------------------------------------------------------------
-    # Stage 4 — Owned-check via SoulSync DB
+    # Stage 4 - Owned-check via SoulSync DB
     # -------------------------------------------------------------------------
     _current_stage = 4
     owned_releases, unowned, owned_count = _scheduler_helpers.classify_owned_releases(
@@ -202,7 +202,7 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
 
 
     # -------------------------------------------------------------------------
-    # Stage 7 — Build named playlist (playlist/cruise modes)
+    # Stage 7 - Build named playlist (playlist/cruise modes)
     #
     # Owned releases: expanded to individual tracks (have plex_rating_key).
     # Unowned releases: album-level placeholder cards (is_owned=0, no plex_rating_key).
@@ -226,7 +226,7 @@ def _execute_cycle(run_mode: str = "fetch", force_refresh: bool = False) -> dict
 
 
     # -------------------------------------------------------------------------
-    # Stage 8 — Auto-sync: rebuild all auto_sync=1 playlists (playlist/cruise modes)
+    # Stage 8 - Auto-sync: rebuild all auto_sync=1 playlists (playlist/cruise modes)
     #
     # Skipped in dry mode. Each auto_sync playlist is rebuilt in-place using the
     # data already fetched this cycle (owned_releases, top_artists).

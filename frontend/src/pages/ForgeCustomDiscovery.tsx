@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { Play, Loader2, Sparkles, ChevronDown, ChevronUp, Save } from 'lucide-react';
 import { forgeBuildsApi, forgeDiscoveryApi } from '../services/api';
 import { ArtistResultCard, DiscoveryPipelineViz } from '../components/forge';
@@ -43,6 +43,53 @@ interface ForgeCustomDiscoveryProps {
   toast: { success: (m: string) => void; error: (m: string) => void; info: (m: string) => void };
 }
 
+type DiscoverySortKey = 'similarity_desc' | 'artist_az' | 'artist_za' | 'missing_first' | 'owned_first' | 'rank_best';
+
+function compareStringAsc(a: string | null | undefined, b: string | null | undefined): number {
+  return String(a || '').localeCompare(String(b || ''), undefined, { sensitivity: 'base' });
+}
+
+function compareNumberAsc(a: number | null | undefined, b: number | null | undefined): number {
+  const av = Number.isFinite(a) ? Number(a) : Number.MAX_SAFE_INTEGER;
+  const bv = Number.isFinite(b) ? Number(b) : Number.MAX_SAFE_INTEGER;
+  return av - bv;
+}
+
+function compareNumberDesc(a: number | null | undefined, b: number | null | undefined): number {
+  const av = Number.isFinite(a) ? Number(a) : -1;
+  const bv = Number.isFinite(b) ? Number(b) : -1;
+  return bv - av;
+}
+
+function compareDiscoveryResult(a: ForgeDiscoveryResult, b: ForgeDiscoveryResult, sortKey: DiscoverySortKey): number {
+  if (sortKey === 'artist_az') {
+    return compareStringAsc(a.artist, b.artist);
+  }
+  if (sortKey === 'artist_za') {
+    return compareStringAsc(b.artist, a.artist);
+  }
+  if (sortKey === 'missing_first') {
+    const av = a.is_owned ? 1 : 0;
+    const bv = b.is_owned ? 1 : 0;
+    if (av !== bv) return av - bv;
+    return compareNumberDesc(a.similarity, b.similarity);
+  }
+  if (sortKey === 'owned_first') {
+    const av = a.is_owned ? 1 : 0;
+    const bv = b.is_owned ? 1 : 0;
+    if (av !== bv) return bv - av;
+    return compareNumberDesc(a.similarity, b.similarity);
+  }
+  if (sortKey === 'rank_best') {
+    const byRank = compareNumberAsc(a.rank_position, b.rank_position);
+    if (byRank !== 0) return byRank;
+    return compareNumberDesc(a.similarity, b.similarity);
+  }
+  const bySimilarity = compareNumberDesc(a.similarity, b.similarity);
+  if (bySimilarity !== 0) return bySimilarity;
+  return compareStringAsc(a.artist, b.artist);
+}
+
 export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
   const [config, setConfig] = useState<PDConfig>({
     closeness: 5,
@@ -70,6 +117,7 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
   const [loadingConfig, setLoadingConfig] = useState(true);
   const [running, setRunning] = useState(false);
   const [results, setResults] = useState<ForgeDiscoveryResult[] | null>(null);
+  const [resultSort, setResultSort] = useState<DiscoverySortKey>('similarity_desc');
   const pipelineState = useForgePipelineStore(s => s.pipelines.custom_discovery);
   const resetPipeline = useForgePipelineStore(s => s.resetPipeline);
 
@@ -191,6 +239,10 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
   const pipelinePct = pipelineState.total > 0
     ? Math.min(100, Math.max(0, Math.round((pipelineState.processed / pipelineState.total) * 100)))
     : 0;
+  const sortedResults = useMemo(
+    () => (results ?? []).slice().sort((a, b) => compareDiscoveryResult(a, b, resultSort)),
+    [results, resultSort]
+  );
 
   return (
     <div className="space-y-8">
@@ -417,20 +469,36 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
 
       {!running && results !== null && (
         <section className="border-t border-[#1a1a1a] pt-8">
-          <div className="flex items-center gap-2 mb-4">
-            <Sparkles size={14} className="text-accent" />
-            <span className="text-text-muted text-xs font-semibold uppercase tracking-widest">
-              {results.length} track{results.length !== 1 ? 's' : ''} compiled
-            </span>
+          <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+            <div className="flex items-center gap-2">
+              <Sparkles size={14} className="text-accent" />
+              <span className="text-text-muted text-xs font-semibold uppercase tracking-widest">
+                {sortedResults.length} track{sortedResults.length !== 1 ? 's' : ''} compiled
+              </span>
+            </div>
+            {sortedResults.length > 1 && (
+              <select
+                value={resultSort}
+                onChange={e => setResultSort(e.target.value as DiscoverySortKey)}
+                className="bg-[#111] border border-[#2a2a2a] text-text-primary text-xs px-2.5 py-1.5 focus:outline-none focus:border-accent"
+              >
+                <option value="similarity_desc">Similarity (highest)</option>
+                <option value="artist_az">Artist A-Z</option>
+                <option value="artist_za">Artist Z-A</option>
+                <option value="missing_first">Missing first</option>
+                <option value="owned_first">Owned first</option>
+                <option value="rank_best">Best rank position</option>
+              </select>
+            )}
           </div>
-          {results.length === 0 ? (
+          {sortedResults.length === 0 ? (
             <div className="py-12 text-center space-y-2">
               <p className="text-text-muted text-sm">No tracks matched these settings</p>
               <p className="text-[#444] text-xs">Try increasing the closeness value or expanding the seed period</p>
             </div>
           ) : (
             <div className="space-y-2">
-              {results.map((r, i) => <ArtistResultCard key={i} result={r} />)}
+              {sortedResults.map((r, i) => <ArtistResultCard key={i} result={r} />)}
             </div>
           )}
         </section>
