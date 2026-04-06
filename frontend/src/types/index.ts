@@ -159,10 +159,6 @@ export interface ForgeDiscoveryRunResponse {
   cache_ttl_days?: number;
 }
 
-// Backward-compatible aliases while old UI modules are being renamed.
-export type PersonalDiscoveryConfig = ForgeDiscoveryConfig;
-export type PersonalDiscoveryResult = ForgeDiscoveryResult;
-
 export interface LibraryStatus {
   platform: LibraryPlatform;
   track_count: number;
