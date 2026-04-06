@@ -1,4 +1,4 @@
-import type {
+﻿import type {
   Period,
   AcquisitionStatus,
   QueueItem,
@@ -43,7 +43,7 @@ import type {
 
 const BASE_URL = '/api/v1';
 
-// ── API key management ────────────────────────────────────────────────────────
+// API key management
 // Seeded from /auth/bootstrap on app load, then injected into every request.
 // Stored in localStorage so it survives page refreshes without a round-trip.
 
@@ -58,17 +58,17 @@ export function setApiKey(key: string): void {
 }
 
 export async function initApiKey(): Promise<void> {
-  // Always fetch from bootstrap — ensures stale localStorage keys are replaced
+  // Always fetch from bootstrap - ensures stale localStorage keys are replaced
   // (e.g. after a fresh DB install). Bootstrap is public and fast.
   try {
     const res = await fetch(`${BASE_URL}/auth/bootstrap`);
     if (!res.ok) return;
     const data = await res.json() as { status: string; api_key?: string };
     if (data.status === 'ok' && data.api_key) setApiKey(data.api_key);
-  } catch { /* network down — fall back to cached key */ }
+  } catch { /* network down - fall back to cached key */ }
 }
 
-// ── Error class ───────────────────────────────────────────────────────────────
+// Error class
 
 // Thrown when the backend returns { status: 'error', error/message: '...' }.
 // Catch blocks can use `instanceof ApiError` to distinguish API vs network errors.
@@ -467,15 +467,25 @@ export const forgeBuildsApi = {
 };
 
 export const forgeSyncApi = {
-  load: (data: { source_url: string; source?: 'spotify' | 'lastfm' | 'deezer'; queue_build?: boolean; name?: string }) =>
+  load: (data: {
+    source_url: string;
+    source?: 'spotify' | 'lastfm' | 'deezer';
+    queue_build?: boolean;
+    name?: string;
+    batch_mode?: boolean;
+    chunk_size?: number;
+  }) =>
     request<{
       status: string;
+      mode?: 'immediate' | 'batch';
+      job_id?: string;
       source: string;
       name?: string;
       track_count: number;
       owned_count: number;
       missing_count: number;
       queue_build: boolean;
+      chunk_size?: number;
       build?: ForgeBuild | null;
       tracks: Array<{
         track_id?: string;
@@ -489,6 +499,32 @@ export const forgeSyncApi = {
       method: 'POST',
       body: JSON.stringify(data),
     }),
+  getJob: (jobId: string) =>
+    request<{
+      status: string;
+      job: {
+        job_id: string;
+        mode: 'batch';
+        status: 'queued' | 'running' | 'completed' | 'failed';
+        source: string;
+        source_url: string;
+        queue_build: boolean;
+        chunk_size: number;
+        build_id?: string | null;
+        build?: ForgeBuild | null;
+        total_tracks: number;
+        processed_tracks: number;
+        total_chunks: number;
+        completed_chunks: number;
+        owned_count: number;
+        missing_count: number;
+        message?: string;
+        error?: string | null;
+        started_at: string;
+        updated_at: string;
+        finished_at?: string | null;
+      };
+    }>(`/forge/sync/jobs/${encodeURIComponent(jobId)}`),
 };
 
 export const libraryPlaylistsApi = {
@@ -520,4 +556,5 @@ export const libraryPlaylistsApi = {
       { method: 'POST', body: JSON.stringify({ track_ids: trackIds }) }
     ),
 };
+
 
