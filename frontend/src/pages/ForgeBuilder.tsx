@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Download, Layers, Loader2, RefreshCw, RotateCcw, Send, Trash2, X } from 'lucide-react';
 import { useNavigate } from '@tanstack/react-router';
 import { useApi } from '../hooks/useApi';
-import { forgeBuildsApi, settingsApi } from '../services/api';
+import { forgeBuildsApi, forgeDiscoveryApi, forgeNewMusicApi, settingsApi } from '../services/api';
 import { useToastStore } from '../stores/useToastStore';
 import type { ForgeBuild } from '../types';
 
@@ -26,6 +26,13 @@ const SYNC_SOURCE_STYLES: Record<string, string> = {
   spotify: 'text-[#8af2b3] border-[#1db954]/60 bg-[#1db954]/15',
   lastfm: 'text-[#ffaca7] border-[#d51007]/60 bg-[#d51007]/15',
 };
+
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const HOURS = Array.from({ length: 24 }, (_, i) => {
+  const h = i % 12 || 12;
+  const ampm = i < 12 ? 'AM' : 'PM';
+  return { value: i, label: `${h}:00 ${ampm}` };
+});
 
 function toStringValue(value: unknown): string {
   if (value === null || value === undefined) return '-';
@@ -137,6 +144,14 @@ export function ForgeBuilder() {
   const [itemsModalBuildId, setItemsModalBuildId] = useState<string | null>(null);
   const [itemDraft, setItemDraft] = useState<Array<Record<string, unknown>>>([]);
   const [savingItemsBuildId, setSavingItemsBuildId] = useState<string | null>(null);
+  const [nmScheduleDraft, setNmScheduleDraft] = useState({ enabled: false, weekday: 1, hour: 8 });
+  const [nmScheduleSaved, setNmScheduleSaved] = useState({ enabled: false, weekday: 1, hour: 8 });
+  const [nmScheduleLoaded, setNmScheduleLoaded] = useState(false);
+  const [fdScheduleDraft, setFdScheduleDraft] = useState({ enabled: false, weekday: 1, hour: 8 });
+  const [fdScheduleSaved, setFdScheduleSaved] = useState({ enabled: false, weekday: 1, hour: 8 });
+  const [fdScheduleLoaded, setFdScheduleLoaded] = useState(false);
+  const [scheduleLoadingSource, setScheduleLoadingSource] = useState<'new_music' | 'custom_discovery' | null>(null);
+  const [scheduleSavingSource, setScheduleSavingSource] = useState<'new_music' | 'custom_discovery' | null>(null);
 
   const [editName, setEditName] = useState('');
   const [editStatus, setEditStatus] = useState<ForgeBuild['status']>('ready');
@@ -154,6 +169,20 @@ export function ForgeBuilder() {
     () => orderedBuilds.find(b => b.id === itemsModalBuildId) ?? null,
     [orderedBuilds, itemsModalBuildId]
   );
+  const selectedScheduleSource: 'new_music' | 'custom_discovery' | null =
+    selectedBuild?.source === 'new_music' || selectedBuild?.source === 'custom_discovery'
+      ? selectedBuild.source
+      : null;
+  const scheduleDraft = selectedScheduleSource === 'new_music' ? nmScheduleDraft : fdScheduleDraft;
+  const scheduleSaved = selectedScheduleSource === 'new_music' ? nmScheduleSaved : fdScheduleSaved;
+  const scheduleLoaded = selectedScheduleSource === 'new_music' ? nmScheduleLoaded : fdScheduleLoaded;
+  const scheduleDirty = selectedScheduleSource
+    ? (
+      scheduleDraft.enabled !== scheduleSaved.enabled
+      || scheduleDraft.weekday !== scheduleSaved.weekday
+      || scheduleDraft.hour !== scheduleSaved.hour
+    )
+    : false;
 
   useEffect(() => {
     if (!selectedBuild) {
@@ -164,6 +193,60 @@ export function ForgeBuilder() {
     setEditName(selectedBuild.name || '');
     setEditStatus(selectedBuild.status);
   }, [selectedBuild?.id, selectedBuild?.updated_at]);
+
+  useEffect(() => {
+    if (!selectedScheduleSource) return;
+    let cancelled = false;
+    setScheduleLoadingSource(selectedScheduleSource);
+
+    if (selectedScheduleSource === 'new_music') {
+      forgeNewMusicApi.getConfig()
+        .then(cfg => {
+          if (cancelled) return;
+          const next = {
+            enabled: !!cfg.nm_schedule_enabled,
+            weekday: Number.isFinite(cfg.nm_schedule_weekday) ? Number(cfg.nm_schedule_weekday) : 1,
+            hour: Number.isFinite(cfg.nm_schedule_hour) ? Number(cfg.nm_schedule_hour) : 8,
+          };
+          setNmScheduleDraft(next);
+          setNmScheduleSaved(next);
+          setNmScheduleLoaded(true);
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setNmScheduleLoaded(true);
+            toastError('Failed to load New Music schedule');
+          }
+        })
+        .finally(() => {
+          if (!cancelled) setScheduleLoadingSource(null);
+        });
+    } else {
+      forgeDiscoveryApi.getConfig()
+        .then(cfg => {
+          if (cancelled) return;
+          const next = {
+            enabled: !!cfg.schedule_enabled,
+            weekday: Number.isFinite(cfg.schedule_weekday) ? Number(cfg.schedule_weekday) : 1,
+            hour: Number.isFinite(cfg.schedule_hour) ? Number(cfg.schedule_hour) : 8,
+          };
+          setFdScheduleDraft(next);
+          setFdScheduleSaved(next);
+          setFdScheduleLoaded(true);
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setFdScheduleLoaded(true);
+            toastError('Failed to load Custom Discovery schedule');
+          }
+        })
+        .finally(() => {
+          if (!cancelled) setScheduleLoadingSource(null);
+        });
+    }
+
+    return () => { cancelled = true; };
+  }, [selectedBuild?.id, selectedScheduleSource, toastError]);
 
   const extractErrorMessage = (err: unknown, fallback: string) => {
     if (!(err instanceof Error)) return fallback;
@@ -259,6 +342,43 @@ export function ForgeBuilder() {
       toastError(extractErrorMessage(err, 'Failed to save build'));
     } finally {
       setSavingId(null);
+    }
+  };
+
+  const updateScheduleDraft = (patch: Partial<{ enabled: boolean; weekday: number; hour: number }>) => {
+    if (!selectedScheduleSource) return;
+    if (selectedScheduleSource === 'new_music') {
+      setNmScheduleDraft(prev => ({ ...prev, ...patch }));
+      return;
+    }
+    setFdScheduleDraft(prev => ({ ...prev, ...patch }));
+  };
+
+  const handleSaveSchedule = async () => {
+    if (!selectedScheduleSource) return;
+    setScheduleSavingSource(selectedScheduleSource);
+    try {
+      if (selectedScheduleSource === 'new_music') {
+        await forgeNewMusicApi.saveConfig({
+          nm_schedule_enabled: nmScheduleDraft.enabled,
+          nm_schedule_weekday: nmScheduleDraft.weekday,
+          nm_schedule_hour: nmScheduleDraft.hour,
+        });
+        setNmScheduleSaved(nmScheduleDraft);
+        toastSuccess('New Music schedule updated');
+      } else {
+        await forgeDiscoveryApi.saveConfig({
+          schedule_enabled: fdScheduleDraft.enabled,
+          schedule_weekday: fdScheduleDraft.weekday,
+          schedule_hour: fdScheduleDraft.hour,
+        });
+        setFdScheduleSaved(fdScheduleDraft);
+        toastSuccess('Custom Discovery schedule updated');
+      }
+    } catch (err) {
+      toastError(extractErrorMessage(err, 'Failed to save schedule'));
+    } finally {
+      setScheduleSavingSource(null);
     }
   };
 
@@ -450,6 +570,79 @@ export function ForgeBuilder() {
                     {!isDirty && <span className="text-[#444] text-[11px]">No unsaved changes</span>}
                   </div>
                 </div>
+
+                {selectedScheduleSource && (
+                  <div className="space-y-3 bg-[#0b0b0b] border border-[#1a1a1a] p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-text-muted text-xs uppercase tracking-wide">
+                        Source Schedule
+                      </p>
+                      <span className="text-[10px] uppercase tracking-wide text-[#666]">
+                        {SOURCE_LABELS[selectedScheduleSource] ?? selectedScheduleSource}
+                      </span>
+                    </div>
+
+                    {!scheduleLoaded || scheduleLoadingSource === selectedScheduleSource ? (
+                      <div className="text-[12px] text-[#666] inline-flex items-center gap-2">
+                        <Loader2 size={12} className="animate-spin" />
+                        Loading schedule...
+                      </div>
+                    ) : (
+                      <>
+                        <label className="inline-flex items-center gap-2 text-sm text-text-primary">
+                          <input
+                            type="checkbox"
+                            checked={scheduleDraft.enabled}
+                            onChange={e => updateScheduleDraft({ enabled: e.target.checked })}
+                            className="accent-accent"
+                          />
+                          Enabled
+                        </label>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <p className="text-text-muted text-xs uppercase tracking-wide mb-1.5">Day</p>
+                            <select
+                              value={scheduleDraft.weekday}
+                              onChange={e => updateScheduleDraft({ weekday: Number(e.target.value) })}
+                              className="bg-[#111] border border-[#2a2a2a] text-text-primary text-sm px-3 py-1.5 focus:outline-none focus:border-accent w-full"
+                            >
+                              {WEEKDAYS.map((day, idx) => (
+                                <option key={day} value={idx}>{day}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <p className="text-text-muted text-xs uppercase tracking-wide mb-1.5">Hour</p>
+                            <select
+                              value={scheduleDraft.hour}
+                              onChange={e => updateScheduleDraft({ hour: Number(e.target.value) })}
+                              className="bg-[#111] border border-[#2a2a2a] text-text-primary text-sm px-3 py-1.5 focus:outline-none focus:border-accent w-full"
+                            >
+                              {HOURS.map(hour => (
+                                <option key={hour.value} value={hour.value}>{hour.label}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={handleSaveSchedule}
+                            disabled={!scheduleDirty || scheduleSavingSource === selectedScheduleSource}
+                            className="btn-secondary inline-flex items-center gap-2 text-xs w-fit disabled:opacity-40"
+                          >
+                            {scheduleSavingSource === selectedScheduleSource ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : null}
+                            Save Schedule
+                          </button>
+                          {!scheduleDirty && <span className="text-[#444] text-[11px]">No unsaved schedule changes</span>}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
 
                 <div className="flex items-center gap-2 flex-wrap">
                   {selectedBuild.source === 'sync' && (

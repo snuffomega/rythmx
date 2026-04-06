@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Zap, ChevronDown, ChevronUp, Music2, Trash2, X, ExternalLink } from 'lucide-react';
+import { Zap, ChevronDown, ChevronUp, Music2, Trash2, X, ExternalLink, Loader2 } from 'lucide-react';
 import { useNavigate } from '@tanstack/react-router';
 import { forgeBuildsApi, forgeNewMusicApi } from '../services/api';
 import { useToastStore } from '../stores/useToastStore';
@@ -76,6 +76,7 @@ export function ForgeNewMusic() {
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const [running, setRunning] = useState(false);
+  const [savingSchedule, setSavingSchedule] = useState(false);
   const [stageIdx, setStageIdx] = useState(0);
   const [progress, setProgress] = useState(0);
   const pipelineState = useForgePipelineStore(s => s.pipelines.new_music);
@@ -189,6 +190,22 @@ export function ForgeNewMusic() {
       toastError('Pipeline failed - check logs');
     } finally {
       setRunning(false);
+    }
+  };
+
+  const handleSaveSchedule = async () => {
+    setSavingSchedule(true);
+    try {
+      await forgeNewMusicApi.saveConfig({
+        nm_schedule_enabled: config.nm_schedule_enabled,
+        nm_schedule_weekday: config.nm_schedule_weekday,
+        nm_schedule_hour: config.nm_schedule_hour,
+      });
+      toastSuccess('New Music schedule saved');
+    } catch {
+      toastError('Failed to save New Music schedule');
+    } finally {
+      setSavingSchedule(false);
     }
   };
 
@@ -463,7 +480,7 @@ export function ForgeNewMusic() {
                   />
                 </div>
                 {config.nm_schedule_enabled && (
-                  <div className="flex gap-3">
+                  <div className="flex gap-3 flex-wrap">
                     <select
                       value={config.nm_schedule_weekday}
                       onChange={e => update('nm_schedule_weekday', parseInt(e.target.value))}
@@ -478,7 +495,25 @@ export function ForgeNewMusic() {
                     >
                       {HOURS.map(h => <option key={h.value} value={h.value}>{h.label}</option>)}
                     </select>
+                    <button
+                      onClick={handleSaveSchedule}
+                      disabled={running || savingSchedule || !configLoaded}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-[#ccc] border border-[#2a2a2a] hover:border-accent hover:text-text-primary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {savingSchedule ? <Loader2 size={11} className="animate-spin" /> : null}
+                      Set Schedule
+                    </button>
                   </div>
+                )}
+                {!config.nm_schedule_enabled && (
+                  <button
+                    onClick={handleSaveSchedule}
+                    disabled={running || savingSchedule || !configLoaded}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-[#ccc] border border-[#2a2a2a] hover:border-accent hover:text-text-primary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {savingSchedule ? <Loader2 size={11} className="animate-spin" /> : null}
+                    Set Schedule
+                  </button>
                 )}
               </div>
             </div>
@@ -497,7 +532,7 @@ export function ForgeNewMusic() {
               {running ? 'Running…' : 'Run'}
             </button>
             {!running && (
-              <p className="text-[#333] text-xs">Settings save automatically on run.</p>
+              <p className="text-[#333] text-xs">Run saves full config; Set Schedule saves schedule immediately.</p>
             )}
           </div>
 

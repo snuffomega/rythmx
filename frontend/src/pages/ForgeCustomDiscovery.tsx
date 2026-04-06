@@ -66,6 +66,7 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
   });
   const [advanced, setAdvanced] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [savingSchedule, setSavingSchedule] = useState(false);
   const [loadingConfig, setLoadingConfig] = useState(true);
   const [running, setRunning] = useState(false);
   const [results, setResults] = useState<ForgeDiscoveryResult[] | null>(null);
@@ -166,6 +167,22 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
     }
   };
 
+  const handleSaveSchedule = async () => {
+    setSavingSchedule(true);
+    try {
+      await forgeDiscoveryApi.saveConfig({
+        schedule_enabled: config.schedule_enabled,
+        schedule_weekday: config.schedule_weekday,
+        schedule_hour: config.schedule_hour,
+      });
+      toast.success('Custom Discovery schedule saved');
+    } catch {
+      toast.error('Failed to save Custom Discovery schedule');
+    } finally {
+      setSavingSchedule(false);
+    }
+  };
+
   const closenessLabel = config.closeness <= 3
     ? 'Very close to my taste'
     : config.closeness <= 5
@@ -252,6 +269,14 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
             <select className="select !w-auto" value={config.schedule_hour} onChange={e => update('schedule_hour', Number(e.target.value))}>
               {HOURS.map(h => <option key={h.value} value={h.value}>{h.label}</option>)}
             </select>
+            <button
+              onClick={handleSaveSchedule}
+              disabled={savingSchedule || running || loadingConfig}
+              className="btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-2 disabled:opacity-40"
+            >
+              {savingSchedule ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+              Set Schedule
+            </button>
           </div>
         </div>
       </section>
