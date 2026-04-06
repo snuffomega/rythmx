@@ -1,10 +1,10 @@
-"""
-playlist_importer.py — import external playlists into rythmx.
+﻿"""
+playlist_importer.py - import external playlists into rythmx.
 
 Supported sources:
-  - Spotify  (public playlists — requires SPOTIFY_CLIENT_ID + SPOTIFY_CLIENT_SECRET)
-  - Last.fm  (public playlists — requires LASTFM_API_KEY)
-  - Deezer   (public playlists — no credentials required)
+  - Spotify  (public playlists - requires SPOTIFY_CLIENT_ID + SPOTIFY_CLIENT_SECRET)
+  - Last.fm  (public playlists - requires LASTFM_API_KEY)
+  - Deezer   (public playlists - no credentials required)
 
 Private playlists / OAuth flows are not supported; a clear error is returned.
 
@@ -124,7 +124,7 @@ def import_from_spotify(playlist_url: str) -> dict:
         msg = str(e)
         if "403" in msg or "404" in msg:
             return {"status": "error",
-                    "message": "Playlist not accessible — make sure it is public on Spotify"}
+                    "message": "Playlist not accessible - make sure it is public on Spotify"}
         logger.error("Spotify playlist fetch failed for %s: %s", playlist_id, e)
         return {"status": "error", "message": f"Could not fetch playlist: {e}"}
 
@@ -224,7 +224,7 @@ def import_from_lastfm(playlist_url: str) -> dict:
     """
     Fetch tracks from a public Last.fm playlist and match against the SoulSync library.
 
-    Uses the JSPF (JSON Shareable Playlist Format) endpoint — the deprecated
+    Uses the JSPF (JSON Shareable Playlist Format) endpoint - the deprecated
     playlist.fetch API is not used. URL format:
       https://www.last.fm/user/{username}/playlists/{id}
 
@@ -260,7 +260,7 @@ def import_from_lastfm(playlist_url: str) -> dict:
     if not playlist_data:
         return {
             "status": "error",
-            "message": "Playlist not found or private — make sure the URL is correct and the playlist is public",
+            "message": "Playlist not found or private - make sure the URL is correct and the playlist is public",
         }
 
     playlist_name = playlist_data.get("title") or f"Last.fm Playlist {playlist_id}"
@@ -272,7 +272,7 @@ def import_from_lastfm(playlist_url: str) -> dict:
 
     raw_tracks = []
     for item in items:
-        # identifier is a LIST of strings in JSPF (may also be a bare string — handle both)
+        # identifier is a LIST of strings in JSPF (may also be a bare string - handle both)
         identifiers = item.get("identifier") or []
         if isinstance(identifiers, str):
             identifiers = [identifiers]
@@ -363,11 +363,42 @@ def _extract_deezer_playlist_id(url: str) -> str | None:
     return None
 
 
+def _fetch_deezer_playlist_tracks(playlist_id: str, page_size: int = 100) -> list[dict]:
+    """
+    Fetch all tracks for a Deezer playlist via /playlist/{id}/tracks pagination.
+
+    Deezer's embedded tracks payload from /playlist/{id} can be truncated for very
+    large playlists; this endpoint supports stable index pagination.
+    """
+    safe_page_size = max(1, min(int(page_size or 100), 100))
+    tracks: list[dict] = []
+    index = 0
+
+    while True:
+        page_url = f"https://api.deezer.com/playlist/{playlist_id}/tracks?limit={safe_page_size}&index={index}"
+        with urllib.request.urlopen(page_url, timeout=15) as resp:
+            page = json.loads(resp.read().decode("utf-8"))
+
+        if "error" in page:
+            err = page["error"] or {}
+            msg = err.get("message", "Unknown Deezer error")
+            raise RuntimeError(f"Deezer tracks page failed: {msg}")
+
+        rows = page.get("data") or []
+        tracks.extend(rows)
+
+        if not page.get("next") or not rows:
+            break
+        index += safe_page_size
+
+    return tracks
+
+
 def import_from_deezer(playlist_url: str) -> dict:
     """
     Fetch tracks from a public Deezer playlist and match against the SoulSync library.
 
-    No credentials required — uses the public Deezer API.
+    No credentials required - uses the public Deezer API.
     Returns same shape as import_from_spotify().
     On failure returns {"status": "error", "message": str}.
     """
@@ -393,27 +424,20 @@ def import_from_deezer(playlist_url: str) -> dict:
         msg = err.get("message", "Unknown Deezer error")
         code = err.get("code", "")
         if code in (4, 100, 800):
-            return {"status": "error", "message": "Deezer playlist not accessible — make sure it is public"}
+            return {"status": "error", "message": "Deezer playlist not accessible - make sure it is public"}
         return {"status": "error", "message": f"Deezer error: {msg}"}
 
     playlist_name = data.get("title") or f"Deezer Playlist {playlist_id}"
 
-    # Paginate all tracks
-    raw_tracks = []
-    tracks_data = data.get("tracks", {})
-    page_items = tracks_data.get("data") or []
-    raw_tracks.extend(page_items)
-    next_url = tracks_data.get("next")
-
-    while next_url:
-        try:
-            with urllib.request.urlopen(next_url, timeout=15) as resp:
-                page = json.loads(resp.read().decode("utf-8"))
-            raw_tracks.extend(page.get("data") or [])
-            next_url = page.get("next")
-        except Exception as e:
-            logger.warning("Deezer pagination failed at %s: %s", next_url, e)
-            break
+    # Fetch all tracks from Deezer's dedicated tracks endpoint.
+    # The embedded `tracks` object in /playlist/{id} can be capped for huge lists.
+    try:
+        raw_tracks = _fetch_deezer_playlist_tracks(playlist_id, page_size=100)
+    except Exception as e:
+        logger.warning("Deezer track pagination failed for playlist %s: %s", playlist_id, e)
+        # Fallback to embedded payload (may be truncated on very large playlists).
+        tracks_data = data.get("tracks", {})
+        raw_tracks = tracks_data.get("data") or []
 
     logger.info("Deezer import: fetched %d tracks from playlist '%s'", len(raw_tracks), playlist_name)
 
@@ -466,3 +490,4 @@ def import_from_deezer(playlist_url: str) -> dict:
         "track_count": len(tracks),
         "owned_count": owned_count,
     }
+
