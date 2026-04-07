@@ -314,4 +314,31 @@ class TidarrDownloader:
 # ---------------------------------------------------------------------------
 
 PLUGIN_API_VERSION = 1
+PLUGIN_VERSION = "1.0.0"
+PLUGIN_DESCRIPTION = "Downloads albums via Tidarr (Tidal) using SABnzbd pipeline."
 PLUGIN = {"slot": "downloader", "class": TidarrDownloader}
+
+CONFIG_SCHEMA = [
+    {
+        "key": "TIDARR_URL",
+        "label": "Tidarr URL",
+        "type": "url",
+        "required": True,
+        "placeholder": "http://tidarr:8484",
+    },
+    {
+        "key": "TIDARR_API_KEY",
+        "label": "API Key",
+        "type": "password",
+        "required": True,
+        "placeholder": "64-character key from Tidarr Settings → Authentication",
+    },
+    {
+        "key": "TIDARR_QUALITY",
+        "label": "Quality",
+        "type": "select",
+        "required": False,
+        "default": "lossless",
+        "options": ["lossless", "hires_lossless"],
+    },
+]

@@ -59,6 +59,62 @@ The plugin is auto-discovered on app startup via `app/plugins/__init__.py:load_p
 
 ---
 
+## Multi-Slot Plugins (`PLUGIN_SLOTS`)
+
+A plugin can fill more than one slot by declaring `PLUGIN_SLOTS` instead of `PLUGIN`:
+
+```python
+PLUGIN_SLOTS = {
+    "downloader": MyDownloader,
+    "file_handler": MyMover,    # optional — only if the plugin handles moving too
+}
+```
+
+Each slot must implement its Protocol independently. Users can enable/disable individual slots from Settings → Integrations without touching the others.
+
+---
+
+## Config Schema (`CONFIG_SCHEMA`)
+
+Declare a `CONFIG_SCHEMA` list to expose config fields in the Settings → Integrations UI.
+Values are saved to the DB and injected into `os.environ` before the plugin class is instantiated —
+no manual `.env` editing required after initial setup.
+
+```python
+CONFIG_SCHEMA = [
+    {"key": "MY_URL",      "label": "Service URL",  "type": "url",      "required": True},
+    {"key": "MY_API_KEY",  "label": "API Key",       "type": "password", "required": True},
+    {"key": "MY_QUALITY",  "label": "Quality",       "type": "select",   "required": False,
+     "default": "lossless", "options": ["lossless", "hires_lossless"]},
+]
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `key` | `str` | Matches the `os.environ` key the plugin reads |
+| `label` | `str` | Human-readable label for the UI |
+| `type` | `str` | `"text"` \| `"url"` \| `"password"` \| `"select"` |
+| `required` | `bool` | Marks field as required in the UI |
+| `default` | `str` | Default value shown in the UI |
+| `options` | `list[str]` | For `type="select"` — list of choices |
+| `placeholder` | `str` | Placeholder text for text/url/password inputs |
+
+Plugin config is stored in `app_settings` under the key pattern `plugin.{name}.{config_key}`.
+Password fields are never returned in plain text from `GET /settings/plugins`.
+
+---
+
+## Optional Metadata Fields
+
+Declare `PLUGIN_VERSION` and `PLUGIN_DESCRIPTION` to improve the UI card:
+
+```python
+PLUGIN_VERSION = "1.0.0"
+PLUGIN_DESCRIPTION = "Downloads albums via MyService using SABnzbd pipeline."
+```
+
+---
+
 ## Metadata Dict Contract
 
 The `metadata: dict` argument passed to `submit()`, `tag()`, and `organize()` follows the `PluginMetadata` shape defined in `app/plugins/__init__.py`. All fields are optional — always use `.get()`:

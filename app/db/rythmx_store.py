@@ -8,6 +8,7 @@ import sqlite3
 import logging
 from app import config
 from app.db.store import api_keys as _api_keys_store
+from app.db.store import download_jobs as _download_jobs_store
 from app.db.store import download_queue as _download_queue_store
 from app.db.store import forge_builds as _forge_builds_store
 from app.db.store import forge_playlists as _forge_playlists_store
@@ -417,6 +418,89 @@ def create_forge_build(
         build_id=build_id,
     )
 
+
+# --- Plugin slot config ---
+
+def get_all_plugin_slot_config() -> dict[tuple[str, str], bool]:
+    """Returns {(plugin_name, slot): enabled} from the plugin_slots table."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT plugin_name, slot, enabled FROM plugin_slots"
+        ).fetchall()
+    return {(row["plugin_name"], row["slot"]): bool(row["enabled"]) for row in rows}
+
+
+def set_plugin_slot_enabled(plugin_name: str, slot: str, enabled: bool) -> None:
+    """Upsert a plugin slot enabled/disabled state."""
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO plugin_slots (plugin_name, slot, enabled)
+            VALUES (?, ?, ?)
+            ON CONFLICT(plugin_name, slot) DO UPDATE SET enabled = excluded.enabled
+            """,
+            (plugin_name, slot, int(enabled)),
+        )
+
+
+def get_all_plugin_settings() -> dict[str, dict[str, str]]:
+    """
+    Returns plugin config values stored in app_settings.
+    Key pattern: plugin.{name}.{config_key}
+    Returns: {plugin_name: {config_key: value}}
+    """
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT key, value FROM app_settings WHERE key LIKE 'plugin.%'",
+        ).fetchall()
+    result: dict[str, dict[str, str]] = {}
+    for row in rows:
+        parts = row["key"].split(".", 2)  # ["plugin", name, config_key]
+        if len(parts) == 3:
+            _, name, config_key = parts
+            result.setdefault(name, {})[config_key] = row["value"]
+    return result
+
+
+# --- Download jobs ---
+
+def insert_download_job(
+    *,
+    build_id: str,
+    job_id: str,
+    provider: str,
+    artist_name: str,
+    album_name: str,
+) -> int:
+    return _download_jobs_store.insert_job(
+        _connect,
+        build_id=build_id,
+        job_id=job_id,
+        provider=provider,
+        artist_name=artist_name,
+        album_name=album_name,
+    )
+
+
+def get_download_jobs_for_build(build_id: str) -> list[dict]:
+    return _download_jobs_store.get_jobs_for_build(_connect, build_id)
+
+
+def get_pending_download_jobs(provider: str | None = None) -> list[dict]:
+    return _download_jobs_store.get_pending_jobs(_connect, provider=provider)
+
+
+def update_download_job_status(
+    job_id: str,
+    status: str,
+    storage_path: str | None = None,
+) -> bool:
+    return _download_jobs_store.update_job_status(
+        _connect, job_id, status, storage_path=storage_path
+    )
+
+
+# --- Forge builds ---
 
 def list_forge_builds(source: str | None = None, limit: int = 100) -> list[dict]:
     return _forge_builds_store.list_forge_builds(_connect, source=source, limit=limit)

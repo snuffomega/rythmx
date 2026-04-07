@@ -281,3 +281,134 @@ def settings_mobile_pairing():
         "lan_ip": lan_ip,
         "port": port,
     }
+
+
+# ---------------------------------------------------------------------------
+# Plugin management — Integrations UI (Lidarr-style: drop file → configure in UI)
+# ---------------------------------------------------------------------------
+
+@router.get("/settings/plugins")
+def settings_plugins_list():
+    """
+    Returns all discovered plugins, their config schemas, current config values, and
+    per-slot enabled state. Used by the Settings → Integrations UI.
+    """
+    from app.plugins import get_plugin_catalog
+
+    catalog = get_plugin_catalog()
+    slot_config = rythmx_store.get_all_plugin_slot_config()
+    plugin_settings_map = rythmx_store.get_all_plugin_settings()
+
+    plugins = []
+    for name, meta in catalog.items():
+        config_schema = meta.get("config_schema") or []
+        # Return config values — mask password fields so secrets never leave the server
+        config_values: dict[str, str] = {}
+        for field in config_schema:
+            key = field.get("key", "")
+            if not key:
+                continue
+            # DB value takes precedence over env
+            raw = plugin_settings_map.get(name, {}).get(key) or os.environ.get(key, "")
+            config_values[key] = "***" if field.get("type") == "password" and raw else raw
+
+        slots_enabled: dict[str, bool] = {
+            slot: slot_config.get((name, slot), True)
+            for slot in (meta.get("slots") or [])
+        }
+
+        plugins.append({
+            "name": name,
+            "version": meta.get("version"),
+            "description": meta.get("description"),
+            "slots": meta.get("slots") or [],
+            "active_slots": meta.get("active_slots") or [],
+            "slots_enabled": slots_enabled,
+            "config_schema": config_schema,
+            "config_values": config_values,
+        })
+
+    return {"status": "ok", "plugins": plugins}
+
+
+@router.patch("/settings/plugins/{name}")
+def settings_plugins_update(name: str, data: Optional[dict[str, Any]] = Body(default=None)):
+    """
+    Save plugin config values and per-slot enable/disable state, then hot-reload.
+    Body: {"config": {"KEY": "value", ...}, "slots": {"downloader": true, ...}}
+    """
+    from app.plugins import get_plugin_catalog, reload_plugins
+
+    catalog = get_plugin_catalog()
+    if name not in catalog:
+        return JSONResponse(
+            {"status": "error", "message": f"Plugin '{name}' not found"},
+            status_code=404,
+        )
+
+    payload = data if isinstance(data, dict) else {}
+
+    # Save config values to app_settings
+    config_updates = payload.get("config")
+    if isinstance(config_updates, dict):
+        for key, value in config_updates.items():
+            if value is not None:
+                rythmx_store.set_setting(f"plugin.{name}.{key}", str(value))
+
+    # Save slot enable/disable state
+    slots_updates = payload.get("slots")
+    if isinstance(slots_updates, dict):
+        for slot, enabled in slots_updates.items():
+            rythmx_store.set_plugin_slot_enabled(name, slot, bool(enabled))
+
+    # Reload all plugins with the updated DB config
+    reload_plugins()
+
+    return {"status": "ok", "message": f"Plugin '{name}' config saved and reloaded"}
+
+
+@router.post("/settings/plugins/{name}/test")
+def settings_plugins_test(name: str):
+    """
+    Call test_connection() on the named plugin if it occupies the downloader slot.
+    Returns the plugin's own result dict.
+    """
+    from app.plugins import get_plugin_catalog, get_downloader
+
+    catalog = get_plugin_catalog()
+    if name not in catalog:
+        return JSONResponse(
+            {"status": "error", "message": f"Plugin '{name}' not found"},
+            status_code=404,
+        )
+
+    if "downloader" not in (catalog[name].get("active_slots") or []):
+        return JSONResponse(
+            {"status": "error", "message": f"Plugin '{name}' downloader slot is not active"},
+            status_code=400,
+        )
+
+    dl = get_downloader()
+    if getattr(dl, "name", None) != name:
+        return JSONResponse(
+            {"status": "error", "message": f"Plugin '{name}' is not the current active downloader"},
+            status_code=400,
+        )
+
+    try:
+        result = dl.test_connection()
+        return {"status": "ok", "result": result}
+    except Exception as exc:
+        logger.warning("Plugin %s test_connection raised: %s", name, exc)
+        return JSONResponse(
+            {"status": "error", "message": str(exc)},
+            status_code=502,
+        )
+
+
+@router.post("/settings/plugins/reload")
+def settings_plugins_reload():
+    """Hot-reload all plugins from disk using current DB config (slot config + settings)."""
+    from app.plugins import reload_plugins
+    reload_plugins()
+    return {"status": "ok", "message": "Plugins reloaded"}

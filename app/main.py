@@ -220,6 +220,12 @@ async def lifespan(app: FastAPI):
     # --- Init DB ---
     rythmx_store.init_db()
 
+    # --- Load plugins (after DB init so plugin_slots table exists) ---
+    from app.plugins import load_plugins
+    _slot_config = rythmx_store.get_all_plugin_slot_config()
+    _plugin_settings = rythmx_store.get_all_plugin_settings()
+    load_plugins(slot_config=_slot_config, plugin_settings=_plugin_settings)
+
     # --- Ensure local artwork storage dirs exist ---
     from app.services.artwork_store import ensure_artwork_dirs
     ensure_artwork_dirs()

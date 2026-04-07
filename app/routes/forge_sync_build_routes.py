@@ -769,6 +769,8 @@ def forge_builds_resync(build_id: str, data: Optional[dict[str, Any]] = Body(def
 @router.post("/forge/builds/{build_id}/fetch")
 def forge_builds_fetch(build_id: str):
     from app.routes import forge as facade
+    from app.plugins import get_downloader
+    from app.db import rythmx_store as _store
 
     build = facade.rythmx_store.get_forge_build(build_id)
     if not build:
@@ -782,8 +784,114 @@ def forge_builds_fetch(build_id: str):
             code="FORGE_FETCH_DISABLED",
         )
 
-    return facade._error(
-        "Build fetch is planned but not implemented yet.",
-        status_code=501,
-        code="FORGE_FETCH_NOT_IMPLEMENTED",
-    )
+    downloader = get_downloader()
+    if getattr(downloader, "name", "stub") == "stub":
+        return facade._error(
+            "No downloader plugin configured. Install a plugin and enable it in Settings → Integrations.",
+            status_code=400,
+            code="FORGE_NO_DOWNLOADER",
+        )
+
+    track_list = build.get("track_list") or []
+
+    # Deduplicate by (artist_name, album_name) — one submission per unique missing album.
+    seen: set[tuple[str, str]] = set()
+    albums_to_fetch: list[dict] = []
+    for item in track_list:
+        if not isinstance(item, dict):
+            continue
+        if bool(item.get("is_owned", False)):
+            continue  # skip already-owned tracks
+        artist = str(item.get("artist_name") or "").strip()
+        album = str(item.get("album_name") or "").strip()
+        if not artist or not album:
+            continue
+        key = (artist.lower(), album.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        albums_to_fetch.append(item)
+
+    if not albums_to_fetch:
+        return {
+            "status": "ok",
+            "build_id": build_id,
+            "message": "No missing albums to fetch.",
+            "submitted": 0,
+            "skipped": 0,
+            "jobs": [],
+        }
+
+    submitted = 0
+    skipped = 0
+    jobs = []
+    for item in albums_to_fetch:
+        artist = str(item.get("artist_name") or "").strip()
+        album = str(item.get("album_name") or "").strip()
+        metadata = {
+            "deezer_id": item.get("deezer_album_id"),
+            "itunes_id": item.get("itunes_album_id"),
+            "release_date": item.get("release_date"),
+            "thumb_url": item.get("thumb_url"),
+        }
+        try:
+            job_id = downloader.submit(artist, album, metadata)
+        except Exception as exc:
+            logger.warning(
+                "forge/fetch: downloader submit failed for '%s — %s': %s",
+                artist, album, exc,
+            )
+            skipped += 1
+            continue
+
+        if job_id.startswith("unresolved:"):
+            logger.warning(
+                "forge/fetch: downloader could not resolve '%s — %s': %s",
+                artist, album, job_id,
+            )
+            skipped += 1
+            continue
+
+        _store.insert_download_job(
+            build_id=build_id,
+            job_id=job_id,
+            provider=downloader.name,
+            artist_name=artist,
+            album_name=album,
+        )
+        submitted += 1
+        jobs.append({"job_id": job_id, "artist": artist, "album": album})
+
+    return {
+        "status": "ok",
+        "build_id": build_id,
+        "submitted": submitted,
+        "skipped": skipped,
+        "jobs": jobs,
+    }
+
+
+@router.get("/forge/builds/{build_id}/fetch/status")
+def forge_builds_fetch_status(build_id: str):
+    from app.routes import forge as facade
+    from app.db import rythmx_store as _store
+
+    build = facade.rythmx_store.get_forge_build(build_id)
+    if not build:
+        return facade._error("Build not found", status_code=404, code="FORGE_BUILD_NOT_FOUND")
+
+    jobs = _store.get_download_jobs_for_build(build_id)
+    pending = sum(1 for j in jobs if j["status"] == "pending")
+    completed = sum(1 for j in jobs if j["status"] == "completed")
+    failed = sum(1 for j in jobs if j["status"] == "failed")
+
+    return {
+        "status": "ok",
+        "build_id": build_id,
+        "total": len(jobs),
+        "pending": pending,
+        "completed": completed,
+        "failed": failed,
+        "jobs": jobs,
+    }
+
