@@ -387,8 +387,8 @@ def library_artist_detail(artist_id: str):
                        END
                    ) AS record_type,
                    la.match_confidence, la.needs_verification, la.source_platform,
-                   COALESCE(la.original_release_date_musicbrainz, la.release_date_itunes,
-                            la.year || '-01-01') AS release_date,
+                   COALESCE(la.original_release_date_musicbrainz, lr.release_date_deezer,
+                            la.release_date_itunes, la.year || '-01-01') AS release_date,
                    la.genre_itunes AS genre,
                    COALESCE(ia.image_url, la.thumb_url_deezer, la.thumb_url_plex) AS thumb_url,
                    ia.content_hash AS thumb_hash,
@@ -396,6 +396,7 @@ def library_artist_detail(artist_id: str):
             FROM lib_albums la
             LEFT JOIN image_cache ia
                    ON ia.entity_type = 'album' AND ia.entity_key = la.id
+            LEFT JOIN lib_releases lr ON lr.deezer_album_id = la.deezer_id
             LEFT JOIN (
                 SELECT album_id, COUNT(*) AS cnt
                 FROM lib_tracks WHERE removed_at IS NULL
@@ -438,14 +439,14 @@ def library_artist_detail(artist_id: str):
                                ORDER BY
                                    CASE catalog_source WHEN 'deezer' THEN 1 WHEN 'itunes' THEN 2 ELSE 3 END,
                                    COALESCE(thumb_url_deezer, thumb_url_itunes) IS NOT NULL DESC,
-                                   COALESCE(release_date_itunes, release_date_deezer) IS NOT NULL DESC
+                                   COALESCE(release_date_deezer, release_date_itunes) IS NOT NULL DESC
                            ) AS rn
                     FROM lib_releases
                     WHERE artist_id = ? AND is_owned = 0 AND user_dismissed = 0
                 )
                 SELECT title AS album_title, resolved_kind AS kind, resolved_kind AS record_type,
                        version_type,
-                       COALESCE(release_date_itunes, release_date_deezer) AS release_date,
+                       COALESCE(release_date_deezer, release_date_itunes) AS release_date,
                        catalog_source AS source,
                        deezer_album_id, itunes_album_id,
                        COALESCE(thumb_url_deezer, thumb_url_itunes) AS thumb_url,
@@ -479,7 +480,7 @@ def library_artist_detail(artist_id: str):
             group_rows = conn.execute(
                 """
                 SELECT id, title AS album_title, version_type,
-                       COALESCE(release_date_itunes, release_date_deezer) AS release_date,
+                       COALESCE(release_date_deezer, release_date_itunes) AS release_date,
                        catalog_source AS source, deezer_album_id, itunes_album_id,
                        COALESCE(thumb_url_deezer, thumb_url_itunes) AS thumb_url,
                        track_count, is_owned, canonical_release_id,

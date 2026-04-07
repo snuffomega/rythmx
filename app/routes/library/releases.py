@@ -57,14 +57,14 @@ def library_releases_global(
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     order_col = (
-        "COALESCE(lr.release_date_itunes, lr.release_date_deezer) DESC"
+        "COALESCE(lr.release_date_deezer, lr.release_date_itunes) DESC"
         if sort == "date"
-        else "lr.artist_name ASC, COALESCE(lr.release_date_itunes, lr.release_date_deezer) DESC"
+        else "lr.artist_name ASC, COALESCE(lr.release_date_deezer, lr.release_date_itunes) DESC"
     )
 
     sql = """
         SELECT lr.id, lr.artist_id, lr.artist_name, lr.title,
-               COALESCE(lr.release_date_itunes, lr.release_date_deezer) AS release_date,
+               COALESCE(lr.release_date_deezer, lr.release_date_itunes) AS release_date,
                lr.is_owned, lr.user_dismissed,
                COALESCE(lr.kind_deezer, lr.kind_itunes,
                    CASE
@@ -107,7 +107,7 @@ def library_release_detail(release_id: str):
         row = conn.execute(
             """
             SELECT id, artist_id, artist_name, title,
-                   COALESCE(release_date_itunes, release_date_deezer) AS release_date,
+                   COALESCE(release_date_deezer, release_date_itunes) AS release_date,
                    COALESCE(
                        kind_deezer, kind_itunes,
                        CASE
@@ -136,7 +136,7 @@ def library_release_detail(release_id: str):
             sib_rows = conn.execute(
                 """
                 SELECT id, title, version_type,
-                       COALESCE(release_date_itunes, release_date_deezer) AS release_date,
+                       COALESCE(release_date_deezer, release_date_itunes) AS release_date,
                        COALESCE(thumb_url_deezer, thumb_url_itunes) AS thumb_url,
                        is_owned,
                        COALESCE(
@@ -152,7 +152,7 @@ def library_release_detail(release_id: str):
                 ORDER BY
                     is_owned DESC,
                     CASE version_type WHEN 'original' THEN 0 ELSE 1 END,
-                    COALESCE(release_date_itunes, release_date_deezer) ASC
+                    COALESCE(release_date_deezer, release_date_itunes) ASC
                 """,
                 (release["canonical_release_id"], release_id),
             ).fetchall()

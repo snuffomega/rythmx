@@ -54,8 +54,8 @@ def library_albums(
             SELECT al.id, al.artist_id, al.title, al.year,
                    al.record_type_deezer AS record_type,
                    al.match_confidence, al.needs_verification, al.source_platform,
-                   COALESCE(al.original_release_date_musicbrainz, al.release_date_itunes,
-                            al.year || '-01-01') AS release_date,
+                   COALESCE(al.original_release_date_musicbrainz, lr.release_date_deezer,
+                            al.release_date_itunes, al.year || '-01-01') AS release_date,
                    al.genre_itunes AS genre,
                    COALESCE(ia.image_url, al.thumb_url_deezer, al.thumb_url_plex) AS thumb_url,
                    ia.content_hash AS thumb_hash,
@@ -65,6 +65,7 @@ def library_albums(
             JOIN lib_artists ar ON ar.id = al.artist_id
             LEFT JOIN image_cache ia
                    ON ia.entity_type = 'album' AND ia.entity_key = al.id
+            LEFT JOIN lib_releases lr ON lr.deezer_album_id = al.deezer_id
             WHERE {where_clause}
             ORDER BY ar.name COLLATE NOCASE, al.year DESC
             LIMIT ? OFFSET ?
@@ -84,8 +85,8 @@ def library_album_detail(album_id: str):
             SELECT al.id, al.artist_id, al.title, al.year,
                    al.record_type_deezer AS record_type,
                    al.match_confidence, al.needs_verification, al.source_platform,
-                   COALESCE(al.original_release_date_musicbrainz, al.release_date_itunes,
-                            al.year || '-01-01') AS release_date,
+                   COALESCE(al.original_release_date_musicbrainz, lr.release_date_deezer,
+                            al.release_date_itunes, al.year || '-01-01') AS release_date,
                    al.genre_itunes AS genre,
                    COALESCE(ia.image_url, al.thumb_url_deezer, al.thumb_url_plex) AS thumb_url,
                    ia.content_hash AS thumb_hash,
@@ -95,6 +96,7 @@ def library_album_detail(album_id: str):
             JOIN lib_artists ar ON ar.id = al.artist_id
             LEFT JOIN image_cache ia
                    ON ia.entity_type = 'album' AND ia.entity_key = al.id
+            LEFT JOIN lib_releases lr ON lr.deezer_album_id = al.deezer_id
             WHERE al.id = ? AND al.removed_at IS NULL
             """,
             (album_id,),
