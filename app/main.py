@@ -294,8 +294,16 @@ async def lifespan(app: FastAPI):
 
     logger.info("Rythmx started on %s:%d", config.RYTHMX_HOST, config.RYTHMX_PORT)
 
+    # --- Thread supervisor (proactive crash detection) ---
+    _supervisor = asyncio.create_task(_thread_supervisor())
+
     yield
-    # shutdown — no cleanup needed currently
+
+    _supervisor.cancel()
+    try:
+        await _supervisor
+    except asyncio.CancelledError:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -351,6 +359,27 @@ app.include_router(ws_router)
 # Always-on daemon threads expected to be alive for the process lifetime.
 # Missing either → status: degraded.
 _ALWAYS_ON_THREADS = frozenset({"maintenance-scheduler", "ws-heartbeat"})
+
+_SUPERVISOR_INTERVAL_S = 60  # check every 60 seconds
+
+
+async def _thread_supervisor() -> None:
+    """
+    Async lifespan task — logs an ERROR if any always-on daemon thread stops
+    running. Fires every _SUPERVISOR_INTERVAL_S seconds.
+
+    This catches silent crashes in the scheduler or WebSocket heartbeat that
+    would otherwise go unnoticed until the /health endpoint is polled.
+    """
+    while True:
+        await asyncio.sleep(_SUPERVISOR_INTERVAL_S)
+        alive = {t.name for t in threading.enumerate() if t.is_alive()}
+        for name in _ALWAYS_ON_THREADS:
+            if name not in alive:
+                logger.error(
+                    "Daemon thread '%s' is no longer alive — service may be degraded",
+                    name,
+                )
 
 
 @app.get("/health")
