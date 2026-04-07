@@ -40,6 +40,11 @@ def library_releases_global(
 
     if kind:
         kinds = [k.strip() for k in kind.split(",") if k.strip()]
+        if not kinds:
+            return JSONResponse(
+                {"status": "error", "message": "Invalid kind filter"},
+                status_code=400,
+            )
         conditions.append(
             "COALESCE(lr.kind_deezer, lr.kind_itunes) IN " + build_in_clause(len(kinds))
         )
