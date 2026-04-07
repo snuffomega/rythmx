@@ -249,3 +249,35 @@ def settings_set_fetch_enabled(data: Optional[dict[str, Any]] = Body(default=Non
     enabled = bool(data.get("enabled", False))
     rythmx_store.set_setting("fetch_enabled", "1" if enabled else "0")
     return {"status": "ok", "fetch_enabled": enabled}
+
+
+@router.get("/settings/mobile-pairing")
+def settings_mobile_pairing():
+    """
+    Returns the API key and a best-effort LAN base URL for mobile app pairing.
+    Use api_base + X-Api-Key header to configure the React Native app.
+    The lan_ip is detected from the default outbound interface — substitute your
+    device's actual LAN IP if it differs.
+    """
+    import socket
+
+    key = rythmx_store.get_api_key()
+
+    # UDP connect trick: no packets sent, but the OS selects the correct interface.
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            lan_ip = s.getsockname()[0]
+    except Exception:
+        lan_ip = "127.0.0.1"
+
+    port = config.RYTHMX_PORT
+    api_base = f"http://{lan_ip}:{port}/api/v1"
+
+    return {
+        "status": "ok",
+        "api_key": key,
+        "api_base": api_base,
+        "lan_ip": lan_ip,
+        "port": port,
+    }
