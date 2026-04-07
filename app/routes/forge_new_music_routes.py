@@ -4,7 +4,6 @@ Forge New Music routes.
 from __future__ import annotations
 
 import logging
-import threading
 from typing import Any, Optional
 
 from fastapi import APIRouter, Body
@@ -49,27 +48,12 @@ def nm_run(data: Optional[dict[str, Any]] = Body(default=None)):
     if error:
         return facade._error(error, status_code=400, code="FORGE_VALIDATION_ERROR")
 
-    result_container: dict[str, Any] = {}
-    error_container: dict[str, str] = {}
+    try:
+        summary = new_music_runner.run_new_music_pipeline(config_override or None)
+    except Exception as exc:
+        logger.error("new_music/run: pipeline error: %s", exc, exc_info=True)
+        return facade._error(str(exc), status_code=500, code="FORGE_RUN_FAILED")
 
-    def _run():
-        try:
-            result_container["result"] = new_music_runner.run_new_music_pipeline(config_override or None)
-        except Exception as exc:
-            logger.error("new_music/run: pipeline error: %s", exc, exc_info=True)
-            error_container["error"] = str(exc)
-
-    t = threading.Thread(target=_run, daemon=True, name="nm-run")
-    t.start()
-    t.join(timeout=120)
-
-    if t.is_alive():
-        return facade._error("New Music pipeline timed out", status_code=504, code="FORGE_TIMEOUT")
-
-    if error_container:
-        return facade._error(error_container["error"], status_code=500, code="FORGE_RUN_FAILED")
-
-    summary = result_container.get("result", {})
     releases = facade._get_discovered_releases()
     return {
         "status": "ok",
