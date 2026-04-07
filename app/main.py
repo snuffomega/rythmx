@@ -321,6 +321,18 @@ app = FastAPI(
 # Security headers on every response
 app.add_middleware(SecurityHeadersMiddleware)
 
+# CORS — only active when CORS_ORIGINS is explicitly configured.
+# Off by default (same-origin deployment). Required for Expo web dev at localhost:8081.
+if config.CORS_ORIGINS:
+    from starlette.middleware.cors import CORSMiddleware
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=config.CORS_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["X-Api-Key", "Content-Type", "Authorization"],
+    )
+
 # --- Register routers at /api/v1 ---
 from app.routes.auth import router as auth_router
 from app.routes.acquisition import router as acquisition_router
