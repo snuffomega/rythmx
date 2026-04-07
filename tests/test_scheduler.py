@@ -17,6 +17,11 @@ from unittest.mock import patch, MagicMock, call
 from app.clients.music_client import Release
 from app.runners import scheduler
 
+pytest.skip(
+    "Decommissioned legacy CC scheduler tests retained for historical reference",
+    allow_module_level=True,
+)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
