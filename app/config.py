@@ -146,6 +146,17 @@ WS_ALLOWED_ORIGINS: list[str] = [
     if o.strip()
 ]
 
+# --- CORS ---
+# Comma-separated allowed origins for cross-origin HTTP requests.
+# Empty (default) = CORS middleware not mounted — correct for same-origin deployments.
+# Required for Expo web dev against a local server: CORS_ORIGINS=http://localhost:8081
+# Never set to '*' — always list explicit origins.
+CORS_ORIGINS: list[str] = [
+    o.strip()
+    for o in _optional("CORS_ORIGINS", "").split(",")
+    if o.strip()
+]
+
 # --- Music directory (optional) ---
 # Absolute path to your music files (same mount Plex reads from).
 # When set, enables local artwork lookup (folder.jpg / cover.png) and
