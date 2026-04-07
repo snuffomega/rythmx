@@ -13,11 +13,43 @@ import importlib.util
 import logging
 import os
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Protocol, TypedDict, runtime_checkable
 
 logger = logging.getLogger(__name__)
 
 PLUGINS_DIR = Path(__file__).parents[2] / "plugins"
+
+
+# ---------------------------------------------------------------------------
+# Plugin API versioning
+# ---------------------------------------------------------------------------
+# Plugins must declare PLUGIN_API_VERSION = 1 at module level.
+# load_plugins() skips any plugin declaring an unsupported version.
+# When the contract changes incompatibly, increment PLUGIN_API_VERSION here
+# and document the migration in PLUGINS.md.
+PLUGIN_API_VERSION = 1
+SUPPORTED_PLUGIN_API_VERSIONS: frozenset[int] = frozenset({1})
+
+
+class PluginMetadata(TypedDict, total=False):
+    """
+    Standardized metadata dict passed to all plugin slot methods.
+    All fields are optional — plugins must use .get() and handle missing keys.
+    artist and album are always passed as explicit positional args;
+    this dict carries the additional enrichment context.
+    """
+    track_id: int          # lib_tracks.id (single-track submissions only)
+    release_id: int        # lib_releases.id
+    isrc: str              # ISRC code (ISO 3901)
+    deezer_id: int         # Deezer album ID
+    itunes_id: int         # iTunes collection ID
+    musicbrainz_id: str    # MusicBrainz release MBID
+    explicit: bool
+    thumb_url: str         # Best available artwork URL
+    duration_ms: int       # Track duration in milliseconds
+    release_date: str      # YYYY-MM-DD (primary resolved date)
+    label: str             # Record label
+    upc: str               # UPC barcode
 
 
 # ---------------------------------------------------------------------------
@@ -127,6 +159,15 @@ def load_plugins() -> None:
                 continue
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)  # type: ignore[union-attr]
+
+            # Version gate — plugins declaring an unsupported API version are skipped.
+            declared_version = getattr(module, "PLUGIN_API_VERSION", None)
+            if declared_version is not None and declared_version not in SUPPORTED_PLUGIN_API_VERSIONS:
+                logger.warning(
+                    "Plugin %s declares PLUGIN_API_VERSION=%s — supported: %s — skipped",
+                    path.name, declared_version, sorted(SUPPORTED_PLUGIN_API_VERSIONS),
+                )
+                continue
 
             plugin_meta = getattr(module, "PLUGIN", None)
             if not isinstance(plugin_meta, dict):

@@ -174,6 +174,13 @@ export interface ConnectionStatus {
   message?: string;
 }
 
+export interface MobilePairing {
+  api_key: string;
+  api_base: string;
+  lan_ip: string;
+  port: number;
+}
+
 export interface Settings {
   lastfm_username?: string;
   lastfm_api_key?: string;

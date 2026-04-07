@@ -39,6 +39,7 @@ import type {
   ForgeBuildStatus,
   LibPlaylist,
   LibPlaylistTrack,
+  MobilePairing,
 } from '../types';
 
 const BASE_URL = '/api/v1';
@@ -218,6 +219,9 @@ export const settingsApi = {
       method: 'POST',
       body: JSON.stringify({ enabled }),
     }).then(r => r.fetch_enabled),
+  getMobilePairing: () =>
+    request<{ status: string } & MobilePairing>('/settings/mobile-pairing')
+      .then(({ status: _s, ...rest }) => rest as MobilePairing),
 };
 
 export const connectionsApi = {

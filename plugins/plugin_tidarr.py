@@ -1,0 +1,317 @@
+"""
+plugin_tidarr.py — Rythmx downloader plugin for Tidarr.
+
+Submits albums to a running Tidarr instance (https://github.com/cstaelen/tidarr)
+which downloads music via the Tidal streaming service.
+
+Resolution strategy (two-step):
+  1. Search Tidarr's Newznab/Lidarr endpoint with artist + album name.
+     GET /api/lidarr?t=music&artist={artist}&album={album}&apikey={key}
+  2. Parse the returned Newznab XML — extract the numeric Tidal album ID
+     from the first <link> element (/api/lidarr/download/{id}/...) with
+     a <guid> numeric fallback.
+  3. POST /api/save with the full Tidal album URL to queue the download.
+
+Config — add to your .env:
+  TIDARR_URL      Base URL of your Tidarr instance, e.g. http://tidarr:8484
+  TIDARR_API_KEY  64-char API key. Retrieve via:
+                    docker exec tidarr cat /shared/.tidarr-api-key
+                  or via Tidarr Settings → Authentication → API Key.
+  TIDARR_QUALITY  Download quality: lossless (default) or hires_lossless.
+
+Constraints (enforced by the plugin system):
+  - Never imports from app/db/ — no SQLite access permitted.
+  - Never logs the raw TIDARR_API_KEY value.
+  - submit() never raises — unresolvable items return "unresolved:…" and log
+    a warning so the caller can record the miss without crashing.
+"""
+import logging
+import os
+import re
+import xml.etree.ElementTree as ET
+from typing import Optional
+
+import requests
+
+logger = logging.getLogger(__name__)
+
+# Matches /api/lidarr/download/{albumId}/{quality} in a Tidarr link URL.
+# e.g. http://tidarr:8484/api/lidarr/download/251082404/high  →  "251082404"
+_DOWNLOAD_URL_RE = re.compile(r"/api/lidarr/download/(\d+)/")
+
+
+class TidarrDownloader:
+    """
+    Downloader plugin slot implementation pointing at a Tidarr instance.
+
+    Instantiated once by load_plugins() at app startup and cached in _registry.
+    Config is read from the environment at instantiation time.
+    """
+
+    name = "tidarr"
+
+    def __init__(self) -> None:
+        self._url = (os.environ.get("TIDARR_URL") or "").rstrip("/")
+        self._key = os.environ.get("TIDARR_API_KEY") or ""
+        quality_raw = (os.environ.get("TIDARR_QUALITY") or "lossless").lower()
+        self._quality = quality_raw if quality_raw in ("lossless", "hires_lossless") else "lossless"
+        self._session = requests.Session()
+        if self._key:
+            self._session.headers.update({"X-Api-Key": self._key})
+
+    # ------------------------------------------------------------------
+    # DownloaderPlugin protocol surface
+    # ------------------------------------------------------------------
+
+    def submit(self, artist: str, album: str, metadata: dict) -> str:
+        """
+        Resolve the Tidal album ID then queue the download in Tidarr.
+
+        Returns:
+            "tidarr:album:{tidal_id}"      — successfully queued in Tidarr
+            "unresolved:{artist}:{album}"  — Tidal ID could not be resolved
+                                             or /api/save returned non-201
+        """
+        if not self._url or not self._key:
+            logger.warning(
+                "tidarr: TIDARR_URL or TIDARR_API_KEY not configured — skipping %s — %s",
+                artist,
+                album,
+            )
+            return f"unresolved:{artist}:{album}"
+
+        tidal_id = self._resolve_tidal_id(artist, album)
+        if tidal_id is None:
+            logger.warning(
+                "tidarr: could not resolve Tidal ID for %s — %s", artist, album
+            )
+            return f"unresolved:{artist}:{album}"
+
+        tidal_url = f"https://listen.tidal.com/album/{tidal_id}"
+        try:
+            resp = self._session.post(
+                f"{self._url}/api/save",
+                json={
+                    "item": {
+                        "url": tidal_url,
+                        "type": "album",
+                        "status": "queue",
+                    }
+                },
+                timeout=10,
+            )
+        except requests.RequestException as exc:
+            logger.warning(
+                "tidarr: POST /api/save failed for %s — %s: %s", artist, album, exc
+            )
+            return f"unresolved:{artist}:{album}"
+
+        if resp.status_code == 201:
+            logger.info(
+                "tidarr: queued %s — %s (tidal_id=%s quality=%s)",
+                artist,
+                album,
+                tidal_id,
+                self._quality,
+            )
+            return f"tidarr:album:{tidal_id}"
+
+        logger.warning(
+            "tidarr: POST /api/save returned HTTP %d for %s — %s",
+            resp.status_code,
+            artist,
+            album,
+        )
+        return f"unresolved:{artist}:{album}"
+
+    def test_connection(self) -> dict:
+        """
+        Verify connectivity and auth against two Tidarr API surfaces:
+          1. GET /api/settings         — main API + key check
+          2. GET /api/sabnzbd/api?mode=version — SABnzbd download client (used for future job tracking)
+
+        Used by the Settings → Integrations “Test connection” button.
+
+        Returns:
+            {"status": "ok", "message": "…"}    — reachable and authenticated
+            {"status": "error", "message": "…"} — not reachable or bad key
+        """
+        if not self._url or not self._key:
+            return {
+                "status": "error",
+                "message": "TIDARR_URL or TIDARR_API_KEY not configured in .env",
+            }
+
+        # Primary: settings endpoint (validates auth)
+        try:
+            resp = self._session.get(f"{self._url}/api/settings", timeout=8)
+        except requests.exceptions.ConnectionError:
+            return {
+                "status": "error",
+                "message": f"Cannot connect to Tidarr at {self._url}",
+            }
+        except requests.RequestException as exc:
+            return {"status": "error", "message": str(exc)}
+
+        if resp.status_code == 403:
+            return {
+                "status": "error",
+                "message": "Invalid API key — check TIDARR_API_KEY (HTTP 403)",
+            }
+        if resp.status_code != 200:
+            return {
+                "status": "error",
+                "message": f"Unexpected response from Tidarr: HTTP {resp.status_code}",
+            }
+
+        # Secondary: SABnzbd version probe (confirms download pipeline is alive)
+        try:
+            sabnzbd_resp = self._session.get(
+                f"{self._url}/api/sabnzbd/api",
+                params={"mode": "version", "apikey": self._key},
+                timeout=8,
+            )
+            sabnzbd_ok = sabnzbd_resp.status_code == 200
+        except requests.RequestException:
+            sabnzbd_ok = False
+
+        if not sabnzbd_ok:
+            return {
+                "status": "ok",
+                "message": (
+                    f"Tidarr reachable at {self._url} — "
+                    "warning: SABnzbd download pipeline not responding"
+                ),
+            }
+
+        return {"status": "ok", "message": f"Tidarr reachable at {self._url} (settings + SABnzbd OK)"}
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    def _resolve_tidal_id(self, artist: str, album: str) -> Optional[str]:
+        """
+        Query Tidarr's Newznab/Lidarr indexer and extract the Tidal album ID.
+
+        Primary search: t=search&q={artist} {album}
+          This is the general Newznab search query and is the proven path
+          (used by SoulSync and other *arr integrations against Tidarr).
+
+        Fallback search: t=music&artist={artist}&album={album}
+          The structured Newznab music search. More precise but not always
+          available or differently ranked.
+
+        The `apikey` query param is used because the Newznab spec requires
+        it as a query parameter; the session X-Api-Key header is also sent.
+
+        Returns the numeric Tidal album ID string, or None on failure.
+        """
+        # Primary: general search query (proven with Tidarr in the wild)
+        result = self._newznab_search(
+            params={"t": "search", "q": f"{artist} {album}", "apikey": self._key},
+            artist=artist,
+            album=album,
+        )
+        if result:
+            return result
+
+        # Fallback: structured music search
+        return self._newznab_search(
+            params={"t": "music", "artist": artist, "album": album, "apikey": self._key},
+            artist=artist,
+            album=album,
+        )
+
+    def _newznab_search(
+        self, params: dict, artist: str, album: str
+    ) -> Optional[str]:
+        """Execute one Newznab search request and return the parsed Tidal ID, or None."""
+        try:
+            resp = self._session.get(
+                f"{self._url}/api/lidarr",
+                params=params,
+                timeout=15,
+            )
+        except requests.RequestException as exc:
+            logger.warning(
+                "tidarr: Newznab search request failed for %s — %s: %s",
+                artist,
+                album,
+                exc,
+            )
+            return None
+
+        if resp.status_code != 200:
+            logger.warning(
+                "tidarr: Newznab search returned HTTP %d for %s — %s",
+                resp.status_code,
+                artist,
+                album,
+            )
+            return None
+
+        return self._parse_newznab_id(resp.text, artist, album)
+
+    def _parse_newznab_id(
+        self, xml_text: str, artist: str, album: str
+    ) -> Optional[str]:
+        """
+        Parse Tidarr's Newznab XML response and return the first Tidal album ID.
+
+        Primary path:
+            <link>http://tidarr:8484/api/lidarr/download/251082404/high</link>
+            → regex extracts "251082404"
+
+        Fallback path:
+            <guid>tidarr-251082404</guid>  (or similar)
+            → first run of 5+ digits extracted
+
+        Returns the numeric ID string, or None if neither path yields a result.
+        """
+        try:
+            root = ET.fromstring(xml_text)
+        except ET.ParseError as exc:
+            logger.warning(
+                "tidarr: failed to parse Newznab XML for %s — %s: %s",
+                artist,
+                album,
+                exc,
+            )
+            return None
+
+        items = root.findall(".//item")
+        if not items:
+            logger.debug("tidarr: no Newznab results for %s — %s", artist, album)
+            return None
+
+        first = items[0]
+
+        # Primary: <link> contains /api/lidarr/download/{albumId}/{quality}
+        link_el = first.find("link")
+        if link_el is not None and link_el.text:
+            m = _DOWNLOAD_URL_RE.search(link_el.text)
+            if m:
+                return m.group(1)
+
+        # Fallback: <guid> — extract first run of 5+ digits
+        guid_el = first.find("guid")
+        if guid_el is not None and guid_el.text:
+            digits = re.findall(r"\d{5,}", guid_el.text)
+            if digits:
+                return digits[0]
+
+        logger.warning(
+            "tidarr: could not extract Tidal ID from Newznab result for %s — %s",
+            artist,
+            album,
+        )
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Plugin registration — must appear after class definition
+# ---------------------------------------------------------------------------
+
+PLUGIN_API_VERSION = 1
+PLUGIN = {"slot": "downloader", "class": TidarrDownloader}
