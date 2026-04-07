@@ -1,4 +1,4 @@
-﻿"""
+"""
 playlist_importer.py - import external playlists into rythmx.
 
 Supported sources:
