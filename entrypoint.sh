@@ -33,11 +33,12 @@ fi
 
 echo "Mapped to user=${TARGET_USER} group=${TARGET_GROUP}"
 
-# Ensure data directories exist (survives fresh volume mounts)
-mkdir -p /data/rythmx /data/soulsync
+# Ensure writable data directories exist (survives fresh volume mounts)
+# soulsync is a read-only bind mount — host owns it, do not mkdir or chown
+mkdir -p /data/rythmx/artwork/cache /data/rythmx/artwork/originals
 
-# Own the writable data directory and app directory
-chown -R "${PUID}:${PGID}" /data/rythmx /rythmx
+# Own the writable data volume only — app code in /rythmx is root:root (image-baked, read-only at runtime)
+chown -R "${PUID}:${PGID}" /data/rythmx
 
 # Drop privileges and exec the CMD (uvicorn becomes PID 1)
 exec gosu "${TARGET_USER}" "$@"

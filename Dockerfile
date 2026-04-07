@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # =============================================================================
 # Rythmx — Production Multi-Stage Dockerfile
 # =============================================================================
@@ -16,7 +17,8 @@
 FROM node:20.20.0-alpine AS builder
 WORKDIR /build
 COPY frontend/package*.json ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci
 COPY frontend/ ./
 RUN npm run build
 
@@ -38,7 +40,8 @@ RUN apt-get update && \
 
 # Install Python dependencies (prod only — no pytest, no httpx)
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements.txt
 
 # Copy application code (tests/ and scripts/ excluded via .dockerignore)
 COPY app/ ./app/
@@ -57,7 +60,8 @@ ENV PGID=1000
 
 # Secrets and data are provided at runtime via env vars and volume mounts.
 # Never bake .env or db files into the image.
-ENV PYTHONUNBUFFERED=1
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
 EXPOSE 8009
 
