@@ -49,7 +49,7 @@ export function TrackArt({
         ? 'w-16 h-16 object-cover rounded-sm flex-shrink-0'
         : size === 'fill'
           ? 'w-full h-full object-cover'
-          : 'w-full max-w-[400px] aspect-square object-cover rounded border border-[#222]';
+          : 'w-full max-w-[400px] aspect-square object-cover rounded border border-border';
     return (
       <img
         src={src}
@@ -63,7 +63,7 @@ export function TrackArt({
 
   if (size === 'sm') {
     return (
-      <div className="w-16 h-16 bg-[#1a1a1a] rounded-sm flex-shrink-0 flex items-center justify-center border border-[#222]">
+      <div className="w-16 h-16 bg-surface-raised rounded-sm flex-shrink-0 flex items-center justify-center border border-border">
         <Disc size={24} className="text-text-muted" />
       </div>
     );
@@ -71,15 +71,15 @@ export function TrackArt({
 
   if (size === 'fill') {
     return (
-      <div className="w-full h-full bg-[#0f0f0f] flex items-center justify-center">
-        <Disc size={discSize ?? 48} className="text-[#252525]" />
+      <div className="w-full h-full bg-base flex items-center justify-center">
+        <Disc size={discSize ?? 48} className="text-text-faint" />
       </div>
     );
   }
 
   return (
-    <div className="w-full max-w-[400px] aspect-square bg-[#1a1a1a] rounded flex items-center justify-center border border-[#222]">
-      <Disc size={80} className="text-[#333]" />
+    <div className="w-full max-w-[400px] aspect-square bg-surface-raised rounded flex items-center justify-center border border-border">
+      <Disc size={80} className="text-text-faint" />
     </div>
   );
 }

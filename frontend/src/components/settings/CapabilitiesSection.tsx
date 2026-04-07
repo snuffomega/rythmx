@@ -27,12 +27,12 @@ export function CapabilitiesSection({ toast }: CapabilitiesSectionProps) {
   };
 
   return (
-    <section className="border-t border-[#1a1a1a] pt-8">
+    <section className="border-t border-border-subtle pt-8">
       <h2 className="text-text-muted text-xs font-semibold uppercase tracking-widest mb-3">Capabilities</h2>
-      <div className="bg-[#0e0e0e] border border-[#1a1a1a] p-4 flex items-center justify-between">
+      <div className="bg-base border border-border-subtle p-4 flex items-center justify-between">
         <div>
           <p className="text-text-primary text-sm font-medium">Enable Fetch</p>
-          <p className="text-[#444] text-[10px] mt-0.5">
+          <p className="text-text-dim text-[10px] mt-0.5">
             Show download actions in the Forge. Requires a downloader plugin (Lidarr, Soulseek).
           </p>
         </div>

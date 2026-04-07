@@ -200,7 +200,7 @@ export function FullPagePlayer({ isPlaying, onPlayPause, onMinimize, onSeek, onV
             <div
               ref={progressRef}
               onClick={handleProgressClick}
-              className="flex-1 h-1 bg-[#1a1a1a] rounded-full relative cursor-pointer group"
+              className="flex-1 h-1 bg-surface-raised rounded-full relative cursor-pointer group"
             >
               <div
                 className="absolute top-0 left-0 h-full bg-accent rounded-full pointer-events-none"
@@ -275,12 +275,12 @@ export function FullPagePlayer({ isPlaying, onPlayPause, onMinimize, onSeek, onV
           <button className="text-text-muted hover:text-text-secondary transition-colors" aria-label="Add to playlist">
             <ListPlus size={16} />
           </button>
-          <div className="w-px h-4 bg-[#222] mx-1" />
+          <div className="w-px h-4 bg-border mx-1" />
           <Volume2 size={15} className="text-text-secondary flex-shrink-0" />
           <div
             ref={volumeRef}
             onClick={handleVolumeClick}
-            className="w-28 h-1 bg-[#1a1a1a] rounded-full relative cursor-pointer group"
+            className="w-28 h-1 bg-surface-raised rounded-full relative cursor-pointer group"
           >
             <div
               className="absolute top-0 left-0 h-full bg-text-secondary rounded-full pointer-events-none"
@@ -295,8 +295,8 @@ export function FullPagePlayer({ isPlaying, onPlayPause, onMinimize, onSeek, onV
       </div>
 
       {/* ── Right panel: Queue ─────────────────────────────────────────────── */}
-      <div className="w-[340px] flex-shrink-0 border-l border-[#1a1a1a] flex flex-col min-h-0">
-        <div className="px-5 py-4 border-b border-[#1a1a1a] flex-shrink-0 flex items-center justify-between">
+      <div className="w-[340px] flex-shrink-0 border-l border-border-subtle flex flex-col min-h-0">
+        <div className="px-5 py-4 border-b border-border-subtle flex-shrink-0 flex items-center justify-between">
           <h3 className="text-[13px] font-mono text-text-muted uppercase tracking-widest">
             Queue · {queue.length} track{queue.length !== 1 ? 's' : ''}
           </h3>
@@ -318,7 +318,7 @@ export function FullPagePlayer({ isPlaying, onPlayPause, onMinimize, onSeek, onV
             <ul>
               {queue.map((track, i) => (
                 <li key={`${track.id}-${i}`}>
-                  <div className="group px-5 py-3 flex items-center gap-3 hover:bg-[#111] transition-colors">
+                  <div className="group px-5 py-3 flex items-center gap-3 hover:bg-surface transition-colors">
                     <button
                       onClick={() => playAt(i)}
                       className={`flex-1 min-w-0 text-left flex items-center gap-3 ${
@@ -355,7 +355,7 @@ export function FullPagePlayer({ isPlaying, onPlayPause, onMinimize, onSeek, onV
 
       {playlistPickerOpen && (
         <div className="fixed inset-0 z-40 bg-black/60 flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-[#0d0d0d] border border-[#2a2a2a] p-4">
+          <div className="w-full max-w-md bg-base border border-border-input p-4">
             <h3 className="text-sm font-semibold text-text-primary">Add To Playlist</h3>
             <p className="text-xs text-text-muted mt-1 truncate">
               {playlistTrack ? `Track: ${playlistTrack.title}` : 'Select a playlist'}
@@ -375,7 +375,7 @@ export function FullPagePlayer({ isPlaying, onPlayPause, onMinimize, onSeek, onV
                   <select
                     value={selectedPlaylistId}
                     onChange={e => setSelectedPlaylistId(e.target.value)}
-                    className="w-full bg-[#111] border border-[#2a2a2a] text-text-primary text-sm px-3 py-2 focus:outline-none focus:border-accent"
+                    className="w-full bg-surface border border-border-input text-text-primary text-sm px-3 py-2 focus:outline-none focus:border-accent"
                     disabled={playlistOptions.length === 0 || playlistPickerSaving}
                   >
                     {playlistOptions.length === 0 ? (
@@ -400,14 +400,14 @@ export function FullPagePlayer({ isPlaying, onPlayPause, onMinimize, onSeek, onV
               <button
                 onClick={closePlaylistPicker}
                 disabled={playlistPickerSaving}
-                className="px-3 py-1.5 text-xs border border-[#333] text-text-muted hover:text-text-primary transition-colors disabled:opacity-40"
+                className="px-3 py-1.5 text-xs border border-border-strong text-text-muted hover:text-text-primary transition-colors disabled:opacity-40"
               >
                 Cancel
               </button>
               <button
                 onClick={() => navigate({ to: '/library/playlists' })}
                 disabled={playlistPickerSaving}
-                className="px-3 py-1.5 text-xs border border-[#333] text-text-muted hover:text-text-primary transition-colors disabled:opacity-40"
+                className="px-3 py-1.5 text-xs border border-border-strong text-text-muted hover:text-text-primary transition-colors disabled:opacity-40"
               >
                 Open Playlists
               </button>

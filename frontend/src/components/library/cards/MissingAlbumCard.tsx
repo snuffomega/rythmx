@@ -20,14 +20,14 @@ export function MissingAlbumCard({ release, onDismiss }: MissingAlbumCardProps) 
           <X size={12} />
         </button>
       )}
-      <div className="relative aspect-square bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center mb-2 border border-dashed border-[#333]">
+      <div className="relative aspect-square bg-surface-raised rounded-sm overflow-hidden flex items-center justify-center mb-2 border border-dashed border-border-strong">
         {release.thumb_url ? (
           <img src={getImageUrl(release.thumb_url)} alt={release.album_title}
                className="w-full h-full object-cover" loading="lazy" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
         ) : (
           <Disc size={32} className="text-text-muted" />
         )}
-        <span className="absolute top-1 right-1 bg-[#333] text-text-muted text-[9px] font-mono px-1.5 py-0.5 rounded-sm uppercase">
+        <span className="absolute top-1 right-1 bg-border-strong text-text-muted text-[9px] font-mono px-1.5 py-0.5 rounded-sm uppercase">
           Missing
         </span>
       </div>
@@ -37,7 +37,7 @@ export function MissingAlbumCard({ release, onDismiss }: MissingAlbumCardProps) 
           <span className="text-text-muted text-xs font-mono">{release.release_date.slice(0, 4)}</span>
         )}
         {release.version_type && release.version_type !== 'original' && (
-          <span className="text-[9px] font-mono text-text-muted/70 px-1 py-0.5 bg-[#1a1a1a] rounded-sm">{release.version_type}</span>
+          <span className="text-[9px] font-mono text-text-muted/70 px-1 py-0.5 bg-surface-raised rounded-sm">{release.version_type}</span>
         )}
       </div>
     </div>

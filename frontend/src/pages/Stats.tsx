@@ -120,9 +120,9 @@ function StatsModal({ open, onClose, contentType, period }: StatsModalProps) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-[#0d0d0d] border border-[#1a1a1a] w-full max-w-lg mx-4 max-h-[85vh] flex flex-col">
+      <div className="relative bg-base border border-border-subtle w-full max-w-lg mx-4 max-h-[85vh] flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-[#1a1a1a] flex-shrink-0">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle flex-shrink-0">
           <span className="text-text-primary text-sm font-semibold">
             Top {label} by Scrobbles
           </span>
@@ -142,9 +142,9 @@ function StatsModal({ open, onClose, contentType, period }: StatsModalProps) {
             <p className="text-center text-text-muted text-sm py-16">No data for this period.</p>
           )}
           {!loading && items.map((item, i) => (
-            <div key={`${item.name}:${item.artist ?? ''}`} className="flex items-center gap-3 px-4 py-2.5 border-b border-[#111] hover:bg-[#111] transition-colors">
-              <span className="text-[11px] font-black text-[#444] w-6 text-right flex-shrink-0">{i + 1}</span>
-              <div className="w-10 h-10 flex-shrink-0 overflow-hidden bg-[#1a1a1a]">
+            <div key={`${item.name}:${item.artist ?? ''}`} className="flex items-center gap-3 px-4 py-2.5 border-b border-surface hover:bg-surface transition-colors">
+              <span className="text-[11px] font-black text-text-dim w-6 text-right flex-shrink-0">{i + 1}</span>
+              <div className="w-10 h-10 flex-shrink-0 overflow-hidden bg-surface-raised">
                 {item.image ? (
                   <img src={getImageUrl(item.image)} alt={item.name} loading="lazy" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
                 ) : (
@@ -231,7 +231,7 @@ export function Stats() {
         <p className="text-text-muted text-sm mt-1">See what you've been listening to</p>
       </div>
 
-      <div className="flex overflow-x-auto scrollbar-hide border-b border-[#1a1a1a]">
+      <div className="flex overflow-x-auto scrollbar-hide border-b border-border-subtle">
         {PERIODS.map(p => (
           <button
             key={p.key}
@@ -248,14 +248,14 @@ export function Stats() {
       </div>
 
       <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div className="flex gap-1 bg-[#111] p-0.5 rounded-sm">
+        <div className="flex gap-1 bg-surface p-0.5 rounded-sm">
           {CONTENT_TYPES.map(ct => (
             <button
               key={ct.key}
               onClick={() => handleContentTypeChange(ct.key)}
               className={`px-4 py-1.5 text-sm font-medium rounded-sm transition-colors ${
                 contentType === ct.key
-                  ? 'bg-[#1e1e1e] text-text-primary'
+                  ? 'bg-surface-overlay text-text-primary'
                   : 'text-text-muted hover:text-text-secondary'
               }`}
             >
@@ -304,7 +304,7 @@ export function Stats() {
         <div className="flex justify-center pt-2 pb-4">
           <button
             onClick={() => setSeeMoreOpen(true)}
-            className="flex items-center gap-1.5 px-5 py-2 bg-[#141414] hover:bg-[#1a1a1a] border border-[#222] text-text-muted hover:text-text-primary text-sm font-medium transition-colors rounded-sm"
+            className="flex items-center gap-1.5 px-5 py-2 bg-surface-skeleton hover:bg-surface-raised border border-border text-text-muted hover:text-text-primary text-sm font-medium transition-colors rounded-sm"
           >
             See More
             <ChevronRight size={14} />
@@ -335,7 +335,7 @@ function TogglePill({ label, active, onClick }: TogglePillProps) {
       className={`px-3 py-1 text-xs font-medium rounded-full transition-colors border ${
         active
           ? 'bg-accent/10 border-accent/40 text-accent'
-          : 'bg-transparent border-[#222] text-text-muted hover:text-text-secondary hover:border-[#333]'
+          : 'bg-transparent border-border text-text-muted hover:text-text-secondary hover:border-border-strong'
       }`}
     >
       {label}

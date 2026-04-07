@@ -8,7 +8,7 @@ export const Route = createFileRoute('/forge')({
   component: ForgeLayout,
 });
 
-const TAB_BASE = 'flex items-center gap-2 px-5 py-2.5 text-sm font-semibold transition-all duration-150 text-[#3a3a3a] hover:text-[#666]';
+const TAB_BASE = 'flex items-center gap-2 px-5 py-2.5 text-sm font-semibold transition-all duration-150 text-text-faint hover:text-text-muted';
 const TAB_ACTIVE = 'flex items-center gap-2 px-5 py-2.5 text-sm font-semibold transition-all duration-150 bg-accent text-black';
 
 function ForgeLayout() {
@@ -28,7 +28,7 @@ function ForgeLayout() {
           <p className="text-text-muted text-sm mt-1">Build, discover, and manage your music pipeline</p>
         </div>
 
-        <div className="flex items-center gap-1.5 bg-[#0e0e0e] border border-[#1a1a1a] p-1.5 w-fit">
+        <div className="flex items-center gap-1.5 bg-base border border-border-subtle p-1.5 w-fit">
           <Link to="/forge/builder" className={TAB_BASE} activeProps={{ className: TAB_ACTIVE }}>
             {({ isActive }) => (
               <>

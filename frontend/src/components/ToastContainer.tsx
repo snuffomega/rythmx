@@ -21,7 +21,7 @@ export function ToastContainer({ toasts, onDismiss }: ToastContainerProps) {
       {toasts.map(toast => (
         <div
           key={toast.id}
-          className="flex items-center gap-3 px-4 py-3 bg-[#1a1a1a] border border-[#2a2a2a] shadow-lg min-w-64 max-w-sm pointer-events-auto"
+          className="flex items-center gap-3 px-4 py-3 bg-surface-raised border border-border-input shadow-lg min-w-64 max-w-sm pointer-events-auto"
         >
           {ICONS[toast.type]}
           <p className="text-text-primary text-sm flex-1">{toast.message}</p>

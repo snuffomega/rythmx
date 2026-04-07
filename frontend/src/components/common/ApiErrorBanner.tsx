@@ -5,7 +5,7 @@ interface ApiErrorBannerProps {
 
 export function ApiErrorBanner({ error, onRetry }: ApiErrorBannerProps) {
   return (
-    <div className="flex items-center gap-3 py-3 px-4 rounded bg-[#1a0a0a] border border-danger/20 text-danger text-sm">
+    <div className="flex items-center gap-3 py-3 px-4 rounded bg-danger/5 border border-danger/20 text-danger text-sm">
       <span className="flex-1">{error}</span>
       {onRetry && (
         <button

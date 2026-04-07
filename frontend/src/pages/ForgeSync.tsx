@@ -132,7 +132,7 @@ export function ForgeSync() {
         </p>
       </div>
 
-      <div className="bg-[#0e0e0e] border border-[#1a1a1a] p-5 space-y-4">
+      <div className="bg-base border border-border-subtle p-5 space-y-4">
         <div className="flex flex-wrap items-center gap-4">
           <label className="inline-flex items-center gap-2 text-sm text-text-primary">
             <input
@@ -149,7 +149,7 @@ export function ForgeSync() {
               <select
                 value={chunkSize}
                 onChange={e => setChunkSize(Number(e.target.value))}
-                className="bg-[#111] border border-[#2a2a2a] text-text-primary text-sm px-2 py-1 focus:outline-none focus:border-accent"
+                className="bg-surface border border-border-input text-text-primary text-sm px-2 py-1 focus:outline-none focus:border-accent"
               >
                 <option value={250}>250</option>
                 <option value={500}>500</option>
@@ -168,7 +168,7 @@ export function ForgeSync() {
                 step={1}
                 value={firstN}
                 onChange={e => setFirstN(Number(e.target.value || 1))}
-                className="w-24 bg-[#111] border border-[#2a2a2a] text-text-primary text-sm px-2 py-1 focus:outline-none focus:border-accent"
+                className="w-24 bg-surface border border-border-input text-text-primary text-sm px-2 py-1 focus:outline-none focus:border-accent"
               />
             </label>
           )}
@@ -176,41 +176,41 @@ export function ForgeSync() {
 
         <div className="flex gap-2">
           <div className="flex-1 relative">
-            <Link2 size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#444]" />
+            <Link2 size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-dim" />
             <input
               type="url"
               value={url}
               onChange={e => setUrl(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleLoad()}
               placeholder="https://open.spotify.com/playlist/..."
-              className="w-full bg-[#111] border border-[#2a2a2a] text-text-primary text-sm pl-9 pr-3 py-2 placeholder:text-[#333] focus:outline-none focus:border-accent"
+              className="w-full bg-surface border border-border-input text-text-primary text-sm pl-9 pr-3 py-2 placeholder:text-text-faint focus:outline-none focus:border-accent"
             />
           </div>
           <button
             onClick={handleLoad}
             disabled={loading || !url.trim()}
-            className="px-4 py-2 text-sm font-semibold bg-[#1e1e1e] border border-[#2a2a2a] text-text-primary hover:border-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
+            className="px-4 py-2 text-sm font-semibold bg-surface-overlay border border-border-input text-text-primary hover:border-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
           >
             {loading && <Loader2 size={13} className="animate-spin" />}
             Load
           </button>
         </div>
         {batchMode && job && (
-          <div className="bg-[#0b0b0b] border border-[#1a1a1a] p-3 space-y-2">
+          <div className="bg-surface-sunken border border-border-subtle p-3 space-y-2">
             <div className="flex items-center justify-between text-xs">
               <span className="text-text-primary uppercase tracking-wide">Batch Status: {job.status}</span>
-              <span className="text-[#777]">{percent}%</span>
+              <span className="text-text-muted">{percent}%</span>
             </div>
-            <div className="h-2 bg-[#151515] border border-[#1f1f1f]">
+            <div className="h-2 bg-surface-skeleton border border-border-subtle">
               <div className="h-full bg-accent" style={{ width: `${percent}%` }} />
             </div>
-            <p className="text-[#888] text-xs">
+            <p className="text-text-muted text-xs">
               {job.message || 'Processing'} | Tracks {job.processed_tracks}/{job.total_tracks || '?'} | Chunks{' '}
               {job.completed_chunks}/{job.total_chunks || '?'}
             </p>
           </div>
         )}
-        <p className="text-[#444] text-xs">
+        <p className="text-text-dim text-xs">
           Supported: Spotify, Last.fm, and Deezer playlist URLs | File import (M3U, CSV) coming later
         </p>
       </div>

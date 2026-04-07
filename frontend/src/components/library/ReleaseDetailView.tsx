@@ -78,7 +78,7 @@ export function ReleaseDetailView({ releaseId }: ReleaseDetailViewProps) {
 
       {/* Release header */}
       <div className="flex gap-6 px-8 py-5">
-        <div className="w-48 h-48 flex-shrink-0 rounded-sm overflow-hidden bg-[#1a1a1a] border border-dashed border-[#333] flex items-center justify-center">
+        <div className="w-48 h-48 flex-shrink-0 rounded-sm overflow-hidden bg-surface-raised border border-dashed border-border-strong flex items-center justify-center">
           {release.thumb_url ? (
             <img src={getImageUrl(release.thumb_url)} alt={release.title} className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
           ) : (
@@ -88,7 +88,7 @@ export function ReleaseDetailView({ releaseId }: ReleaseDetailViewProps) {
         <div className="flex flex-col justify-end">
           <p className="text-[10px] font-mono text-text-muted uppercase tracking-wider mb-1">
             {release.kind}{release.version_type && release.version_type !== 'original' && ` · ${release.version_type}`}
-            <span className="ml-2 px-1.5 py-0.5 bg-[#333] rounded-sm text-[9px]">Missing</span>
+            <span className="ml-2 px-1.5 py-0.5 bg-border-strong rounded-sm text-[9px]">Missing</span>
           </p>
           <h1 className="text-2xl font-bold text-text-primary mb-1">{release.title}</h1>
           <p className="text-sm text-text-secondary font-mono">{release.artist_name}</p>
@@ -100,10 +100,10 @@ export function ReleaseDetailView({ releaseId }: ReleaseDetailViewProps) {
           </div>
           <div className="flex gap-2 mt-2">
             {release.catalog_source && (
-              <span className="text-[9px] font-mono px-1.5 py-0.5 bg-[#222] text-text-muted rounded-sm uppercase">{release.catalog_source}</span>
+              <span className="text-[9px] font-mono px-1.5 py-0.5 bg-border text-text-muted rounded-sm uppercase">{release.catalog_source}</span>
             )}
             {release.explicit === 1 && (
-              <span className="text-[9px] font-mono px-1.5 py-0.5 bg-[#333] text-text-muted rounded-sm">E</span>
+              <span className="text-[9px] font-mono px-1.5 py-0.5 bg-border-strong text-text-muted rounded-sm">E</span>
             )}
           </div>
           {/* Edition switcher */}
@@ -120,7 +120,7 @@ export function ReleaseDetailView({ releaseId }: ReleaseDetailViewProps) {
                   className={`text-[10px] font-mono px-2 py-1 rounded-sm border transition-colors ${
                     sib.is_owned
                       ? 'bg-green-500/10 text-green-400 border-green-500/30 hover:bg-green-500/20'
-                      : 'bg-[#1a1a1a] text-text-muted border-[#333] hover:border-[#555] hover:text-text-secondary'
+                      : 'bg-surface-raised text-text-muted border-border-strong hover:border-text-muted hover:text-text-secondary'
                   }`}
                 >
                   {sib.version_type || 'original'}
@@ -133,14 +133,14 @@ export function ReleaseDetailView({ releaseId }: ReleaseDetailViewProps) {
       </div>
 
       {/* User controls */}
-      <div className="px-8 py-4 border-t border-[#1a1a1a] flex flex-wrap items-center gap-4">
+      <div className="px-8 py-4 border-t border-border-subtle flex flex-wrap items-center gap-4">
         <button
           onClick={() => updatePref({ dismissed: !prefs?.dismissed })}
           disabled={prefsLoading}
           className={`text-xs font-mono px-3 py-1.5 rounded-sm border transition-colors ${
             prefs?.dismissed
               ? 'border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20'
-              : 'border-[#333] bg-[#1a1a1a] text-text-muted hover:text-text-secondary hover:border-[#444]'
+              : 'border-border-strong bg-surface-raised text-text-muted hover:text-text-secondary hover:border-border-strong'
           }`}
         >
           {prefs?.dismissed ? 'Dismissed — Undo' : 'Dismiss'}
@@ -151,7 +151,7 @@ export function ReleaseDetailView({ releaseId }: ReleaseDetailViewProps) {
             value={prefs?.priority ?? 0}
             onChange={e => updatePref({ priority: Number(e.target.value) })}
             disabled={prefsLoading}
-            className="bg-[#1a1a1a] border border-[#333] text-text-secondary text-xs font-mono px-2 py-1 rounded-sm"
+            className="bg-surface-raised border border-border-strong text-text-secondary text-xs font-mono px-2 py-1 rounded-sm"
           >
             <option value={0}>None</option>
             <option value={1}>Low</option>
@@ -167,20 +167,20 @@ export function ReleaseDetailView({ releaseId }: ReleaseDetailViewProps) {
             onChange={e => setNotes(e.target.value)}
             onBlur={() => { if (notes !== (prefs?.notes || '')) updatePref({ notes: notes || '' }); }}
             disabled={prefsLoading}
-            className="w-full bg-[#1a1a1a] border border-[#333] text-text-secondary text-xs font-mono px-3 py-1.5 rounded-sm placeholder:text-text-muted/50 focus:outline-none focus:border-[#444]"
+            className="w-full bg-surface-raised border border-border-strong text-text-secondary text-xs font-mono px-3 py-1.5 rounded-sm placeholder:text-text-muted/50 focus:outline-none focus:border-border-strong"
           />
         </div>
       </div>
 
       {/* Track listing */}
       {tracks.length > 0 && (
-        <div className="px-8 py-4 border-t border-[#1a1a1a]">
+        <div className="px-8 py-4 border-t border-border-subtle">
           <h2 className="text-xs font-mono font-semibold text-text-muted uppercase tracking-widest mb-3">
             Track Listing
           </h2>
           <div className="space-y-0.5">
             {tracks.map((t, i) => (
-              <div key={i} className="flex items-center gap-3 py-1.5 px-2 rounded-sm hover:bg-[#1a1a1a] transition-colors">
+              <div key={i} className="flex items-center gap-3 py-1.5 px-2 rounded-sm hover:bg-surface-raised transition-colors">
                 <span className="text-text-muted font-mono text-xs w-6 text-right flex-shrink-0">{t.track_number}</span>
                 <span className="text-text-primary text-sm flex-1 truncate">{t.title}</span>
                 <span className="text-text-muted font-mono text-xs flex-shrink-0">{formatDuration(t.duration_ms)}</span>
@@ -190,7 +190,7 @@ export function ReleaseDetailView({ releaseId }: ReleaseDetailViewProps) {
         </div>
       )}
       {tracks.length === 0 && !loading && (
-        <div className="px-8 py-4 border-t border-[#1a1a1a]">
+        <div className="px-8 py-4 border-t border-border-subtle">
           <p className="text-text-muted text-xs font-mono">No track listing available</p>
         </div>
       )}

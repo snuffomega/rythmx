@@ -284,7 +284,7 @@ export function ForgeNewMusic() {
           className={`px-3 py-1.5 text-xs font-semibold border transition-colors ${
             opt.value === value
               ? 'bg-accent text-black border-accent'
-              : 'text-[#555] border-[#222] hover:border-[#333] hover:text-[#888]'
+              : 'text-text-muted border-border hover:border-border-strong hover:text-text-muted'
           }`}
         >
           {opt.label}
@@ -363,7 +363,7 @@ export function ForgeNewMusic() {
       </div>
 
       {/* Config panel - always visible */}
-      <div className="bg-[#0a0a0a] border border-[#1a1a1a] p-5 space-y-6">
+      <div className="bg-base border border-border-subtle p-5 space-y-6">
 
         {/* Listening period - custom dot slider */}
         <div>
@@ -379,7 +379,7 @@ export function ForgeNewMusic() {
           {/* Track + dots */}
           <div className="relative flex items-center h-6">
             {/* Background track */}
-            <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-px bg-[#2a2a2a]" />
+            <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-px bg-border-input" />
             {/* Filled track */}
             <div
               className="absolute left-0 top-1/2 -translate-y-1/2 h-px transition-all duration-200"
@@ -400,7 +400,7 @@ export function ForgeNewMusic() {
                   <div className={`w-2.5 h-2.5 rounded-full border transition-all duration-150 ${
                     i <= periodIdx
                       ? 'border-transparent'
-                      : 'bg-[#111] border-[#333] group-hover:border-[#555]'
+                      : 'bg-surface border-border-strong group-hover:border-border-strong'
                   }`}
                     style={i <= periodIdx ? { backgroundColor: '#D4F53C' } : undefined}
                   />
@@ -414,13 +414,13 @@ export function ForgeNewMusic() {
             {PERIOD_LABELS.map((label, i) => (
               <span
                 key={i}
-                className={`text-[10px] transition-colors ${i === periodIdx ? 'text-accent' : 'text-[#333]'}`}
+                className={`text-[10px] transition-colors ${i === periodIdx ? 'text-accent' : 'text-text-faint'}`}
               >
                 {label}
               </span>
             ))}
           </div>
-          <p className="text-[#444] text-[11px] mt-2">How far back in your listening history to look for seed artists.</p>
+          <p className="text-text-dim text-[11px] mt-2">How far back in your listening history to look for seed artists.</p>
         </div>
 
         {/* Release window + Min listens - same row, left-aligned */}
@@ -434,7 +434,7 @@ export function ForgeNewMusic() {
               value={config.nm_lookback_days}
               onSelect={v => update('nm_lookback_days', v)}
             />
-            <p className="text-[#444] text-[11px] mt-1.5">How far back to look for new releases.</p>
+            <p className="text-text-dim text-[11px] mt-1.5">How far back to look for new releases.</p>
           </div>
           <div className="flex-shrink-0">
             <FormInput
@@ -485,14 +485,14 @@ export function ForgeNewMusic() {
         <div>
           <button
             onClick={() => setAdvancedOpen(v => !v)}
-            className="flex items-center gap-1.5 text-[#444] hover:text-[#666] text-xs font-semibold uppercase tracking-widest transition-colors"
+            className="flex items-center gap-1.5 text-text-dim hover:text-text-muted text-xs font-semibold uppercase tracking-widest transition-colors"
           >
             {advancedOpen ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
             Advanced
           </button>
 
           {advancedOpen && (
-            <div className="mt-5 space-y-5 border-l border-[#1a1a1a] pl-4">
+            <div className="mt-5 space-y-5 border-l border-border-subtle pl-4">
               <FormInput
                 label="Ignore keywords"
                 type="text"
@@ -521,12 +521,12 @@ export function ForgeNewMusic() {
                 <button
                   onClick={handleClear}
                   disabled={running || !results?.length}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-[#555] border border-[#222] hover:border-danger hover:text-danger transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-text-muted border border-border hover:border-danger hover:text-danger transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
                 >
                   <Trash2 size={11} />
                   Clear results
                 </button>
-                <p className="text-[#444] text-[11px] mt-1">Removes stored results from the database.</p>
+                <p className="text-text-dim text-[11px] mt-1">Removes stored results from the database.</p>
               </div>
 
               <div>
@@ -542,21 +542,21 @@ export function ForgeNewMusic() {
                     <select
                       value={config.nm_schedule_weekday}
                       onChange={e => update('nm_schedule_weekday', parseInt(e.target.value))}
-                      className="bg-[#111] border border-[#2a2a2a] text-text-primary text-sm px-3 py-1.5 focus:outline-none focus:border-accent"
+                      className="bg-surface border border-border-input text-text-primary text-sm px-3 py-1.5 focus:outline-none focus:border-accent"
                     >
                       {WEEKDAYS.map((d, i) => <option key={i} value={i}>{d}</option>)}
                     </select>
                     <select
                       value={config.nm_schedule_hour}
                       onChange={e => update('nm_schedule_hour', parseInt(e.target.value))}
-                      className="bg-[#111] border border-[#2a2a2a] text-text-primary text-sm px-3 py-1.5 focus:outline-none focus:border-accent"
+                      className="bg-surface border border-border-input text-text-primary text-sm px-3 py-1.5 focus:outline-none focus:border-accent"
                     >
                       {HOURS.map(h => <option key={h.value} value={h.value}>{h.label}</option>)}
                     </select>
                     <button
                       onClick={handleSaveSchedule}
                       disabled={running || savingSchedule || !configLoaded}
-                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-[#ccc] border border-[#2a2a2a] hover:border-accent hover:text-text-primary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-text-soft border border-border-input hover:border-accent hover:text-text-primary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       {savingSchedule ? <Loader2 size={11} className="animate-spin" /> : null}
                       Set Schedule
@@ -567,7 +567,7 @@ export function ForgeNewMusic() {
                   <button
                     onClick={handleSaveSchedule}
                     disabled={running || savingSchedule || !configLoaded}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-[#ccc] border border-[#2a2a2a] hover:border-accent hover:text-text-primary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-text-soft border border-border-input hover:border-accent hover:text-text-primary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     {savingSchedule ? <Loader2 size={11} className="animate-spin" /> : null}
                     Set Schedule
@@ -579,7 +579,7 @@ export function ForgeNewMusic() {
         </div>
 
         {/* Run button + inline activity feed */}
-        <div className="space-y-4 pt-2 border-t border-[#181818]">
+        <div className="space-y-4 pt-2 border-t border-border-subtle">
           <div className="flex items-center gap-3">
             <button
               onClick={handleRun}
@@ -590,14 +590,14 @@ export function ForgeNewMusic() {
               {running ? 'Running...' : 'Run'}
             </button>
             {!running && (
-              <p className="text-[#333] text-xs">Run saves full config; Set Schedule saves schedule immediately.</p>
+              <p className="text-text-faint text-xs">Run saves full config; Set Schedule saves schedule immediately.</p>
             )}
           </div>
 
           {/* Inline progress feed */}
           {running && (
             <div className="space-y-3">
-              <div className="w-full bg-[#1a1a1a] h-px">
+              <div className="w-full bg-surface-raised h-px">
                 <div
                   className="h-px bg-accent transition-all duration-500"
                   style={{ width: `${progress}%` }}
@@ -611,20 +611,20 @@ export function ForgeNewMusic() {
                     <div
                       key={stage.key}
                       className={`flex items-center gap-2.5 text-xs transition-colors ${
-                        done ? 'text-text-muted' : active ? 'text-text-primary' : 'text-[#2a2a2a]'
+                        done ? 'text-text-muted' : active ? 'text-text-primary' : 'text-text-faint'
                       }`}
                     >
                       <span className={`w-1 h-1 rounded-full flex-shrink-0 ${
-                        done ? 'bg-accent' : active ? 'bg-accent animate-pulse' : 'bg-[#2a2a2a]'
+                        done ? 'bg-accent' : active ? 'bg-accent animate-pulse' : 'bg-border-input'
                       }`} />
                       {stage.label}
-                      {done && <span className="text-[#444] text-[10px] ml-auto">done</span>}
+                      {done && <span className="text-text-dim text-[10px] ml-auto">done</span>}
                     </div>
                   );
                 })}
               </div>
               {pipelineState.message && (
-                <p className="text-[#555] text-xs">{pipelineState.message}</p>
+                <p className="text-text-muted text-xs">{pipelineState.message}</p>
               )}
             </div>
           )}
@@ -635,11 +635,11 @@ export function ForgeNewMusic() {
       {!running && hasResults && (
         <>
           <div className="flex items-center justify-between gap-3">
-            <p className="text-[#555] text-xs uppercase tracking-widest">Sort Results</p>
+            <p className="text-text-muted text-xs uppercase tracking-widest">Sort Results</p>
             <select
               value={resultSort}
               onChange={e => setResultSort(e.target.value as NewMusicSortKey)}
-              className="bg-[#111] border border-[#2a2a2a] text-text-primary text-xs px-2.5 py-1.5 focus:outline-none focus:border-accent"
+              className="bg-surface border border-border-input text-text-primary text-xs px-2.5 py-1.5 focus:outline-none focus:border-accent"
             >
               <option value="release_desc">Release date (newest)</option>
               <option value="artist_az">Artist A-Z</option>
@@ -656,10 +656,10 @@ export function ForgeNewMusic() {
 
       {/* Filtered releases accordion */}
       {!running && sortedFilteredReleases.length > 0 && (
-        <div className="border border-[#1a1a1a]">
+        <div className="border border-border-subtle">
           <button
             onClick={() => setFilteredOpen(v => !v)}
-            className="w-full flex items-center justify-between px-4 py-3 text-xs font-semibold text-[#444] hover:text-[#666] uppercase tracking-widest transition-colors"
+            className="w-full flex items-center justify-between px-4 py-3 text-xs font-semibold text-text-dim hover:text-text-muted uppercase tracking-widest transition-colors"
           >
             <span>
               Filtered out - {sortedFilteredReleases.length} release{sortedFilteredReleases.length !== 1 ? 's' : ''}
@@ -667,14 +667,14 @@ export function ForgeNewMusic() {
             {filteredOpen ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
           </button>
           {filteredOpen && (
-            <div className="border-t border-[#1a1a1a] divide-y divide-[#111]">
+            <div className="border-t border-border-subtle divide-y divide-surface">
               {sortedFilteredReleases.map(r => (
                 <div key={r.id} className="flex items-center gap-3 px-4 py-2.5 opacity-40">
                   {r.cover_url ? (
                     <img src={r.cover_url} alt={r.title} className="w-8 h-8 object-cover flex-shrink-0" />
                   ) : (
-                    <div className="w-8 h-8 bg-[#111] flex items-center justify-center flex-shrink-0">
-                      <Music2 size={12} className="text-[#2a2a2a]" />
+                    <div className="w-8 h-8 bg-surface flex items-center justify-center flex-shrink-0">
+                      <Music2 size={12} className="text-text-faint" />
                     </div>
                   )}
                   <div className="min-w-0">
@@ -682,7 +682,7 @@ export function ForgeNewMusic() {
                     <p className="text-text-muted text-[11px] truncate">{r.artist_name}</p>
                   </div>
                   {r.release_date && (
-                    <span className="text-[10px] text-[#333] ml-auto flex-shrink-0">{r.release_date.slice(0, 7)}</span>
+                    <span className="text-[10px] text-text-faint ml-auto flex-shrink-0">{r.release_date.slice(0, 7)}</span>
                   )}
                 </div>
               ))}
@@ -693,9 +693,9 @@ export function ForgeNewMusic() {
 
       {/* No results after run */}
       {!running && results !== null && results.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-20 gap-3 border border-dashed border-[#1a1a1a]">
+        <div className="flex flex-col items-center justify-center py-20 gap-3 border border-dashed border-border-subtle">
           <p className="text-text-muted text-sm">No releases found</p>
-          <p className="text-[#444] text-xs text-center max-w-xs">
+          <p className="text-text-dim text-xs text-center max-w-xs">
             Try expanding the release window, lowering minimum listens, or choosing a longer listening period.
           </p>
         </div>
@@ -703,15 +703,15 @@ export function ForgeNewMusic() {
 
       {previewRelease && (
         <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4">
-          <div className="w-full max-w-2xl bg-[#0b0b0b] border border-[#1d1d1d] max-h-[85vh] overflow-hidden flex flex-col">
-            <div className="flex items-start justify-between gap-4 px-5 py-4 border-b border-[#181818]">
+          <div className="w-full max-w-2xl bg-surface-sunken border border-border-subtle max-h-[85vh] overflow-hidden flex flex-col">
+            <div className="flex items-start justify-between gap-4 px-5 py-4 border-b border-border-subtle">
               <div className="min-w-0">
                 <p className="text-text-primary text-base font-semibold truncate">{previewRelease.title}</p>
                 <p className="text-text-muted text-sm truncate">{previewRelease.artist_name}</p>
               </div>
               <button
                 onClick={closePreview}
-                className="text-[#666] hover:text-text-primary transition-colors"
+                className="text-text-muted hover:text-text-primary transition-colors"
                 aria-label="Close release preview"
               >
                 <X size={16} />
@@ -724,7 +724,7 @@ export function ForgeNewMusic() {
                   <button
                     key={`${source.provider}-${source.url}`}
                     onClick={() => openProviderLink(source)}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-widest border border-[#2a2a2a] text-[#bbb] hover:border-accent hover:text-accent transition-colors"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-widest border border-border-input text-text-soft hover:border-accent hover:text-accent transition-colors"
                   >
                     {source.provider}
                     <ExternalLink size={11} />
@@ -733,7 +733,7 @@ export function ForgeNewMusic() {
                 {previewRelease.library_artist_id && (
                   <button
                     onClick={() => openLibraryArtist(previewRelease)}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-widest border border-[#2a2a2a] text-[#bbb] hover:border-accent hover:text-accent transition-colors"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-widest border border-border-input text-text-soft hover:border-accent hover:text-accent transition-colors"
                   >
                     library artist
                   </button>
@@ -741,7 +741,7 @@ export function ForgeNewMusic() {
               </div>
 
               {previewLoading && (
-                <p className="text-[#555] text-sm">Loading tracks...</p>
+                <p className="text-text-muted text-sm">Loading tracks...</p>
               )}
 
               {!previewLoading && previewError && (
@@ -749,18 +749,18 @@ export function ForgeNewMusic() {
               )}
 
               {!previewLoading && !previewError && previewTracks.length === 0 && (
-                <p className="text-[#555] text-sm">No track listing available for this release.</p>
+                <p className="text-text-muted text-sm">No track listing available for this release.</p>
               )}
 
               {!previewLoading && !previewError && previewTracks.length > 0 && (
-                <div className="border border-[#161616] divide-y divide-[#121212]">
+                <div className="border border-border-subtle divide-y divide-surface">
                   {previewTracks.map((track, idx) => (
                     <div key={`${track.title}-${idx}`} className="flex items-center gap-3 px-3 py-2.5">
-                      <span className="text-[#666] text-xs tabular-nums w-8 text-right">
+                      <span className="text-text-muted text-xs tabular-nums w-8 text-right">
                         {track.track_number || idx + 1}
                       </span>
                       <p className="text-text-primary text-sm truncate flex-1">{track.title}</p>
-                      <span className="text-[#555] text-xs tabular-nums">
+                      <span className="text-text-muted text-xs tabular-nums">
                         {formatDuration(track.duration_ms)}
                       </span>
                     </div>
@@ -802,7 +802,7 @@ function ReleaseCard({
       role={interactive ? 'button' : undefined}
       tabIndex={interactive ? 0 : undefined}
     >
-      <div className="relative overflow-hidden bg-[#181818] aspect-square border border-[#1e1e1e] group-hover:border-[#3a3a3a] transition-colors">
+      <div className="relative overflow-hidden bg-surface-highlight aspect-square border border-border-subtle group-hover:border-border-strong transition-colors">
         {release.cover_url ? (
           <img
             src={release.cover_url}
@@ -811,7 +811,7 @@ function ReleaseCard({
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center">
-            <Music2 size={32} className="text-[#333]" />
+            <Music2 size={32} className="text-text-faint" />
           </div>
         )}
         {release.in_library && (
@@ -825,10 +825,10 @@ function ReleaseCard({
         <p className="text-text-muted text-xs truncate mt-0.5">{release.artist_name}</p>
         <div className="flex items-center gap-2 mt-1">
           {release.release_date && (
-            <span className="text-[10px] text-[#444]">{release.release_date.slice(0, 7)}</span>
+            <span className="text-[10px] text-text-dim">{release.release_date.slice(0, 7)}</span>
           )}
           {release.record_type && (
-            <span className="text-[10px] text-[#333] uppercase tracking-wide">{release.record_type}</span>
+            <span className="text-[10px] text-text-faint uppercase tracking-wide">{release.record_type}</span>
           )}
         </div>
       </div>

@@ -27,9 +27,9 @@ export function ArtistCard({ artist, viewMode, onShufflePlay }: ArtistCardProps)
       <Link
         to="/library/artist/$id"
         params={{ id: artist.id }}
-        className="text-left group hover:bg-[#111] rounded-sm p-2 transition-colors block"
+        className="text-left group hover:bg-surface rounded-sm p-2 transition-colors block"
       >
-        <div className="relative aspect-square bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center mb-2 border border-[#222] group/art">
+        <div className="relative aspect-square bg-surface-raised rounded-sm overflow-hidden flex items-center justify-center mb-2 border border-border group/art">
           <ArtistImage name={artist.name} size={32} imageUrl={artist.image_url} imageHash={artist.image_hash} matchConfidence={artist.match_confidence} />
           {showHoverPlay && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-0 group-hover/art:opacity-100 transition-opacity">
@@ -60,9 +60,9 @@ export function ArtistCard({ artist, viewMode, onShufflePlay }: ArtistCardProps)
     <Link
       to="/library/artist/$id"
       params={{ id: artist.id }}
-      className="w-full flex items-center gap-3 px-2 py-2 hover:bg-[#111] transition-colors rounded-sm"
+      className="w-full flex items-center gap-3 px-2 py-2 hover:bg-surface transition-colors rounded-sm"
     >
-      <div className="relative w-10 h-10 flex-shrink-0 bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center border border-[#222] group/art">
+      <div className="relative w-10 h-10 flex-shrink-0 bg-surface-raised rounded-sm overflow-hidden flex items-center justify-center border border-border group/art">
         <ArtistImage name={artist.name} size={18} imageUrl={artist.image_url} imageHash={artist.image_hash} matchConfidence={artist.match_confidence} />
         {showHoverPlay && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-0 group-hover/art:opacity-100 transition-opacity">

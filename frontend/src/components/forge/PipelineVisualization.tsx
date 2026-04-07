@@ -29,8 +29,8 @@ export function PipelineVisualization({ stage, state, runMode }: PipelineVisuali
       : 0;
 
   return (
-    <div className="border border-[#1a1a1a]">
-      <div className="h-px bg-[#1a1a1a] w-full">
+    <div className="border border-border-subtle">
+      <div className="h-px bg-surface-raised w-full">
         <div className="h-px bg-accent transition-all duration-500" style={{ width: `${progressPct}%` }} />
       </div>
 
@@ -46,8 +46,8 @@ export function PipelineVisualization({ stage, state, runMode }: PipelineVisuali
               <div className={`flex items-center gap-1.5 py-2 px-3 text-xs transition-all duration-300 ${
                 isError ? 'text-danger'
                 : isActive ? 'text-white bg-accent/10'
-                : isDone ? 'text-[#444]'
-                : 'text-[#333]'
+                : isDone ? 'text-text-dim'
+                : 'text-text-faint'
               }`}>
                 {isError ? (
                   <AlertCircle size={11} className="flex-shrink-0" />
@@ -65,7 +65,7 @@ export function PipelineVisualization({ stage, state, runMode }: PipelineVisuali
                 </span>
               </div>
               {i < steps.length - 1 && (
-                <span className="text-[#222] text-xs px-0.5">›</span>
+                <span className="text-text-faint text-xs px-0.5">›</span>
               )}
             </div>
           );
@@ -84,8 +84,8 @@ export function PipelineVisualization({ stage, state, runMode }: PipelineVisuali
               <div className={`flex flex-col items-center gap-0.5 min-w-0 flex-1 transition-all duration-300 ${
                 isError ? 'text-danger'
                 : isActive ? 'text-white'
-                : isDone ? 'text-[#444]'
-                : 'text-[#333]'
+                : isDone ? 'text-text-dim'
+                : 'text-text-faint'
               }`}>
                 {isError ? (
                   <AlertCircle size={12} className="flex-shrink-0" />
@@ -99,7 +99,7 @@ export function PipelineVisualization({ stage, state, runMode }: PipelineVisuali
                 <span className="text-[9px] font-medium leading-tight text-center truncate w-full">{step.label}</span>
               </div>
               {i < steps.length - 1 && (
-                <span className="text-[#1e1e1e] text-xs flex-shrink-0 mb-3">›</span>
+                <span className="text-surface-overlay text-xs flex-shrink-0 mb-3">›</span>
               )}
             </div>
           );

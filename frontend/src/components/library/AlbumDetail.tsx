@@ -266,7 +266,7 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
         <Link to="/library" className="flex items-center gap-1.5 text-text-muted hover:text-text-primary text-xs font-mono uppercase tracking-wider transition-colors">
           <LibraryIcon size={13} /> Library
         </Link>
-        <span className="text-[#333]">/</span>
+        <span className="text-text-faint">/</span>
         <button onClick={() => router.history.back()} className="flex items-center gap-1.5 text-text-muted hover:text-text-primary text-xs font-mono uppercase tracking-wider transition-colors">
           <ChevronLeft size={13} /> Back
         </button>
@@ -275,7 +275,7 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
       {/* Hero */}
       <div className="px-8 pb-6 flex gap-8">
         <div className="relative w-60 h-60 flex-shrink-0 group/cover">
-          <div className="w-full h-full bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center border border-[#222]">
+          <div className="w-full h-full bg-surface-raised rounded-sm overflow-hidden flex items-center justify-center border border-border">
             <AlbumImage
               title={album.title}
               artist={album.artist_name}
@@ -304,10 +304,10 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
           <h1 className="text-3xl font-bold tracking-tighter text-text-primary mb-1">{album.title}</h1>
           <div className="flex items-center gap-3 text-xs font-mono text-text-muted mt-1">
             {album.year && <span>{album.year}</span>}
-            {album.record_type && <><span className="text-[#333]">|</span><span className="capitalize">{album.record_type}</span></>}
-            <span className="text-[#333]">|</span>
+            {album.record_type && <><span className="text-text-faint">|</span><span className="capitalize">{album.record_type}</span></>}
+            <span className="text-text-faint">|</span>
             <span>{tracks.length} tracks</span>
-            {totalMin > 0 && <><span className="text-[#333]">|</span><span>{totalMin} min</span></>}
+            {totalMin > 0 && <><span className="text-text-faint">|</span><span>{totalMin} min</span></>}
           </div>
           <div className="flex items-center gap-2 mt-3">
             <button
@@ -322,14 +322,14 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
                 const shuffled = [...albumQueue].sort(() => Math.random() - 0.5);
                 playQueue(shuffled);
               }}
-              className="flex items-center gap-1.5 px-3 py-1.5 border border-[#333] hover:border-[#555] rounded text-text-secondary text-xs font-mono transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 border border-border-strong hover:border-border-strong rounded text-text-secondary text-xs font-mono transition-colors"
               aria-label="Shuffle album"
             >
               <Shuffle size={12} /> Shuffle
             </button>
             <button
               onClick={() => enqueueNext(albumQueue)}
-              className="flex items-center gap-1.5 px-3 py-1.5 border border-[#333] hover:border-[#555] rounded text-text-secondary text-xs font-mono transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 border border-border-strong hover:border-border-strong rounded text-text-secondary text-xs font-mono transition-colors"
               aria-label="Add to queue"
             >
               <ListPlus size={12} /> Queue
@@ -346,7 +346,7 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
                   if (e.key === 'Escape') { setCoverEditing(false); setCoverInput(''); }
                 }}
                 placeholder="Paste album image URL..."
-                className="flex-1 bg-[#111] border border-[#333] rounded px-2 py-1 text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent font-mono"
+                className="flex-1 bg-surface border border-border-strong rounded px-2 py-1 text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent font-mono"
                 autoFocus
               />
               <button
@@ -359,7 +359,7 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
               </button>
               <button
                 onClick={() => { setCoverEditing(false); setCoverInput(''); }}
-                className="px-2 py-1 border border-[#333] hover:border-[#555] rounded text-text-muted text-xs font-mono transition-colors"
+                className="px-2 py-1 border border-border-strong hover:border-border-strong rounded text-text-muted text-xs font-mono transition-colors"
               >
                 Cancel
               </button>
@@ -381,11 +381,11 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
         </div>
       </div>
 
-      <div className="border-t border-[#1a1a1a]" />
+      <div className="border-t border-border-subtle" />
 
       {/* Track list */}
       <div className="px-8 py-5">
-        <div className="grid grid-cols-[1.75rem_2rem_1fr_6rem_3.5rem_auto_auto_auto_auto] gap-3 items-center px-2 py-1.5 border-b border-[#1a1a1a] mb-1">
+        <div className="grid grid-cols-[1.75rem_2rem_1fr_6rem_3.5rem_auto_auto_auto_auto] gap-3 items-center px-2 py-1.5 border-b border-border-subtle mb-1">
           <span />
           <span className="font-mono text-[10px] text-text-muted uppercase tracking-widest text-right">#</span>
           <span className="font-mono text-[10px] text-text-muted uppercase tracking-widest">Title</span>
@@ -400,7 +400,7 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
           <div
             key={t.id}
             onDoubleClick={() => playTrackNow(t.id)}
-            className="group relative grid grid-cols-[1.75rem_2rem_1fr_6rem_3.5rem_auto_auto_auto_auto] gap-3 items-center px-2 py-2 hover:bg-[#111] rounded-sm transition-colors"
+            className="group relative grid grid-cols-[1.75rem_2rem_1fr_6rem_3.5rem_auto_auto_auto_auto] gap-3 items-center px-2 py-2 hover:bg-surface rounded-sm transition-colors"
           >
             <button
               onClick={() => playTrackNow(t.id)}
@@ -445,14 +445,14 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
               <MoreHorizontal size={14} />
             </button>
             {openTrackMenuId === t.id && (
-              <div className="absolute right-0 top-6 z-30 w-44 bg-[#111] border border-[#2a2a2a] rounded-sm shadow-xl py-1">
+              <div className="absolute right-0 top-6 z-30 w-44 bg-surface border border-border-input rounded-sm shadow-xl py-1">
                 <button
                   onClick={() => {
                     const shuffled = [...albumQueue].sort(() => Math.random() - 0.5);
                     playQueue(shuffled);
                     setOpenTrackMenuId(null);
                   }}
-                  className="w-full text-left px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary hover:bg-[#1a1a1a] transition-colors"
+                  className="w-full text-left px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors"
                 >
                   Shuffle
                 </button>
@@ -462,7 +462,7 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
                     if (item) enqueueNext([item]);
                     setOpenTrackMenuId(null);
                   }}
-                  className="w-full text-left px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary hover:bg-[#1a1a1a] transition-colors"
+                  className="w-full text-left px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors"
                 >
                   Play next
                 </button>
@@ -472,7 +472,7 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
                     if (item) addToQueue([item]);
                     setOpenTrackMenuId(null);
                   }}
-                  className="w-full text-left px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary hover:bg-[#1a1a1a] transition-colors"
+                  className="w-full text-left px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors"
                 >
                   Add to queue
                 </button>
@@ -481,16 +481,16 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
                     picker.openPicker(t);
                     setOpenTrackMenuId(null);
                   }}
-                  className="w-full text-left px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary hover:bg-[#1a1a1a] transition-colors"
+                  className="w-full text-left px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors"
                 >
                   Add to {'>'} Playlist
                 </button>
-                <div className="h-px bg-[#1f1f1f] my-1" />
+                <div className="h-px bg-surface-overlay my-1" />
                 <div className="px-3 py-1 text-[10px] text-text-muted/70 uppercase tracking-wider">Future</div>
                 <button disabled className="w-full text-left px-3 py-1.5 text-xs text-text-muted/40 cursor-not-allowed">Refresh (coming soon)</button>
                 <button
                   onClick={openFixMatchModal}
-                  className="w-full text-left px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary hover:bg-[#1a1a1a] transition-colors"
+                  className="w-full text-left px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors"
                 >
                   Fix match
                 </button>
@@ -505,7 +505,7 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
 
       {fixMatchOpen && (
         <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
-          <div className="w-full max-w-5xl bg-[#0d0d0d] border border-[#2a2a2a] p-4">
+          <div className="w-full max-w-5xl bg-base border border-border-input p-4">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h3 className="text-sm font-semibold text-text-primary">Fix Match</h3>
@@ -523,14 +523,14 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
                 <button
                   onClick={() => void loadFixMatchCandidates()}
                   disabled={fixMatchLoading || fixMatchSaving}
-                  className="px-2.5 py-1 text-xs border border-[#333] text-text-muted hover:text-text-primary transition-colors disabled:opacity-40"
+                  className="px-2.5 py-1 text-xs border border-border-strong text-text-muted hover:text-text-primary transition-colors disabled:opacity-40"
                 >
                   {fixMatchLoading ? 'Loading...' : 'Reload'}
                 </button>
                 <button
                   onClick={closeFixMatchModal}
                   disabled={fixMatchSaving}
-                  className="p-1 border border-[#333] text-text-muted hover:text-text-primary transition-colors disabled:opacity-40"
+                  className="p-1 border border-border-strong text-text-muted hover:text-text-primary transition-colors disabled:opacity-40"
                   aria-label="Close fix match"
                 >
                   <X size={14} />
@@ -547,7 +547,7 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
                 const currentSourceId = source === 'itunes' ? fixMatchContext.itunes_album_id : fixMatchContext.deezer_id;
                 const candidates = fixMatchCandidates[source];
                 return (
-                  <div key={source} className="border border-[#1f1f1f] bg-[#0b0b0b] p-3 min-h-[360px]">
+                  <div key={source} className="border border-border-subtle bg-surface-sunken p-3 min-h-[360px]">
                     <div className="flex items-center justify-between gap-2 mb-2">
                       <h4 className="text-xs font-mono uppercase tracking-wider text-text-secondary">
                         {fixMatchSourceLabel[source]} candidates
@@ -555,7 +555,7 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
                       <button
                         onClick={() => void rejectFixMatchSource(source)}
                         disabled={fixMatchSaving}
-                        className="px-2 py-1 text-[11px] border border-[#333] text-text-muted hover:text-text-primary transition-colors disabled:opacity-40"
+                        className="px-2 py-1 text-[11px] border border-border-strong text-text-muted hover:text-text-primary transition-colors disabled:opacity-40"
                       >
                         Reject current
                       </button>
@@ -571,9 +571,9 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
                         const scorePct = Math.round((candidate.candidate_score ?? 0) * 100);
                         const isCurrent = !!currentSourceId && String(currentSourceId) === String(candidate.candidate_id);
                         return (
-                          <div key={`${source}:${candidate.candidate_id}`} className="border border-[#222] bg-[#111] p-2">
+                          <div key={`${source}:${candidate.candidate_id}`} className="border border-border bg-surface p-2">
                             <div className="flex items-start gap-2">
-                              <div className="w-11 h-11 bg-[#1a1a1a] border border-[#222] flex-shrink-0 overflow-hidden flex items-center justify-center">
+                              <div className="w-11 h-11 bg-surface-raised border border-border flex-shrink-0 overflow-hidden flex items-center justify-center">
                                 {candidate.artwork_url ? (
                                   <img
                                     src={getImageUrl(candidate.artwork_url)}
@@ -623,7 +623,7 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
               <button
                 onClick={closeFixMatchModal}
                 disabled={fixMatchSaving}
-                className="px-3 py-1.5 text-xs border border-[#333] text-text-muted hover:text-text-primary transition-colors disabled:opacity-40"
+                className="px-3 py-1.5 text-xs border border-border-strong text-text-muted hover:text-text-primary transition-colors disabled:opacity-40"
               >
                 Close
               </button>

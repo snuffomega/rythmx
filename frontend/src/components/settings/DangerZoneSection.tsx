@@ -47,7 +47,7 @@ export function DangerZoneSection({ toast }: DangerZoneSectionProps) {
           <div className="flex items-center justify-between gap-4">
             <div>
               <p className="text-text-primary text-sm font-semibold">Clear History</p>
-              <p className="text-[#444] text-xs mt-0.5">Remove all New Music run history</p>
+              <p className="text-text-dim text-xs mt-0.5">Remove all New Music run history</p>
             </div>
             <button onClick={() => setConfirmClearHistory(true)} className="btn-danger text-sm flex-shrink-0">
               Clear History
@@ -56,7 +56,7 @@ export function DangerZoneSection({ toast }: DangerZoneSectionProps) {
           <div className="flex items-center justify-between gap-4 pt-4 border-t border-danger/10">
             <div>
               <p className="text-text-primary text-sm font-semibold">Reset Database</p>
-              <p className="text-[#444] text-xs mt-0.5">Wipe all app data. This cannot be undone.</p>
+              <p className="text-text-dim text-xs mt-0.5">Wipe all app data. This cannot be undone.</p>
             </div>
             <button onClick={() => setConfirmResetDb(true)} className="btn-danger text-sm flex-shrink-0">
               Reset DB

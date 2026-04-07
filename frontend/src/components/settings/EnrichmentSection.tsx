@@ -91,7 +91,7 @@ function PipelineOrchestrator({ libraryTrackCount, libraryLastSynced, platform, 
       )}
 
       {/* Overall progress — always visible */}
-      <div className="mb-4 p-4 bg-surface rounded-sm border border-[#1a1a1a]">
+      <div className="mb-4 p-4 bg-surface rounded-sm border border-border-subtle">
         {running && activeLabel ? (
           <div className="flex items-center gap-2 mb-2">
             <Zap size={12} className="text-accent animate-pulse" />
@@ -159,7 +159,7 @@ function PipelineOrchestrator({ libraryTrackCount, libraryLastSynced, platform, 
 
       {/* Phase-grouped DAG view */}
       {showStages && (
-        <div className="space-y-2 border-l border-[#1a1a1a] ml-1 pl-4">
+        <div className="space-y-2 border-l border-border-subtle ml-1 pl-4">
           {PIPELINE_PHASES.map((phaseDef, idx) => {
             const isPhaseActive = running && phaseIndex === idx;
             const anyDataExists = totals.total > 0;
@@ -191,8 +191,8 @@ function PipelineOrchestrator({ libraryTrackCount, libraryLastSynced, platform, 
                 key={phaseDef.id}
                 className={`p-3 rounded-sm border transition-all duration-300 ${
                   isPhaseActive ? 'bg-surface border-accent/20'
-                  : isPhaseDone ? 'bg-surface/50 border-[#1a1a1a]'
-                  : 'bg-surface/30 border-[#141414]'
+                  : isPhaseDone ? 'bg-surface/50 border-border-subtle'
+                  : 'bg-surface/30 border-border-subtle'
                 }`}
               >
                 {/* Phase header */}
@@ -200,8 +200,8 @@ function PipelineOrchestrator({ libraryTrackCount, libraryLastSynced, platform, 
                   <div className="flex items-center gap-2">
                     {isPhaseActive && <Zap size={10} className="text-accent animate-pulse" />}
                     {isPhaseDone && !isPhaseActive && <CheckCircle size={10} className="text-accent/60" />}
-                    {isPhaseWaiting && <span className="w-2.5 h-2.5 rounded-full border border-[#333] inline-block" />}
-                    {!running && !isPhaseDone && <span className="w-2.5 h-2.5 rounded-full border border-[#333] inline-block" />}
+                    {isPhaseWaiting && <span className="w-2.5 h-2.5 rounded-full border border-border-strong inline-block" />}
+                    {!running && !isPhaseDone && <span className="w-2.5 h-2.5 rounded-full border border-border-strong inline-block" />}
                     <span className={`text-xs font-medium ${
                       isPhaseActive ? 'text-text-primary' : isPhaseDone ? 'text-text-secondary' : 'text-text-muted'
                     }`}>{phaseDef.label}</span>
@@ -259,7 +259,7 @@ function PipelineOrchestrator({ libraryTrackCount, libraryLastSynced, platform, 
 
                 {/* Worker rows within phase */}
                 {hasWorkers && phaseStats && phaseStats.total > 0 && (
-                  <div className="mt-2 space-y-1 pl-3 border-l border-[#1a1a1a]">
+                  <div className="mt-2 space-y-1 pl-3 border-l border-border-subtle">
                     {phaseDef.workers.map(w => {
                       const s = workerStats(workers, w.keys);
                       const isWorkerActive = running && (w.keys).some(k => activeWorkers.has(k));
@@ -328,9 +328,9 @@ export function EnrichmentSection({ platform, libraryTrackCount, libraryLastSync
   };
 
   return (
-    <section className="border-t border-[#1a1a1a] pt-8">
+    <section className="border-t border-border-subtle pt-8">
       <h2 className="text-text-muted text-xs font-semibold uppercase tracking-widest mb-1">Library Enrichment Pipeline</h2>
-      <p className="text-[11px] text-[#444] mb-6">Syncs library, resolves IDs, enriches metadata from iTunes, Deezer, Last.fm, and Spotify</p>
+      <p className="text-[11px] text-text-dim mb-6">Syncs library, resolves IDs, enriches metadata from iTunes, Deezer, Last.fm, and Spotify</p>
 
       <PipelineOrchestrator
         libraryTrackCount={libraryTrackCount}
@@ -342,14 +342,14 @@ export function EnrichmentSection({ platform, libraryTrackCount, libraryLastSync
 
       {auditTotal > 0 && (
         <div className="pt-2">
-          <div className="flex items-center gap-3 bg-[#0e0e0e] border border-[#1a1a1a] p-3">
+          <div className="flex items-center gap-3 bg-base border border-border-subtle p-3">
             <button
               onClick={onOpenAuditReview}
               className="btn-secondary text-xs flex-shrink-0"
             >
               Review
             </button>
-            <p className="text-xs text-[#666]">
+            <p className="text-xs text-text-muted">
               <span className="inline-flex items-center gap-1.5 text-amber-500 font-medium">
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block" />
                 {auditTotal} item{auditTotal !== 1 ? 's' : ''} need review

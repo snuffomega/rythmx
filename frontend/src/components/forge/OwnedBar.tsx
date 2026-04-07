@@ -6,7 +6,7 @@ export function OwnedBar({ owned, total }: { owned: number; total: number }) {
       <span className="text-text-muted text-xs whitespace-nowrap">
         {owned} owned ({pct}%)
       </span>
-      <div className="flex-1 h-0.5 bg-[#1e1e1e]">
+      <div className="flex-1 h-0.5 bg-surface-overlay">
         <div className={`h-full ${color} transition-all duration-300`} style={{ width: `${pct}%` }} />
       </div>
     </div>

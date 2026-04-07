@@ -249,8 +249,8 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
     <div className="space-y-8">
       {/* Workspace: config form */}
       <div>
-        <div className="pb-3 border-b border-[#1a1a1a] mb-6">
-          <span className="text-[#444] text-xs font-semibold uppercase tracking-widest">Configuration</span>
+        <div className="pb-3 border-b border-border-subtle mb-6">
+          <span className="text-text-dim text-xs font-semibold uppercase tracking-widest">Configuration</span>
         </div>
 
         <div className="space-y-7">
@@ -260,7 +260,7 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
               <span className="text-accent text-xs font-semibold">{closenessLabel}</span>
             </div>
             <div className="flex items-center gap-3">
-              <span className="text-[#444] text-xs whitespace-nowrap">Closer</span>
+              <span className="text-text-dim text-xs whitespace-nowrap">Closer</span>
               <div className="flex-1 relative">
                 <input
                   type="range" min={1} max={9} step={1}
@@ -268,13 +268,13 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
                   onChange={e => update('closeness', Number(e.target.value))}
                   className="w-full accent-accent h-1.5"
                 />
-                <div className="flex justify-between text-[#2a2a2a] text-[10px] mt-0.5">
+                <div className="flex justify-between text-text-faint text-[10px] mt-0.5">
                   {Array.from({ length: 9 }, (_, i) => (
                     <span key={i} className={`w-px text-center ${config.closeness === i + 1 ? 'text-accent' : ''}`}>|</span>
                   ))}
                 </div>
               </div>
-              <span className="text-[#444] text-xs whitespace-nowrap">More varied</span>
+              <span className="text-text-dim text-xs whitespace-nowrap">More varied</span>
             </div>
           </div>
 
@@ -306,7 +306,7 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
 
       <DiscoveryPipelineViz runMode="build" />
 
-      <section className="border-t border-[#1a1a1a] pt-6">
+      <section className="border-t border-border-subtle pt-6">
         <h2 className="text-text-muted text-xs font-semibold uppercase tracking-widest mb-5">Automation</h2>
         <div className="flex items-center gap-6 flex-wrap">
           <FormToggle
@@ -315,12 +315,12 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
             on={config.auto_publish}
             onChange={v => update('auto_publish', v)}
           />
-          <div className="w-px h-8 bg-[#1a1a1a] self-center" />
+          <div className="w-px h-8 bg-surface-raised self-center" />
           <div className="flex items-center gap-3">
             <Toggle on={config.schedule_enabled} onChange={v => update('schedule_enabled', v)} />
             <div>
               <p className="text-text-primary text-sm font-medium">Weekly Schedule</p>
-              <p className="text-[#444] text-xs">Run on a set day and time</p>
+              <p className="text-text-dim text-xs">Run on a set day and time</p>
             </div>
             <select className="select !w-auto ml-2" value={config.schedule_weekday} onChange={e => update('schedule_weekday', Number(e.target.value))}>
               {WEEKDAYS.map((d, i) => <option key={i} value={i}>{d}</option>)}
@@ -340,7 +340,7 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
         </div>
       </section>
 
-      <section className="border-t border-[#1a1a1a] pt-6">
+      <section className="border-t border-border-subtle pt-6">
         <button onClick={() => setAdvanced(a => !a)} className="flex items-center justify-between w-full text-left">
           <span className="text-text-muted text-xs font-semibold uppercase tracking-widest">Advanced</span>
           {advanced ? <ChevronUp size={14} className="text-text-muted" /> : <ChevronDown size={14} className="text-text-muted" />}
@@ -368,7 +368,7 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
               onChange={e => update('build_name_override', e.target.value)}
               helperText="Override the default build name shown in Builder"
             />
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-t border-[#1a1a1a] pt-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-t border-border-subtle pt-5">
               <div className="space-y-3">
                 <FormToggle
                   label="Exclude Owned Artists"
@@ -402,7 +402,7 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
                 />
               </div>
             </div>
-            <div className="border-t border-[#1a1a1a] pt-5">
+            <div className="border-t border-border-subtle pt-5">
               <FormInput
                 label="Fetch Wait Timeout (seconds)"
                 type="number"
@@ -414,7 +414,7 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
                 helperText="Reserved for Build+Fetch orchestration flow."
               />
             </div>
-            <div className="border-t border-[#1a1a1a] pt-5">
+            <div className="border-t border-border-subtle pt-5">
               <FormToggle
                 label="Dry Run"
                 description="Simulate a run without making any changes"
@@ -426,7 +426,7 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
         )}
       </section>
 
-      <div className="flex gap-3 pt-2 border-t border-[#1a1a1a]">
+      <div className="flex gap-3 pt-2 border-t border-border-subtle">
         <button onClick={handleRun} disabled={running || saving || loadingConfig} className="btn-primary flex items-center gap-2 text-sm">
           {running ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
           {running ? 'Discovering...' : 'Run Discovery'}
@@ -440,8 +440,8 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
       {/* History ledger: discovery results */}
       {running && (
         <div className="space-y-3 pt-4">
-          <div className="border border-[#1a1a1a] bg-[#0d0d0d] p-4 space-y-3">
-            <div className="w-full bg-[#1a1a1a] h-px">
+          <div className="border border-border-subtle bg-base p-4 space-y-3">
+            <div className="w-full bg-surface-raised h-px">
               <div
                 className="h-px bg-accent transition-all duration-300"
                 style={{ width: `${pipelinePct}%` }}
@@ -450,7 +450,7 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
             <p className="text-text-primary text-sm">
               {pipelineState.message || 'Running custom discovery...'}
             </p>
-            <p className="text-[#555] text-xs">
+            <p className="text-text-muted text-xs">
               Stage: {pipelineState.stage || 'starting'}{' '}
               {pipelineState.total > 0 ? `(${pipelineState.processed}/${pipelineState.total})` : ''}
             </p>
@@ -459,7 +459,7 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
       )}
 
       {!running && results !== null && (
-        <section className="border-t border-[#1a1a1a] pt-8">
+        <section className="border-t border-border-subtle pt-8">
           <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
             <div className="flex items-center gap-2">
               <Sparkles size={14} className="text-accent" />
@@ -471,7 +471,7 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
               <select
                 value={resultSort}
                 onChange={e => setResultSort(e.target.value as DiscoverySortKey)}
-                className="bg-[#111] border border-[#2a2a2a] text-text-primary text-xs px-2.5 py-1.5 focus:outline-none focus:border-accent"
+                className="bg-surface border border-border-input text-text-primary text-xs px-2.5 py-1.5 focus:outline-none focus:border-accent"
               >
                 <option value="similarity_desc">Similarity (highest)</option>
                 <option value="artist_az">Artist A-Z</option>
@@ -485,7 +485,7 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
           {sortedResults.length === 0 ? (
             <div className="py-12 text-center space-y-2">
               <p className="text-text-muted text-sm">No tracks matched these settings</p>
-              <p className="text-[#444] text-xs">Try increasing the closeness value or expanding the seed period</p>
+              <p className="text-text-dim text-xs">Try increasing the closeness value or expanding the seed period</p>
             </div>
           ) : (
             <div className="space-y-2">
@@ -496,9 +496,9 @@ export function ForgeCustomDiscovery({ toast }: ForgeCustomDiscoveryProps) {
       )}
 
       {!running && results === null && (
-        <div className="py-12 text-center border border-dashed border-[#1e1e1e] space-y-2">
-          <Sparkles size={22} className="text-[#2a2a2a] mx-auto" />
-          <p className="text-[#444] text-sm">Configure and run to build a discovery track list</p>
+        <div className="py-12 text-center border border-dashed border-border-subtle space-y-2">
+          <Sparkles size={22} className="text-text-faint mx-auto" />
+          <p className="text-text-dim text-sm">Configure and run to build a discovery track list</p>
         </div>
       )}
     </div>

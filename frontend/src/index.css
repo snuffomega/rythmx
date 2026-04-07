@@ -17,6 +17,27 @@
   --accent-success: #10B981;
   --accent-danger: #FF3B30;
   --accent-warning: #D4F53C;
+  /* Surface elevation scale */
+  --surface-sunken: #0B0B0B;
+  --surface-skeleton: #141414;
+  --surface-raised: #1A1A1A;
+  --surface-overlay: #1E1E1E;
+  /* Border variants */
+  --border-subtle: #1A1A1A;
+  --border-input: #2A2A2A;
+  --border-strong: #333333;
+  /* Text gray ramp extensions */
+  --text-dim: #444444;
+  --text-faint: #333333;
+  --text-soft: #AAAAAA;
+  /* Brand colors */
+  --brand-spotify: #1DB954;
+  --brand-plex: #8F69FF;
+  --brand-lastfm: #D51007;
+  /* Semantic tints */
+  --success-light: #8AF2B3;
+  --danger-light: #FFACA7;
+  --warning-text: #E88C2A;
 }
 
 * {
@@ -51,12 +72,12 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #333333;
+  background: var(--border-strong);
   border-radius: 2px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #444444;
+  background: var(--text-dim);
 }
 
 .scrollbar-hide {
@@ -82,7 +103,7 @@ body {
   }
 
   .btn-secondary {
-    @apply bg-surface-highlight hover:bg-[#222222] text-text-primary font-semibold px-4 py-2 rounded-sm transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply bg-surface-highlight hover:bg-border text-text-primary font-semibold px-4 py-2 rounded-sm transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed;
   }
 
   .btn-ghost {
@@ -104,11 +125,11 @@ body {
   }
 
   .input {
-    @apply bg-surface-highlight border border-[#2a2a2a] text-text-primary placeholder-text-muted rounded-sm px-3 py-2 w-full focus:outline-none focus:border-accent transition-colors duration-150 text-sm;
+    @apply bg-surface-highlight border border-border-input text-text-primary placeholder-text-muted rounded-sm px-3 py-2 w-full focus:outline-none focus:border-accent transition-colors duration-150 text-sm;
   }
 
   .select {
-    @apply bg-surface-highlight border border-[#2a2a2a] text-text-primary rounded-sm px-3 py-2 w-full focus:outline-none focus:border-accent transition-colors duration-150 cursor-pointer text-sm appearance-none;
+    @apply bg-surface-highlight border border-border-input text-text-primary rounded-sm px-3 py-2 w-full focus:outline-none focus:border-accent transition-colors duration-150 cursor-pointer text-sm appearance-none;
   }
 
   .label {
@@ -134,11 +155,11 @@ body {
   .badge-warning {
     @apply badge text-xs font-semibold px-2 py-0.5 rounded-sm;
     background-color: rgba(212, 245, 60, 0.15);
-    color: #D4F53C;
+    color: var(--accent);
   }
 
   .badge-muted {
-    @apply badge bg-[#1e1e1e] text-text-muted text-xs font-semibold px-2 py-0.5 rounded-sm;
+    @apply badge bg-surface-overlay text-text-muted text-xs font-semibold px-2 py-0.5 rounded-sm;
   }
 
   .badge-accent {

@@ -61,7 +61,7 @@ function PlatformBadge({ platform }: { platform: string }) {
       ? 'bg-purple-500/20 text-purple-300'
       : platform === 'plex'
         ? 'bg-yellow-500/20 text-yellow-300'
-        : 'bg-[#1e1e1e] text-text-muted';
+        : 'bg-surface-overlay text-text-muted';
   return (
     <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${color}`}>
       {label}
@@ -80,7 +80,7 @@ function TrackRow({
   onPlay: () => void;
 }) {
   return (
-    <div className="flex items-center gap-3 px-4 py-2.5 hover:bg-[#1a1a1a] group rounded-lg">
+    <div className="flex items-center gap-3 px-4 py-2.5 hover:bg-surface-raised group rounded-lg">
       <span className="text-text-muted text-xs w-5 text-right shrink-0">
         {track.position + 1}
       </span>
@@ -218,7 +218,7 @@ function PlaylistDetail({
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-start gap-4 px-6 py-5 border-b border-[#1e1e1e]">
+      <div className="flex items-start gap-4 px-6 py-5 border-b border-border-subtle">
         <button
           onClick={onBack}
           className="mt-0.5 shrink-0 text-text-muted hover:text-text-primary transition-colors"
@@ -228,7 +228,7 @@ function PlaylistDetail({
         </button>
 
         {/* Cover placeholder */}
-        <div className="w-16 h-16 rounded-lg bg-[#1a1a1a] flex items-center justify-center shrink-0">
+        <div className="w-16 h-16 rounded-lg bg-surface-raised flex items-center justify-center shrink-0">
           <ListMusic size={28} className="text-text-muted" />
         </div>
 
@@ -236,7 +236,7 @@ function PlaylistDetail({
           {editingName ? (
             <div className="flex items-center gap-2">
               <input
-                className="bg-[#1a1a1a] border border-accent rounded px-2 py-1 text-sm text-text-primary focus:outline-none"
+                className="bg-surface-raised border border-accent rounded px-2 py-1 text-sm text-text-primary focus:outline-none"
                 value={nameInput}
                 onChange={(e) => setNameInput(e.target.value)}
                 onKeyDown={(e) => {
@@ -303,7 +303,7 @@ function PlaylistDetail({
           <button
             onClick={handleShuffleAll}
             disabled={!hasPlayableTracks}
-            className="flex items-center gap-1.5 px-3 py-1.5 border border-[#333] hover:border-[#555]
+            className="flex items-center gap-1.5 px-3 py-1.5 border border-border-strong hover:border-border-strong
                        text-text-secondary text-xs font-medium rounded-lg transition-colors
                        disabled:opacity-40 disabled:pointer-events-none"
           >
@@ -370,12 +370,12 @@ function PlaylistCard({
   return (
     <button
       onClick={onClick}
-      className="flex flex-col bg-[#111111] hover:bg-[#181818] border border-[#1e1e1e]
-                 hover:border-[#2a2a2a] rounded-xl p-4 text-left transition-colors
+      className="flex flex-col bg-surface hover:bg-surface-highlight border border-border-subtle
+                 hover:border-border-input rounded-xl p-4 text-left transition-colors
                  group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
     >
       {/* Cover */}
-      <div className="w-full aspect-square rounded-lg bg-[#1a1a1a] flex items-center justify-center mb-3 overflow-hidden">
+      <div className="w-full aspect-square rounded-lg bg-surface-raised flex items-center justify-center mb-3 overflow-hidden">
         {playlist.cover_url ? (
           <img
             src={getImageUrl(playlist.cover_url)}
@@ -472,7 +472,7 @@ export function LibraryPlaylists({ toast }: LibraryPlaylistsProps) {
     <div className="flex flex-col h-full">
       {/* Library tabs */}
       <div className="px-6 pt-4">
-        <div className="flex gap-1 bg-[#111] p-0.5 rounded-sm w-fit">
+        <div className="flex gap-1 bg-surface p-0.5 rounded-sm w-fit">
           <button
             onClick={() => navigate({ to: '/library' })}
             className="px-4 py-1.5 text-sm font-medium rounded-sm transition-colors capitalize text-text-muted hover:text-text-secondary"
@@ -492,7 +492,7 @@ export function LibraryPlaylists({ toast }: LibraryPlaylistsProps) {
             tracks
           </button>
           <button
-            className="px-4 py-1.5 text-sm font-medium rounded-sm transition-colors capitalize bg-[#1e1e1e] text-text-primary"
+            className="px-4 py-1.5 text-sm font-medium rounded-sm transition-colors capitalize bg-surface-overlay text-text-primary"
           >
             playlists
           </button>
@@ -500,13 +500,13 @@ export function LibraryPlaylists({ toast }: LibraryPlaylistsProps) {
       </div>
 
       {/* Toolbar */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-[#1e1e1e] shrink-0">
+      <div className="flex items-center justify-between px-6 py-4 border-b border-border-subtle shrink-0">
         <h1 className="text-lg font-semibold text-text-primary">Playlists</h1>
         <button
           onClick={handleSync}
           disabled={syncing}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-[#1a1a1a] hover:bg-[#222]
-                     border border-[#2a2a2a] rounded-lg text-xs text-text-muted
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-raised hover:bg-border
+                     border border-border-input rounded-lg text-xs text-text-muted
                      hover:text-text-primary transition-colors disabled:opacity-50"
         >
           {syncing ? (

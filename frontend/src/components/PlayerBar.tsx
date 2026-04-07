@@ -216,7 +216,7 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
   }, [showQueue]);
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-30 h-[96px] bg-[#0a0a0a] border-t border-[#1a1a1a]">
+    <div className="fixed bottom-0 left-0 right-0 z-30 h-[96px] bg-base border-t border-border-subtle">
 
       {/* ── Seek bar — top edge ─────────────────────────────────────────── */}
       <div
@@ -225,7 +225,7 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
         onClick={handleProgressClick}
         className="absolute top-0 left-0 right-0 h-4 cursor-pointer group select-none z-10"
       >
-        <div className="absolute top-0 left-0 right-0 h-[3px] bg-[#1a1a1a]">
+        <div className="absolute top-0 left-0 right-0 h-[3px] bg-surface-raised">
           <div className="h-full bg-accent" style={{ width: `${progressPct}%` }} />
         </div>
         <div
@@ -267,7 +267,7 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
             </button>
             <p className="font-mono text-[10px] text-text-muted tabular-nums mt-0.5 leading-none">
               {formattedPosition}
-              {currentTrack && <span className="text-[#333]"> / {formattedDuration}</span>}
+              {currentTrack && <span className="text-text-faint"> / {formattedDuration}</span>}
             </p>
           </div>
         </div>
@@ -335,7 +335,7 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
               <div
                 ref={volumeRef}
                 onMouseDown={handleVolumeMouseDown}
-                className="w-24 h-[4px] bg-[#1a1a1a] rounded-full relative cursor-pointer group"
+                className="w-24 h-[4px] bg-surface-raised rounded-full relative cursor-pointer group"
               >
                 <div
                   className="absolute top-0 left-0 h-full bg-accent rounded-full pointer-events-none"
@@ -358,7 +358,7 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
                 >
                   <Star
                     size={13}
-                    className={star <= activeRating ? 'text-accent' : 'text-[#2a2a2a]'}
+                    className={star <= activeRating ? 'text-accent' : 'text-text-faint'}
                     fill={star <= activeRating ? 'currentColor' : 'none'}
                   />
                 </button>
@@ -388,8 +388,8 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
             }}
             className={`relative w-16 h-16 flex-shrink-0 flex items-center justify-center rounded-sm border transition-colors ${
               showQueue
-                ? 'border-accent/60 bg-[#141414] text-accent'
-                : 'border-[#1e1e1e] bg-[#111] text-text-muted hover:border-[#2a2a2a] hover:text-text-secondary'
+                ? 'border-accent/60 bg-surface-skeleton text-accent'
+                : 'border-border-subtle bg-surface text-text-muted hover:border-border-input hover:text-text-secondary'
             }`}
             aria-label="Queue"
             title="Queue"
@@ -405,10 +405,10 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
           {showQueue && (
             <div
               ref={queuePanelRef}
-              className="absolute bottom-full right-0 mb-3 w-[min(90vw,460px)] border border-[#1e1e1e] rounded-xl overflow-hidden bg-[#0a0a0a] shadow-2xl z-40
+              className="absolute bottom-full right-0 mb-3 w-[min(90vw,460px)] border border-border-subtle rounded-xl overflow-hidden bg-base shadow-2xl z-40
                          transition-[transform,opacity,box-shadow] duration-200 ease-out"
             >
-              <div className="flex items-center justify-between px-4 py-3 border-b border-[#1a1a1a]">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle">
                 <span className="font-mono text-[11px] text-text-muted uppercase tracking-widest">
                   Queue - {queue.length} track{queue.length !== 1 ? 's' : ''}
                 </span>
@@ -444,8 +444,8 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
                           onDrop={(event) => handleQueueDrop(event, i)}
                           className={`relative group px-4 py-2.5 flex items-center gap-2.5 transition-colors ${
                             dropIndex === i && dragIndex !== null && dragIndex !== i
-                              ? 'bg-[#151515] ring-1 ring-accent/40'
-                              : 'hover:bg-[#111]'
+                              ? 'bg-surface-skeleton ring-1 ring-accent/40'
+                              : 'hover:bg-surface'
                           }`}
                         >
                           <button
@@ -499,22 +499,22 @@ export function PlayerBar({ isPlaying, onPlayPause, onExpand, onSeek, onVolumeCh
                             <MoreHorizontal size={13} />
                           </button>
                           {queueMenuIndex === i && (
-                            <div className="absolute right-3 top-full mt-1 w-40 bg-[#0f0f0f] border border-[#222] rounded-md shadow-xl z-40">
+                            <div className="absolute right-3 top-full mt-1 w-40 bg-base border border-border rounded-md shadow-xl z-40">
                               <button
                                 onClick={() => { usePlayerStore.getState().playAt(i); setQueueMenuIndex(null); setShowQueue(false); clearQueueDragState(); }}
-                                className="w-full px-3 py-1.5 text-left text-[11px] text-text-secondary hover:bg-[#161616] transition-colors"
+                                className="w-full px-3 py-1.5 text-left text-[11px] text-text-secondary hover:bg-surface-skeleton transition-colors"
                               >
                                 Play now
                               </button>
                               <button
                                 onClick={() => handleQueueTrackPlayNext(i)}
-                                className="w-full px-3 py-1.5 text-left text-[11px] text-text-secondary hover:bg-[#161616] transition-colors"
+                                className="w-full px-3 py-1.5 text-left text-[11px] text-text-secondary hover:bg-surface-skeleton transition-colors"
                               >
                                 Play next
                               </button>
                               <button
                                 onClick={() => handleQueueTrackRemove(i)}
-                                className="w-full px-3 py-1.5 text-left text-[11px] text-danger hover:bg-[#161616] transition-colors"
+                                className="w-full px-3 py-1.5 text-left text-[11px] text-danger hover:bg-surface-skeleton transition-colors"
                               >
                                 Remove
                               </button>

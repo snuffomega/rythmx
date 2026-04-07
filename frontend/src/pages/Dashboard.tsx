@@ -81,14 +81,14 @@ function AlbumTile({
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center">
-            <Music2 size={26} className="text-[#333]" />
+            <Music2 size={26} className="text-text-faint" />
           </div>
         )}
         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors duration-300" />
       </div>
       <p className="text-text-primary text-sm font-semibold mt-2 truncate leading-tight">{title}</p>
-      <p className="text-[#555] text-xs truncate mt-0.5">{artist}</p>
-      {sub && <p className="text-[#3a3a3a] text-xs truncate mt-0.5">{sub}</p>}
+      <p className="text-text-muted text-xs truncate mt-0.5">{artist}</p>
+      {sub && <p className="text-text-faint text-xs truncate mt-0.5">{sub}</p>}
     </div>
   );
 }
@@ -113,14 +113,14 @@ function ArtistTile({ artist }: { artist: Artist }) {
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center">
-            <Users size={24} className="text-[#333]" />
+            <Users size={24} className="text-text-faint" />
           </div>
         )}
         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors duration-300" />
       </div>
       <p className="text-text-secondary text-xs font-semibold mt-2 truncate px-1">{artist.name}</p>
       {artist.playcount !== undefined && (
-        <p className="text-[#3a3a3a] text-[10px] mt-0.5 tabular-nums">{artist.playcount.toLocaleString()} plays</p>
+        <p className="text-text-faint text-[10px] mt-0.5 tabular-nums">{artist.playcount.toLocaleString()} plays</p>
       )}
     </div>
   );
@@ -128,24 +128,24 @@ function ArtistTile({ artist }: { artist: Artist }) {
 
 function TrackRow({ track, rank }: { track: Track; rank?: number }) {
   return (
-    <div className="flex items-center gap-3 py-3 hover:bg-[#0e0e0e] transition-colors cursor-pointer group border-b border-[#111]">
+    <div className="flex items-center gap-3 py-3 hover:bg-base transition-colors cursor-pointer group border-b border-surface">
       {rank !== undefined && (
-        <span className="w-5 text-right text-[#333] text-xs tabular-nums flex-shrink-0 font-medium">{rank}</span>
+        <span className="w-5 text-right text-text-faint text-xs tabular-nums flex-shrink-0 font-medium">{rank}</span>
       )}
       <div
         className="w-10 h-10 flex-shrink-0 overflow-hidden"
         style={{ background: placeholderGradient(track.artist) }}
       >
         <div className="w-full h-full flex items-center justify-center">
-          <Disc3 size={28} className="text-[#555]" />
+          <Disc3 size={28} className="text-text-muted" />
         </div>
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-text-primary text-sm font-medium truncate group-hover:text-accent transition-colors">{track.name}</p>
-        <p className="text-[#555] text-xs truncate">{track.artist}</p>
+        <p className="text-text-muted text-xs truncate">{track.artist}</p>
       </div>
       {track.playcount !== undefined && (
-        <span className="text-[#333] text-xs tabular-nums flex-shrink-0">{track.playcount.toLocaleString()}</span>
+        <span className="text-text-faint text-xs tabular-nums flex-shrink-0">{track.playcount.toLocaleString()}</span>
       )}
     </div>
   );
@@ -171,12 +171,12 @@ function SectionHeader({
           <span className="text-accent">{icon}</span>
           <h2 className="text-text-primary font-bold text-base tracking-tight">{title}</h2>
         </div>
-        {sub && <p className="text-[#444] text-xs">{sub}</p>}
+        {sub && <p className="text-text-dim text-xs">{sub}</p>}
       </div>
       {cta && onCta && (
         <button
           onClick={onCta}
-          className="flex items-center gap-1 text-[#444] hover:text-text-muted transition-colors text-xs font-medium"
+          className="flex items-center gap-1 text-text-dim hover:text-text-muted transition-colors text-xs font-medium"
         >
           {cta}
           <ChevronRight size={12} />
@@ -245,9 +245,9 @@ function ShelfSkeleton({ count = 6, size = 160 }: { count?: number; size?: numbe
     <div className="flex gap-4 overflow-x-auto scrollbar-hide pb-2">
       {Array.from({ length: count }).map((_, i) => (
         <div key={i} className="flex-shrink-0 space-y-2" style={{ width: size }}>
-          <div className="animate-pulse bg-[#141414]" style={{ width: size, height: size }} />
-          <div className="h-3 animate-pulse bg-[#141414] rounded-sm w-3/4" />
-          <div className="h-3 animate-pulse bg-[#141414] rounded-sm w-1/2" />
+          <div className="animate-pulse bg-surface-skeleton" style={{ width: size, height: size }} />
+          <div className="h-3 animate-pulse bg-surface-skeleton rounded-sm w-3/4" />
+          <div className="h-3 animate-pulse bg-surface-skeleton rounded-sm w-1/2" />
         </div>
       ))}
     </div>
@@ -258,11 +258,11 @@ function TrackListSkeleton({ count = 6 }: { count?: number }) {
   return (
     <div>
       {Array.from({ length: count }).map((_, i) => (
-        <div key={i} className="flex items-center gap-3 py-3 border-b border-[#111]">
-          <div className="w-10 h-10 animate-pulse bg-[#141414] flex-shrink-0" />
+        <div key={i} className="flex items-center gap-3 py-3 border-b border-surface">
+          <div className="w-10 h-10 animate-pulse bg-surface-skeleton flex-shrink-0" />
           <div className="flex-1 space-y-2">
-            <div className="h-3 animate-pulse bg-[#141414] rounded-sm w-40" />
-            <div className="h-3 animate-pulse bg-[#141414] rounded-sm w-28" />
+            <div className="h-3 animate-pulse bg-surface-skeleton rounded-sm w-40" />
+            <div className="h-3 animate-pulse bg-surface-skeleton rounded-sm w-28" />
           </div>
         </div>
       ))}
@@ -271,7 +271,7 @@ function TrackListSkeleton({ count = 6 }: { count?: number }) {
 }
 
 function EmptyShelf({ message }: { message: string }) {
-  return <p className="text-[#333] text-sm py-6">{message}</p>;
+  return <p className="text-text-faint text-sm py-6">{message}</p>;
 }
 
 export function Dashboard() {
@@ -299,7 +299,7 @@ export function Dashboard() {
 
       <div>
         <h1 className="page-title mb-1">For You</h1>
-        <p className="text-[#444] text-sm">Your music world, at a glance</p>
+        <p className="text-text-dim text-sm">Your music world, at a glance</p>
       </div>
 
       <section>
@@ -414,7 +414,7 @@ export function Dashboard() {
             {recentQueue.data.slice(0, 8).map((item: QueueItem, i) => (
               <div
                 key={i}
-                className="flex items-center gap-3 p-3 bg-[#0d0d0d] border border-[#141414] hover:border-[#222] transition-colors cursor-pointer group"
+                className="flex items-center gap-3 p-3 bg-base border border-border-subtle hover:border-border transition-colors cursor-pointer group"
               >
                 <div
                   className="w-10 h-10 flex-shrink-0"
@@ -422,7 +422,7 @@ export function Dashboard() {
                 />
                 <div className="flex-1 min-w-0">
                   <p className="text-text-primary text-xs font-semibold truncate">{item.album}</p>
-                  <p className="text-[#444] text-xs truncate">{item.artist}</p>
+                  <p className="text-text-dim text-xs truncate">{item.artist}</p>
                 </div>
                 <span className="badge-muted flex-shrink-0 text-[10px]">{item.status}</span>
               </div>

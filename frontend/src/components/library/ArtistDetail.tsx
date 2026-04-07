@@ -263,7 +263,7 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
       <div className="px-8 pb-6 flex gap-8">
         {/* Artist image with cover edit overlay */}
         <div className="relative w-60 h-60 flex-shrink-0 group/cover">
-          <div className="w-full h-full bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center border border-[#222]">
+          <div className="w-full h-full bg-surface-raised rounded-sm overflow-hidden flex items-center justify-center border border-border">
             <ArtistImage
               name={artist.name}
               size={56}
@@ -288,7 +288,7 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
           {tags.length > 0 && (
             <div className="flex flex-wrap gap-1.5 mb-2">
               {tags.map(tag => (
-                <span key={tag} className="font-mono text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-[#1a1a1a] border border-[#2a2a2a] text-text-muted">
+                <span key={tag} className="font-mono text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-surface-raised border border-border-input text-text-muted">
                   {tag}
                 </span>
               ))}
@@ -299,12 +299,12 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
           {(artist.formed_year_musicbrainz || artist.area_musicbrainz || artist.begin_area_musicbrainz) && (
             <div className="flex flex-wrap gap-1.5 mb-2">
               {artist.formed_year_musicbrainz && (
-                <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-[#1a1a1a] border border-[#2a2a2a] text-text-secondary">
+                <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-surface-raised border border-border-input text-text-secondary">
                   est. {artist.formed_year_musicbrainz}
                 </span>
               )}
               {(artist.begin_area_musicbrainz || artist.area_musicbrainz) && (
-                <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-[#1a1a1a] border border-[#2a2a2a] text-text-secondary">
+                <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-surface-raised border border-border-input text-text-secondary">
                   {artist.begin_area_musicbrainz ?? artist.area_musicbrainz}
                 </span>
               )}
@@ -335,14 +335,14 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
             </button>
             <button
               onClick={handleShuffleArtist}
-              className="flex items-center gap-1.5 px-3 py-1.5 border border-[#333] hover:border-[#555] rounded text-text-secondary text-xs font-mono transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 border border-border-strong hover:border-border-strong rounded text-text-secondary text-xs font-mono transition-colors"
               aria-label="Shuffle artist"
             >
               <Shuffle size={12} /> Shuffle
             </button>
             <button
               onClick={handleQueueArtist}
-              className="flex items-center gap-1.5 px-3 py-1.5 border border-[#333] hover:border-[#555] rounded text-text-secondary text-xs font-mono transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 border border-border-strong hover:border-border-strong rounded text-text-secondary text-xs font-mono transition-colors"
               aria-label="Queue artist"
             >
               <ListPlus size={12} /> Queue
@@ -358,7 +358,7 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
                 onChange={e => setCoverInput(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') handleSaveCover(); if (e.key === 'Escape') { setCoverEditing(false); setCoverInput(''); } }}
                 placeholder="Paste image URL…"
-                className="flex-1 bg-[#111] border border-[#333] rounded px-2 py-1 text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent font-mono"
+                className="flex-1 bg-surface border border-border-strong rounded px-2 py-1 text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent font-mono"
                 autoFocus
               />
               <button
@@ -381,7 +381,7 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
         </div>
       </div>
 
-      <div className="border-t border-[#1a1a1a]" />
+      <div className="border-t border-border-subtle" />
 
       {/* Bio */}
       {bioFull && (
@@ -404,7 +404,7 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
       {/* Similar Artists */}
       {similar !== null && (similarInLib.length > 0 || similarNotInLib.length > 0) && (
         <>
-          <div className="border-t border-[#1a1a1a]" />
+          <div className="border-t border-border-subtle" />
           <div className="px-8 py-5">
             <h2 className="text-xs font-mono font-semibold text-text-muted uppercase tracking-widest mb-3">Similar Artists</h2>
 
@@ -442,7 +442,7 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
                   {similarNotInLib.map(s => (
                     <span
                       key={s.name}
-                      className="font-mono text-xs px-2 py-1 rounded bg-[#1a1a1a] border border-[#2a2a2a] text-text-muted"
+                      className="font-mono text-xs px-2 py-1 rounded bg-surface-raised border border-border-input text-text-muted"
                     >
                       {s.name}
                     </span>
@@ -454,7 +454,7 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
         </>
       )}
 
-      <div className="border-t border-[#1a1a1a]" />
+      <div className="border-t border-border-subtle" />
 
       {/* Top Tracks */}
       {top_tracks.length > 0 && (
@@ -468,7 +468,7 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
               <div
                 key={t.id}
                 onDoubleClick={() => playPopularTrackNow(t.id)}
-                className="group grid grid-cols-[1.75rem_2rem_minmax(0,1.2fr)_minmax(0,1fr)_5.5rem_3.5rem_auto_auto] gap-3 items-center py-2 px-2 hover:bg-[#111] rounded-sm transition-colors"
+                className="group grid grid-cols-[1.75rem_2rem_minmax(0,1.2fr)_minmax(0,1fr)_5.5rem_3.5rem_auto_auto] gap-3 items-center py-2 px-2 hover:bg-surface rounded-sm transition-colors"
               >
                 <button
                   onClick={() => playPopularTrackNow(t.id)}
@@ -507,7 +507,7 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
         </div>
       )}
 
-      <div className="border-t border-[#1a1a1a]" />
+      <div className="border-t border-border-subtle" />
 
       {/* Owned Releases — grouped by kind */}
       <div className="px-8 py-5">
@@ -536,7 +536,7 @@ export function ArtistDetail({ artistId }: ArtistDetailProps) {
       {/* Missing Releases — collapsed by default */}
       {(missing_albums.length > 0 || missingGroups.length > 0) && (
         <>
-          <div className="border-t border-[#1a1a1a]" />
+          <div className="border-t border-border-subtle" />
           <div className="px-8 py-5">
             <button
               onClick={() => setShowMissing(!showMissing)}

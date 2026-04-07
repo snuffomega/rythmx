@@ -20,14 +20,14 @@ export function MissingGroupCard({ group, onDismiss }: MissingGroupCardProps) {
   // Multi-edition — click-through to primary release detail (no inline accordion)
   const inner = (
     <div className="text-left group relative rounded-sm p-2 opacity-70 hover:opacity-90 transition-opacity">
-      <div className="relative aspect-square bg-[#1a1a1a] rounded-sm overflow-hidden flex items-center justify-center mb-2 border border-dashed border-[#333]">
+      <div className="relative aspect-square bg-surface-raised rounded-sm overflow-hidden flex items-center justify-center mb-2 border border-dashed border-border-strong">
         {primary.thumb_url ? (
           <img src={getImageUrl(primary.thumb_url)} alt={primary.album_title}
                className="w-full h-full object-cover" loading="lazy" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
         ) : (
           <Disc size={32} className="text-text-muted" />
         )}
-        <span className="absolute top-1 right-1 bg-[#333] text-text-muted text-[9px] font-mono px-1.5 py-0.5 rounded-sm">
+        <span className="absolute top-1 right-1 bg-border-strong text-text-muted text-[9px] font-mono px-1.5 py-0.5 rounded-sm">
           {group.edition_count} editions
         </span>
         {group.owned_count > 0 && (

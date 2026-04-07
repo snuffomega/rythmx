@@ -62,24 +62,24 @@ export function SecuritySection({ toast }: SecuritySectionProps) {
   };
 
   return (
-    <section className="border-t border-[#1a1a1a] pt-8">
+    <section className="border-t border-border-subtle pt-8">
       <h2 className="text-text-muted text-xs font-semibold uppercase tracking-widest mb-4">Security</h2>
-      <div className="bg-[#0e0e0e] border border-[#1a1a1a] p-4 space-y-3">
+      <div className="bg-base border border-border-subtle p-4 space-y-3">
         <div className="flex items-center gap-2.5">
-          <div className="w-7 h-7 bg-[#181818] flex items-center justify-center flex-shrink-0">
+          <div className="w-7 h-7 bg-surface-highlight flex items-center justify-center flex-shrink-0">
             <Key size={14} className="text-text-muted" />
           </div>
           <div>
             <p className="text-text-primary text-sm font-medium">API Key</p>
-            <p className="text-[#444] text-[10px]">Include as X-Api-Key header for external integrations</p>
+            <p className="text-text-dim text-[10px]">Include as X-Api-Key header for external integrations</p>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
-          <div className="flex-1 min-w-0 bg-[#141414] border border-[#222] px-3 py-2 font-mono text-xs text-text-muted truncate">
+          <div className="flex-1 min-w-0 bg-surface-skeleton border border-border px-3 py-2 font-mono text-xs text-text-muted truncate">
             {apiKey
               ? (apiKeyVisible ? apiKey : '•'.repeat(24))
-              : <span className="text-[#333]">Loading…</span>}
+              : <span className="text-text-faint">Loading…</span>}
           </div>
           <button
             onClick={() => setApiKeyVisible(v => !v)}

@@ -202,16 +202,16 @@ export function LibraryRoot() {
     <div className="flex flex-col h-full overflow-hidden">
       {/* Status banner */}
       {status && (
-        <div className="px-6 py-2.5 bg-[#0a0a0a] border-b border-[#1a1a1a] flex items-center justify-between flex-shrink-0">
+        <div className="px-6 py-2.5 bg-base border-b border-border-subtle flex items-center justify-between flex-shrink-0">
           <div className="flex items-center gap-3">
             <LibraryIcon size={14} className="text-accent flex-shrink-0" />
             <div className="flex items-center gap-2 text-xs font-mono text-text-secondary">
               <span>{status.track_count?.toLocaleString()} tracks</span>
-              <span className="text-[#333]">·</span>
+              <span className="text-text-faint">·</span>
               <span>{(status as unknown as { enrich_pct?: number }).enrich_pct ?? 0}% enriched</span>
               {status.last_synced && (
                 <>
-                  <span className="text-[#333]">·</span>
+                  <span className="text-text-faint">·</span>
                   <span className="text-text-muted flex items-center gap-1">
                     <RefreshCw size={10} />
                     {new Date(status.last_synced).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
@@ -223,7 +223,7 @@ export function LibraryRoot() {
           <button
             onClick={handleSync}
             disabled={syncing}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-[#141414] hover:bg-[#1a1a1a] border border-[#222] text-text-muted hover:text-text-primary rounded-sm transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-surface-skeleton hover:bg-surface-raised border border-border text-text-muted hover:text-text-primary rounded-sm transition-colors"
           >
             <RefreshCw size={11} className={syncing ? 'animate-spin' : ''} />
             {syncing ? 'Running…' : 'Run Now'}
@@ -232,7 +232,7 @@ export function LibraryRoot() {
       )}
 
       {/* Header */}
-      <div className="px-6 pt-5 pb-3 border-b border-[#1a1a1a] flex-shrink-0">
+      <div className="px-6 pt-5 pb-3 border-b border-border-subtle flex-shrink-0">
         <div className="flex items-center justify-between mb-3">
           <div>
             <h1 className="page-title">Library</h1>
@@ -242,13 +242,13 @@ export function LibraryRoot() {
 
         {/* Tabs + filters */}
         <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex gap-1 bg-[#111] p-0.5 rounded-sm">
+          <div className="flex gap-1 bg-surface p-0.5 rounded-sm">
             {(['artists', 'albums', 'tracks'] as Tab[]).map(t => (
               <button
                 key={t}
                 onClick={() => handleTabChange(t)}
                 className={`px-4 py-1.5 text-sm font-medium rounded-sm transition-colors capitalize ${
-                  tab === t ? 'bg-[#1e1e1e] text-text-primary' : 'text-text-muted hover:text-text-secondary'
+                  tab === t ? 'bg-surface-overlay text-text-primary' : 'text-text-muted hover:text-text-secondary'
                 }`}
               >
                 {t}
@@ -267,7 +267,7 @@ export function LibraryRoot() {
               <select
                 value={recordTypeFilter}
                 onChange={e => setRecordTypeFilter(e.target.value)}
-                className="bg-[#111] border border-[#222] text-text-primary text-xs font-mono rounded-sm px-2 py-1.5 appearance-none cursor-pointer focus:outline-none focus:border-accent"
+                className="bg-surface border border-border text-text-primary text-xs font-mono rounded-sm px-2 py-1.5 appearance-none cursor-pointer focus:outline-none focus:border-accent"
               >
                 <option value="all">All Types</option>
                 <option value="album">Albums</option>
@@ -280,7 +280,7 @@ export function LibraryRoot() {
               <select
                 value={decadeFilter ?? ''}
                 onChange={e => setDecadeFilter(e.target.value ? Number(e.target.value) : null)}
-                className="bg-[#111] border border-[#222] text-text-primary text-xs font-mono rounded-sm px-2 py-1.5 appearance-none cursor-pointer focus:outline-none focus:border-accent"
+                className="bg-surface border border-border text-text-primary text-xs font-mono rounded-sm px-2 py-1.5 appearance-none cursor-pointer focus:outline-none focus:border-accent"
               >
                 <option value="">All Eras</option>
                 {filterOptions.decades.map(d => (
@@ -293,7 +293,7 @@ export function LibraryRoot() {
               <select
                 value={regionFilter ?? ''}
                 onChange={e => setRegionFilter(e.target.value || null)}
-                className="bg-[#111] border border-[#222] text-text-primary text-xs font-mono rounded-sm px-2 py-1.5 appearance-none cursor-pointer focus:outline-none focus:border-accent"
+                className="bg-surface border border-border text-text-primary text-xs font-mono rounded-sm px-2 py-1.5 appearance-none cursor-pointer focus:outline-none focus:border-accent"
               >
                 <option value="">All Regions</option>
                 {filterOptions.regions.map(r => (
@@ -306,7 +306,7 @@ export function LibraryRoot() {
               <select
                 value={backendFilter}
                 onChange={e => setBackendFilter(e.target.value)}
-                className="bg-[#111] border border-[#222] text-text-primary text-xs font-mono rounded-sm px-2 py-1.5 appearance-none cursor-pointer focus:outline-none focus:border-accent"
+                className="bg-surface border border-border text-text-primary text-xs font-mono rounded-sm px-2 py-1.5 appearance-none cursor-pointer focus:outline-none focus:border-accent"
               >
                 <option value="all">All Sources</option>
                 <option value="plex">Plex</option>
@@ -316,16 +316,16 @@ export function LibraryRoot() {
             )}
 
             {tab !== 'tracks' && (
-              <div className="flex border border-[#222] rounded-sm overflow-hidden">
+              <div className="flex border border-border rounded-sm overflow-hidden">
                 <button
                   onClick={() => setViewMode('grid')}
-                  className={`px-2 py-1.5 transition-colors ${viewMode === 'grid' ? 'bg-[#1e1e1e] text-text-primary' : 'text-text-muted hover:text-text-secondary'}`}
+                  className={`px-2 py-1.5 transition-colors ${viewMode === 'grid' ? 'bg-surface-overlay text-text-primary' : 'text-text-muted hover:text-text-secondary'}`}
                 >
                   <Grid3X3 size={14} />
                 </button>
                 <button
                   onClick={() => setViewMode('list')}
-                  className={`px-2 py-1.5 transition-colors ${viewMode === 'list' ? 'bg-[#1e1e1e] text-text-primary' : 'text-text-muted hover:text-text-secondary'}`}
+                  className={`px-2 py-1.5 transition-colors ${viewMode === 'list' ? 'bg-surface-overlay text-text-primary' : 'text-text-muted hover:text-text-secondary'}`}
                 >
                   <List size={14} />
                 </button>
@@ -339,7 +339,7 @@ export function LibraryRoot() {
                 placeholder={`Search ${tab}…`}
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                className="bg-[#111] border border-[#222] text-text-primary placeholder-text-muted rounded-sm pl-8 pr-3 py-1.5 text-xs font-mono w-44 focus:outline-none focus:border-accent transition-colors"
+                className="bg-surface border border-border text-text-primary placeholder-text-muted rounded-sm pl-8 pr-3 py-1.5 text-xs font-mono w-44 focus:outline-none focus:border-accent transition-colors"
               />
             </div>
           </div>
@@ -408,7 +408,7 @@ export function LibraryRoot() {
 
         {!loading && !fetchError && tab === 'tracks' && (
           <div>
-            <div className="grid grid-cols-[2rem_1fr_1fr_1fr_3.5rem_auto] gap-3 px-6 py-2 border-b border-[#111] sticky top-0 bg-[#0d0d0d]">
+            <div className="grid grid-cols-[2rem_1fr_1fr_1fr_3.5rem_auto] gap-3 px-6 py-2 border-b border-surface sticky top-0 bg-base">
               <span className="font-mono text-[10px] text-text-muted uppercase tracking-widest text-right">#</span>
               <span className="font-mono text-[10px] text-text-muted uppercase tracking-widest">Title</span>
               <span className="font-mono text-[10px] text-text-muted uppercase tracking-widest">Artist</span>
@@ -417,7 +417,7 @@ export function LibraryRoot() {
               <span />
             </div>
             {tracks.map((t, i) => (
-              <div key={t.id} className="group grid grid-cols-[2rem_1fr_1fr_1fr_3.5rem_auto] gap-3 items-center px-6 py-2 hover:bg-[#111] transition-colors">
+              <div key={t.id} className="group grid grid-cols-[2rem_1fr_1fr_1fr_3.5rem_auto] gap-3 items-center px-6 py-2 hover:bg-surface transition-colors">
                 <span className="font-mono text-xs text-text-muted tabular-nums text-right">{String(i + 1).padStart(3, '0')}</span>
                 <span className="text-sm text-text-primary truncate">{t.title}</span>
                 <span className="font-mono text-xs text-text-secondary truncate">{t.artist_name}</span>
@@ -461,7 +461,7 @@ export function LibraryRoot() {
                 className={`font-mono text-[11px] leading-[18px] w-6 text-center rounded transition-colors ${
                   letterFilter === letter
                     ? 'text-accent bg-accent/10 font-bold'
-                    : 'text-text-muted hover:text-text-secondary hover:bg-[#1a1a1a]'
+                    : 'text-text-muted hover:text-text-secondary hover:bg-surface-raised'
                 }`}
               >
                 {letter}
@@ -473,7 +473,7 @@ export function LibraryRoot() {
 
       {/* Footer count */}
       {footerText && (
-        <div className="px-6 py-2 border-t border-[#1a1a1a] flex-shrink-0">
+        <div className="px-6 py-2 border-t border-border-subtle flex-shrink-0">
           <span className="font-mono text-[10px] text-text-muted">{footerText}</span>
         </div>
       )}

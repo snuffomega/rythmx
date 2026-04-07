@@ -150,8 +150,8 @@ export function AuditReviewModal({ open, onClose, onRefreshAuditTotal, toast }: 
 
   return (
     <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
-      <div className="w-full max-w-5xl max-h-[85vh] bg-[#0d0d0d] border border-[#2a2a2a] flex flex-col">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-[#1a1a1a]">
+      <div className="w-full max-w-5xl max-h-[85vh] bg-base border border-border-input flex flex-col">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle">
           <div>
             <h3 className="text-sm font-semibold text-text-primary">Review Low-Confidence Matches</h3>
             <p className="text-[11px] text-text-muted mt-0.5">
@@ -180,13 +180,13 @@ export function AuditReviewModal({ open, onClose, onRefreshAuditTotal, toast }: 
         </div>
 
         {auditReviewError && (
-          <div className="px-4 py-2 text-xs text-danger border-b border-[#1a1a1a]">
+          <div className="px-4 py-2 text-xs text-danger border-b border-border-subtle">
             {auditReviewError}
           </div>
         )}
 
         <div className="flex-1 overflow-y-auto">
-          <div className="grid grid-cols-[1fr_1.2fr_70px_90px_170px] gap-3 px-4 py-2 border-b border-[#1a1a1a] sticky top-0 bg-[#101010] z-10">
+          <div className="grid grid-cols-[1fr_1.2fr_70px_90px_170px] gap-3 px-4 py-2 border-b border-border-subtle sticky top-0 bg-base z-10">
             <span className="font-mono text-[10px] text-text-muted uppercase tracking-wider">Artist</span>
             <span className="font-mono text-[10px] text-text-muted uppercase tracking-wider">Album</span>
             <span className="font-mono text-[10px] text-text-muted uppercase tracking-wider">Year</span>
@@ -217,7 +217,7 @@ export function AuditReviewModal({ open, onClose, onRefreshAuditTotal, toast }: 
             const hasManualLock = lockedSources.length > 0;
             const manualSummary = lockedSources.map(([k, v]) => `${k}:${v.state}`).join(', ');
             return (
-              <div key={`${item.album_id}:${item.artist_id}`} className="border-b border-[#151515]">
+              <div key={`${item.album_id}:${item.artist_id}`} className="border-b border-border-subtle">
                 <div className="grid grid-cols-[1fr_1.2fr_70px_90px_170px] gap-3 px-4 py-2 items-center">
                   <span className="text-xs text-text-secondary truncate">{item.artist_name}</span>
                   <span className="text-xs text-text-primary truncate">{item.album_title}</span>
@@ -262,7 +262,7 @@ export function AuditReviewModal({ open, onClose, onRefreshAuditTotal, toast }: 
                         Loading candidates...
                       </div>
                     ) : (
-                      <div className="border border-[#202020] bg-[#0f0f0f] p-2">
+                      <div className="border border-border-subtle bg-base p-2">
                         <div className="flex items-center justify-between gap-2 mb-2">
                           <div className="flex items-center gap-1.5 min-w-0">
                             <span className="text-[11px] font-mono text-text-secondary uppercase tracking-wider">
@@ -293,7 +293,7 @@ export function AuditReviewModal({ open, onClose, onRefreshAuditTotal, toast }: 
                             const currentId = primarySource === 'itunes' ? item.itunes_album_id : item.deezer_id;
                             const isCurrent = !!currentId && String(currentId) === String(c.candidate_id);
                             return (
-                              <div key={`${primarySource}:${c.candidate_id}`} className="border border-[#242424] bg-[#111] px-2 py-1.5">
+                              <div key={`${primarySource}:${c.candidate_id}`} className="border border-border bg-surface px-2 py-1.5">
                                 <div className="flex items-start justify-between gap-2">
                                   <div className="min-w-0">
                                     <p className="text-xs text-text-primary truncate">{c.candidate_title}</p>

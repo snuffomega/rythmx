@@ -4,31 +4,49 @@ export default {
   theme: {
     extend: {
       colors: {
-        base: '#0A0A0A',
+        base: 'var(--bg-base)',
         surface: {
-          DEFAULT: '#111111',
-          highlight: '#181818',
+          DEFAULT: 'var(--surface)',
+          highlight: 'var(--surface-highlight)',
+          sunken: 'var(--surface-sunken)',
+          skeleton: 'var(--surface-skeleton)',
+          raised: 'var(--surface-raised)',
+          overlay: 'var(--surface-overlay)',
         },
         border: {
-          DEFAULT: '#222222',
+          DEFAULT: 'var(--border-default)',
+          subtle: 'var(--border-subtle)',
+          input: 'var(--border-input)',
+          strong: 'var(--border-strong)',
         },
         text: {
-          primary: '#F0F0F0',
-          secondary: '#999999',
-          muted: '#555555',
+          primary: 'var(--text-primary)',
+          secondary: 'var(--text-secondary)',
+          muted: 'var(--text-muted)',
+          dim: 'var(--text-dim)',
+          faint: 'var(--text-faint)',
+          soft: 'var(--text-soft)',
         },
         accent: {
-          DEFAULT: '#D4F53C',
-          hover: '#C2E030',
+          DEFAULT: 'var(--accent)',
+          hover: 'var(--accent-hover)',
           muted: 'rgba(212,245,60,0.15)',
         },
+        brand: {
+          spotify: 'var(--brand-spotify)',
+          plex: 'var(--brand-plex)',
+          lastfm: 'var(--brand-lastfm)',
+        },
         success: {
-          DEFAULT: '#10B981',
+          DEFAULT: 'var(--accent-success)',
+          light: 'var(--success-light)',
         },
         danger: {
-          DEFAULT: '#FF3B30',
+          DEFAULT: 'var(--accent-danger)',
+          light: 'var(--danger-light)',
         },
-        warning: '#D4F53C',
+        warning: 'var(--accent-warning)',
+        'warning-text': 'var(--warning-text)',
       },
       fontFamily: {
         sans: ['Inter', 'system-ui', 'sans-serif'],

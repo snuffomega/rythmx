@@ -6,5 +6,5 @@ export function AcqIcon({ status }: { status?: string | null }) {
   if (status === 'failed')    return <X size={10} className="text-danger flex-shrink-0" aria-label="Failed" />;
   if (status === 'skipped')   return <Minus size={10} className="text-text-muted flex-shrink-0" aria-label="Skipped" />;
   if (status === 'pending')   return <Clock size={10} className="text-text-muted flex-shrink-0" aria-label="Queued" />;
-  return <Clock size={10} className="text-[#2a2a2a] flex-shrink-0" aria-label="Not queued" />;
+  return <Clock size={10} className="text-text-faint flex-shrink-0" aria-label="Not queued" />;
 }

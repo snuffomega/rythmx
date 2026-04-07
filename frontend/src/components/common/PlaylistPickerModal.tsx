@@ -11,7 +11,7 @@ export function PlaylistPickerModal(picker: PlaylistPickerModalProps) {
 
   return (
     <div className="fixed inset-0 z-40 bg-black/60 flex items-center justify-center p-4">
-      <div className="w-full max-w-md bg-[#0d0d0d] border border-[#2a2a2a] p-4">
+      <div className="w-full max-w-md bg-base border border-border-input p-4">
         <h3 className="text-sm font-semibold text-text-primary">Add To Playlist</h3>
         <p className="text-xs text-text-muted mt-1 truncate">
           {picker.track ? `Track: ${picker.track.title}` : 'Select a playlist'}
@@ -31,7 +31,7 @@ export function PlaylistPickerModal(picker: PlaylistPickerModalProps) {
               <select
                 value={picker.selectedPlaylistId}
                 onChange={e => picker.setSelectedPlaylistId(e.target.value)}
-                className="w-full bg-[#111] border border-[#2a2a2a] text-text-primary text-sm px-3 py-2 focus:outline-none focus:border-accent"
+                className="w-full bg-surface border border-border-input text-text-primary text-sm px-3 py-2 focus:outline-none focus:border-accent"
                 disabled={picker.options.length === 0 || picker.saving}
               >
                 {picker.options.length === 0 ? (
@@ -56,14 +56,14 @@ export function PlaylistPickerModal(picker: PlaylistPickerModalProps) {
           <button
             onClick={picker.closePicker}
             disabled={picker.saving}
-            className="px-3 py-1.5 text-xs border border-[#333] text-text-muted hover:text-text-primary transition-colors disabled:opacity-40"
+            className="px-3 py-1.5 text-xs border border-border-strong text-text-muted hover:text-text-primary transition-colors disabled:opacity-40"
           >
             Cancel
           </button>
           <button
             onClick={() => navigate({ to: '/library/playlists' })}
             disabled={picker.saving}
-            className="px-3 py-1.5 text-xs border border-[#333] text-text-muted hover:text-text-primary transition-colors disabled:opacity-40"
+            className="px-3 py-1.5 text-xs border border-border-strong text-text-muted hover:text-text-primary transition-colors disabled:opacity-40"
           >
             Open Playlists
           </button>

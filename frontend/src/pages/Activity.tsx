@@ -43,7 +43,7 @@ export function ActivityPage({ toast }: ActivityPageProps) {
       <div className="flex items-end justify-between">
         <div>
           <h1 className="page-title mb-1">Activity</h1>
-          <p className="text-[#444] text-sm">Acquisition queue and fetch status</p>
+          <p className="text-text-dim text-sm">Acquisition queue and fetch status</p>
         </div>
         <button
           onClick={handleCheckNow}
@@ -64,9 +64,9 @@ export function ActivityPage({ toast }: ActivityPageProps) {
             { label: 'Failed', value: stats.failed, color: 'text-danger' },
             { label: 'Skipped', value: stats.skipped, color: 'text-text-muted' },
           ].map(s => (
-            <div key={s.label} className="bg-[#0d0d0d] border border-[#161616] p-3 text-center">
+            <div key={s.label} className="bg-base border border-border-subtle p-3 text-center">
               <p className={`text-xl font-bold tabular-nums ${s.color}`}>{s.value}</p>
-              <p className="text-[#444] text-xs mt-0.5">{s.label}</p>
+              <p className="text-text-dim text-xs mt-0.5">{s.label}</p>
             </div>
           ))}
         </div>
@@ -80,7 +80,7 @@ export function ActivityPage({ toast }: ActivityPageProps) {
             className={`px-3 py-1.5 text-xs font-medium rounded-sm transition-colors ${
               filter === f.value
                 ? 'bg-accent text-black'
-                : 'bg-[#111] text-text-muted hover:text-text-secondary hover:bg-[#161616]'
+                : 'bg-surface text-text-muted hover:text-text-secondary hover:bg-surface-skeleton'
             }`}
           >
             {f.label}
@@ -93,13 +93,13 @@ export function ActivityPage({ toast }: ActivityPageProps) {
       ) : loading ? (
         <div className="space-y-1">
           {Array.from({ length: 8 }).map((_, i) => (
-            <div key={i} className="flex items-center gap-3 py-3 border-b border-[#111]">
-              <div className="w-10 h-10 animate-pulse bg-[#141414] flex-shrink-0" />
+            <div key={i} className="flex items-center gap-3 py-3 border-b border-surface">
+              <div className="w-10 h-10 animate-pulse bg-surface-skeleton flex-shrink-0" />
               <div className="flex-1 space-y-2">
-                <div className="h-3 animate-pulse bg-[#141414] rounded-sm w-40" />
-                <div className="h-3 animate-pulse bg-[#141414] rounded-sm w-28" />
+                <div className="h-3 animate-pulse bg-surface-skeleton rounded-sm w-40" />
+                <div className="h-3 animate-pulse bg-surface-skeleton rounded-sm w-28" />
               </div>
-              <div className="h-5 w-16 animate-pulse bg-[#141414] rounded-sm" />
+              <div className="h-5 w-16 animate-pulse bg-surface-skeleton rounded-sm" />
             </div>
           ))}
         </div>
@@ -114,14 +114,14 @@ export function ActivityPage({ toast }: ActivityPageProps) {
           {queue.map((item: QueueItem) => (
             <div
               key={item.id}
-              className="flex items-center gap-3 py-3 border-b border-[#111] hover:bg-[#0d0d0d] transition-colors"
+              className="flex items-center gap-3 py-3 border-b border-surface hover:bg-base transition-colors"
             >
-              <div className="w-10 h-10 flex-shrink-0 bg-[#141414] flex items-center justify-center">
-                <Music2 size={13} className="text-[#333]" />
+              <div className="w-10 h-10 flex-shrink-0 bg-surface-skeleton flex items-center justify-center">
+                <Music2 size={13} className="text-text-faint" />
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-text-primary text-sm font-medium truncate">{item.album}</p>
-                <p className="text-[#555] text-xs truncate">{item.artist}</p>
+                <p className="text-text-muted text-xs truncate">{item.artist}</p>
               </div>
               <div className="flex items-center gap-2 flex-shrink-0">
                 <span className="badge-muted text-[10px] capitalize">{item.kind}</span>

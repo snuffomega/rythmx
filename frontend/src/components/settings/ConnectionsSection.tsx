@@ -46,16 +46,16 @@ function ServiceCard({
       type="button"
       onClick={onTest}
       disabled={disabled || status === 'testing'}
-      className="bg-[#0e0e0e] border border-[#1a1a1a] p-4 flex items-center gap-3 min-h-[68px] text-left transition-colors hover:border-[#303030] disabled:opacity-70 disabled:cursor-not-allowed"
+      className="bg-base border border-border-subtle p-4 flex items-center gap-3 min-h-[68px] text-left transition-colors hover:border-border-strong disabled:opacity-70 disabled:cursor-not-allowed"
     >
-      <div className="w-7 h-7 bg-[#181818] flex items-center justify-center flex-shrink-0">
+      <div className="w-7 h-7 bg-surface-highlight flex items-center justify-center flex-shrink-0">
         {icon}
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-text-primary text-sm font-medium">{name}</p>
-        {subtitle && <p className="text-[#444] text-[10px] mt-0.5">{subtitle}</p>}
+        {subtitle && <p className="text-text-dim text-[10px] mt-0.5">{subtitle}</p>}
         {configured !== undefined && (
-          <p className="text-[#4e4e4e] text-[10px] mt-0.5">
+          <p className="text-text-dim text-[10px] mt-0.5">
             {configured ? 'configured' : 'not configured'}
           </p>
         )}
@@ -71,7 +71,7 @@ function ServiceCard({
               ? 'bg-accent border-accent'
               : status === 'failed'
                 ? 'bg-danger border-danger'
-                : 'bg-transparent border-[#4a4a4a]'
+                : 'bg-transparent border-border-strong'
           }`}
           title={
             status === 'connected'
@@ -88,9 +88,9 @@ function ServiceCard({
 
 function ServiceSkeleton() {
   return (
-    <div className="bg-[#0e0e0e] border border-[#1a1a1a] p-4 min-h-[68px] animate-pulse">
-      <div className="h-3 w-24 bg-[#1f1f1f] rounded mb-2" />
-      <div className="h-2 w-20 bg-[#1a1a1a] rounded" />
+    <div className="bg-base border border-border-subtle p-4 min-h-[68px] animate-pulse">
+      <div className="h-3 w-24 bg-surface-overlay rounded mb-2" />
+      <div className="h-2 w-20 bg-surface-raised rounded" />
     </div>
   );
 }
@@ -176,7 +176,7 @@ export function ConnectionsSection({
             key: 'fanart',
             label: 'Fanart.tv',
             subtitle: 'Optional • click to test',
-            icon: <span className="text-[#e88c2a] font-bold text-sm">F</span>,
+            icon: <span className="text-warning-text font-bold text-sm">F</span>,
             configured: settingsStatus.fanart_configured,
             run: settingsApi.testFanart,
           } satisfies ServiceDescriptor]
@@ -241,7 +241,7 @@ export function ConnectionsSection({
           type="button"
           onClick={() => void handleVerifyAll()}
           disabled={!settingsLoaded || verifyAllLoading || !services.length}
-          className="px-3 py-1.5 text-[11px] font-semibold tracking-wide uppercase bg-[#141414] border border-[#303030] text-text-primary hover:border-accent disabled:opacity-60 disabled:cursor-not-allowed"
+          className="px-3 py-1.5 text-[11px] font-semibold tracking-wide uppercase bg-surface-skeleton border border-border-strong text-text-primary hover:border-accent disabled:opacity-60 disabled:cursor-not-allowed"
         >
           {verifyAllLoading ? 'Verifying...' : 'Verify All'}
         </button>

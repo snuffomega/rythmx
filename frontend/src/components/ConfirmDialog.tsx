@@ -16,7 +16,7 @@ export function ConfirmDialog({ open, title, description, confirmLabel = 'Confir
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onCancel} />
-      <div className="relative bg-[#111] border border-[#222] w-full max-w-sm p-6 space-y-4">
+      <div className="relative bg-surface border border-border w-full max-w-sm p-6 space-y-4">
         <div className="flex items-start gap-3">
           {danger && <AlertTriangle size={18} className="text-danger flex-shrink-0 mt-0.5" />}
           <div>

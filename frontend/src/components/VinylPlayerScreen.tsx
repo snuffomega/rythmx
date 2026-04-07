@@ -71,7 +71,7 @@ function StarRating({ rating, onChange }: { rating: number; onChange: (n: number
         >
           <Star
             size={18}
-            className={`transition-colors ${n <= (hover || rating) ? 'text-accent' : 'text-[#2e2e2e]'}`}
+            className={`transition-colors ${n <= (hover || rating) ? 'text-accent' : 'text-text-faint'}`}
             fill={n <= (hover || rating) ? 'currentColor' : 'none'}
           />
         </button>
@@ -563,7 +563,7 @@ export function VinylPlayerScreen({
             onClick={handleProgressClick}
             className="flex-1 h-4 relative cursor-pointer group flex items-center select-none"
           >
-            <div className="absolute inset-x-0 h-[5px] bg-[#1c1c1c] rounded-full overflow-hidden pointer-events-none">
+            <div className="absolute inset-x-0 h-[5px] bg-surface-raised rounded-full overflow-hidden pointer-events-none">
               <div
                 className="h-full bg-accent rounded-full"
                 style={{ width: `${progressPct}%` }}
@@ -585,7 +585,7 @@ export function VinylPlayerScreen({
           {/* Volume popup — floats above volume button (stays absolute/upward) */}
           {showVolume && (
             <div
-              className="absolute bottom-full mb-3 bg-[#0d0d0d] border border-[#1e1e1e]
+              className="absolute bottom-full mb-3 bg-base border border-border-subtle
                          rounded-xl px-5 py-4 shadow-2xl z-30 flex flex-col gap-3"
               style={{ right: '52px', width: '200px' }}
             >
@@ -737,10 +737,10 @@ export function VinylPlayerScreen({
             <div
               ref={queuePanelRef}
               className="absolute top-full left-1/2 -translate-x-1/2 mt-3 w-[min(84vw,520px)]
-                         border border-[#1e1e1e] rounded-xl overflow-hidden bg-[#0a0a0a] shadow-2xl z-30
+                         border border-border-subtle rounded-xl overflow-hidden bg-base shadow-2xl z-30
                          transition-[transform,opacity,box-shadow] duration-200 ease-out"
             >
-              <div className="flex items-center justify-between px-4 py-3 border-b border-[#1a1a1a]">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle">
                 <span className="font-mono text-[11px] text-text-muted uppercase tracking-widest">
                   Queue - {queue.length} track{queue.length !== 1 ? 's' : ''}
                 </span>
@@ -784,8 +784,8 @@ export function VinylPlayerScreen({
                           onDrop={(event) => handleQueueDrop(event, i)}
                           className={`group relative px-4 py-2.5 flex items-center gap-2.5 transition-colors ${
                             dropIndex === i && dragIndex !== null && dragIndex !== i
-                              ? 'bg-[#151515] ring-1 ring-accent/40'
-                              : 'hover:bg-[#111]'
+                              ? 'bg-surface-skeleton ring-1 ring-accent/40'
+                              : 'hover:bg-surface'
                           }`}
                         >
                           <button
@@ -847,28 +847,28 @@ export function VinylPlayerScreen({
                             <MoreHorizontal size={13} />
                           </button>
                           {queueMenuIndex === i && (
-                            <div className="absolute right-3 top-full mt-1 w-40 bg-[#0f0f0f] border border-[#222] rounded-md shadow-xl z-40">
+                            <div className="absolute right-3 top-full mt-1 w-40 bg-base border border-border rounded-md shadow-xl z-40">
                               <button
                                 onClick={() => { usePlayerStore.getState().playAt(i); setQueueMenuIndex(null); setShowQueue(false); setQueueExpanded(false); clearQueueDragState(); }}
-                                className="w-full px-3 py-1.5 text-left text-[11px] text-text-secondary hover:bg-[#161616] transition-colors"
+                                className="w-full px-3 py-1.5 text-left text-[11px] text-text-secondary hover:bg-surface-skeleton transition-colors"
                               >
                                 Play now
                               </button>
                               <button
                                 onClick={() => handleQueueTrackPlayNext(i)}
-                                className="w-full px-3 py-1.5 text-left text-[11px] text-text-secondary hover:bg-[#161616] transition-colors"
+                                className="w-full px-3 py-1.5 text-left text-[11px] text-text-secondary hover:bg-surface-skeleton transition-colors"
                               >
                                 Play next
                               </button>
                               <button
                                 onClick={() => { setQueueMenuIndex(null); openPlaylistPicker(track); }}
-                                className="w-full px-3 py-1.5 text-left text-[11px] text-text-secondary hover:bg-[#161616] transition-colors"
+                                className="w-full px-3 py-1.5 text-left text-[11px] text-text-secondary hover:bg-surface-skeleton transition-colors"
                               >
                                 Add to playlist
                               </button>
                               <button
                                 onClick={() => handleQueueTrackRemove(i)}
-                                className="w-full px-3 py-1.5 text-left text-[11px] text-danger hover:bg-[#161616] transition-colors"
+                                className="w-full px-3 py-1.5 text-left text-[11px] text-danger hover:bg-surface-skeleton transition-colors"
                               >
                                 Remove
                               </button>
@@ -898,11 +898,11 @@ export function VinylPlayerScreen({
             onClick={() => { setShowQueue(false); setQueueExpanded(false); setQueueMenuIndex(null); clearQueueDragState(); }}
           >
             <div
-              className="w-full max-w-[720px] border border-[#1e1e1e] rounded-xl overflow-hidden bg-[#0a0a0a] shadow-2xl
+              className="w-full max-w-[720px] border border-border-subtle rounded-xl overflow-hidden bg-base shadow-2xl
                          transition-[transform,opacity,box-shadow] duration-200 ease-out"
               onClick={(event) => event.stopPropagation()}
             >
-              <div className="flex items-center justify-between px-4 py-3 border-b border-[#1a1a1a]">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle">
                 <span className="font-mono text-[11px] text-text-muted uppercase tracking-widest">
                   Queue - {queue.length} track{queue.length !== 1 ? 's' : ''}
                 </span>
@@ -946,8 +946,8 @@ export function VinylPlayerScreen({
                           onDrop={(event) => handleQueueDrop(event, i)}
                           className={`group relative px-4 py-2.5 flex items-center gap-2.5 transition-colors ${
                             dropIndex === i && dragIndex !== null && dragIndex !== i
-                              ? 'bg-[#151515] ring-1 ring-accent/40'
-                              : 'hover:bg-[#111]'
+                              ? 'bg-surface-skeleton ring-1 ring-accent/40'
+                              : 'hover:bg-surface'
                           }`}
                         >
                           <button
@@ -1009,28 +1009,28 @@ export function VinylPlayerScreen({
                             <MoreHorizontal size={13} />
                           </button>
                           {queueMenuIndex === i && (
-                            <div className="absolute right-3 top-full mt-1 w-40 bg-[#0f0f0f] border border-[#222] rounded-md shadow-xl z-40">
+                            <div className="absolute right-3 top-full mt-1 w-40 bg-base border border-border rounded-md shadow-xl z-40">
                               <button
                                 onClick={() => { usePlayerStore.getState().playAt(i); setQueueMenuIndex(null); setShowQueue(false); setQueueExpanded(false); clearQueueDragState(); }}
-                                className="w-full px-3 py-1.5 text-left text-[11px] text-text-secondary hover:bg-[#161616] transition-colors"
+                                className="w-full px-3 py-1.5 text-left text-[11px] text-text-secondary hover:bg-surface-skeleton transition-colors"
                               >
                                 Play now
                               </button>
                               <button
                                 onClick={() => handleQueueTrackPlayNext(i)}
-                                className="w-full px-3 py-1.5 text-left text-[11px] text-text-secondary hover:bg-[#161616] transition-colors"
+                                className="w-full px-3 py-1.5 text-left text-[11px] text-text-secondary hover:bg-surface-skeleton transition-colors"
                               >
                                 Play next
                               </button>
                               <button
                                 onClick={() => { setQueueMenuIndex(null); openPlaylistPicker(track); }}
-                                className="w-full px-3 py-1.5 text-left text-[11px] text-text-secondary hover:bg-[#161616] transition-colors"
+                                className="w-full px-3 py-1.5 text-left text-[11px] text-text-secondary hover:bg-surface-skeleton transition-colors"
                               >
                                 Add to playlist
                               </button>
                               <button
                                 onClick={() => handleQueueTrackRemove(i)}
-                                className="w-full px-3 py-1.5 text-left text-[11px] text-danger hover:bg-[#161616] transition-colors"
+                                className="w-full px-3 py-1.5 text-left text-[11px] text-danger hover:bg-surface-skeleton transition-colors"
                               >
                                 Remove
                               </button>
@@ -1054,7 +1054,7 @@ export function VinylPlayerScreen({
 
         {playlistPickerOpen && (
           <div className="fixed inset-0 z-40 bg-black/60 flex items-center justify-center p-4">
-            <div className="w-full max-w-md bg-[#0d0d0d] border border-[#2a2a2a] p-4">
+            <div className="w-full max-w-md bg-base border border-border-input p-4">
               <h3 className="text-sm font-semibold text-text-primary">Add To Playlist</h3>
               <p className="text-xs text-text-muted mt-1 truncate">
                 {playlistTrack ? `Track: ${playlistTrack.title}` : 'Select a playlist'}
@@ -1074,7 +1074,7 @@ export function VinylPlayerScreen({
                     <select
                       value={selectedPlaylistId}
                       onChange={e => setSelectedPlaylistId(e.target.value)}
-                      className="w-full bg-[#111] border border-[#2a2a2a] text-text-primary text-sm px-3 py-2 focus:outline-none focus:border-accent"
+                      className="w-full bg-surface border border-border-input text-text-primary text-sm px-3 py-2 focus:outline-none focus:border-accent"
                       disabled={playlistOptions.length === 0 || playlistPickerSaving}
                     >
                       {playlistOptions.length === 0 ? (
@@ -1099,14 +1099,14 @@ export function VinylPlayerScreen({
                 <button
                   onClick={closePlaylistPicker}
                   disabled={playlistPickerSaving}
-                  className="px-3 py-1.5 text-xs border border-[#333] text-text-muted hover:text-text-primary transition-colors disabled:opacity-40"
+                  className="px-3 py-1.5 text-xs border border-border-strong text-text-muted hover:text-text-primary transition-colors disabled:opacity-40"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={() => navigate({ to: '/library/playlists' })}
                   disabled={playlistPickerSaving}
-                  className="px-3 py-1.5 text-xs border border-[#333] text-text-muted hover:text-text-primary transition-colors disabled:opacity-40"
+                  className="px-3 py-1.5 text-xs border border-border-strong text-text-muted hover:text-text-primary transition-colors disabled:opacity-40"
                 >
                   Open Playlists
                 </button>

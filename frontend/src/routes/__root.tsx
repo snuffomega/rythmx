@@ -84,7 +84,7 @@ function RootLayout() {
 
       <aside
         ref={sidebarRef}
-        className={`fixed inset-y-0 left-0 z-20 flex flex-col bg-[#0d0d0d] border-r border-border transition-all duration-200 ${
+        className={`fixed inset-y-0 left-0 z-20 flex flex-col bg-base border-r border-border transition-all duration-200 ${
           expanded ? 'w-56' : 'w-16'
         } ${playerState === 'mini' ? 'pb-20' : ''}`}
       >

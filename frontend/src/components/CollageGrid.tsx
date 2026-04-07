@@ -87,22 +87,22 @@ export function CollageGrid({ items, loading, contentType, overlays, skeletonCou
         <>
           {/* Hero skeleton — desktop */}
           <div className="hidden lg:grid gap-1.5" style={{ gridTemplateColumns: '2fr 1fr 1fr', gridTemplateRows: 'auto auto' }}>
-            <div className="row-span-2 aspect-square bg-[#141414] animate-pulse" />
+            <div className="row-span-2 aspect-square bg-surface-skeleton animate-pulse" />
             {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="aspect-square bg-[#141414] animate-pulse" />
+              <div key={i} className="aspect-square bg-surface-skeleton animate-pulse" />
             ))}
           </div>
           {Array.from({ length: Math.max(0, skeletonCount - 5) }).length > 0 && (
             <div className="hidden lg:grid grid-cols-5 gap-1.5 mt-1.5">
               {Array.from({ length: Math.max(0, skeletonCount - 5) }).map((_, i) => (
-                <div key={i} className="aspect-square bg-[#141414] animate-pulse" />
+                <div key={i} className="aspect-square bg-surface-skeleton animate-pulse" />
               ))}
             </div>
           )}
           {/* Mobile skeleton */}
           <div className="lg:hidden grid grid-cols-2 gap-1.5">
             {Array.from({ length: skeletonCount }).map((_, i) => (
-              <div key={i} className="aspect-square bg-[#141414] animate-pulse" />
+              <div key={i} className="aspect-square bg-surface-skeleton animate-pulse" />
             ))}
           </div>
         </>
@@ -111,7 +111,7 @@ export function CollageGrid({ items, loading, contentType, overlays, skeletonCou
     return (
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-1.5">
         {Array.from({ length: skeletonCount }).map((_, i) => (
-          <div key={i} className="aspect-square bg-[#141414] animate-pulse" />
+          <div key={i} className="aspect-square bg-surface-skeleton animate-pulse" />
         ))}
       </div>
     );
@@ -122,7 +122,7 @@ export function CollageGrid({ items, loading, contentType, overlays, skeletonCou
       <div className="flex flex-col items-center justify-center py-20 text-center">
         <FallbackIcon type={contentType} />
         <p className="text-text-muted text-sm mt-4">No data for this period.</p>
-        <p className="text-[#333] text-xs mt-1">Connect Last.fm in Settings to get started.</p>
+        <p className="text-text-faint text-xs mt-1">Connect Last.fm in Settings to get started.</p>
       </div>
     );
   }
