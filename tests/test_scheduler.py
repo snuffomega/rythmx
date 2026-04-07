@@ -1,18 +1,16 @@
 """
-tests/test_scheduler.py — scheduler new-music pipeline stage boundary tests.
+tests/test_scheduler.py — DECOMMISSIONED (Phase 42, 2026-04-06)
 
-Mocks all external I/O so tests run without any database, network, or
-filesystem access. Tests verify stage behaviour at each boundary, not
-internal implementation details.
+These tests covered the legacy CC (Cruise Control) auto-discovery pipeline:
+  _execute_cycle(), run_cycle(), _should_run_cc()
 
-Mocked boundaries:
-  - app.clients.last_fm_client      (Last.fm API)
-  - app.clients.music_client        (iTunes / Deezer catalog)
-  - app.services.identity_resolver
-  - app.runners.scheduler.rythmx_store  (rythmx's own rythmx.db — patch where used, not defined)
-  - app.db.get_library_reader       (SoulSync / Plex reader)
+All three functions were deleted in Phase 42 (Legacy CC Runtime Cleanup) when
+the CC pipeline was replaced by Forge (New Music + Custom Discovery).
 
-Run with: pytest tests/test_scheduler.py -v
+All 18 tests in this file will FAIL with AttributeError — this is expected.
+They are retained as a historical reference only.
+
+To suppress in CI: pytest --ignore=tests/test_scheduler.py
 """
 import pytest
 from unittest.mock import patch, MagicMock, call
