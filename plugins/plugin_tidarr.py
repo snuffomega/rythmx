@@ -149,7 +149,16 @@ class TidarrDownloader:
             logger.warning(
                 "tidarr: addfile returned no nzo_ids for %s — %s", artist, album
             )
-         ranslate_path(self, storage_path: str) -> str:
+            return f"unresolved:{artist}:{album}"
+
+        nzo_id = nzo_ids[0]
+        logger.info(
+            "tidarr: queued %s \u2014 %s (tidal_id=%s nzo_id=%s quality=%s)",
+            artist, album, tidal_id, nzo_id, self._quality,
+        )
+        return nzo_id
+
+    def translate_path(self, storage_path: str) -> str:
         """
         Translate a Tidarr-internal storage path to the Rythmx-accessible path.
 
@@ -173,14 +182,6 @@ class TidarrDownloader:
             return self._local_prefix + storage_path[len(self._tidarr_prefix):]
         return storage_path
 
-    def t   return f"unresolved:{artist}:{album}"
-
-        nzo_id = nzo_ids[0]
-        logger.info(
-            "tidarr: queued %s — %s (tidal_id=%s nzo_id=%s quality=%s)",
-            artist, album, tidal_id, nzo_id, self._quality,
-        )
-        return nzo_id
 
     def test_connection(self) -> dict:
         """

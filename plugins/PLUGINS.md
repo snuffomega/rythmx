@@ -21,7 +21,7 @@ Create a file in this directory named `plugin_<name>.py`. Define a class impleme
 ```python
 # plugins/plugin_lidarr.py
 
-PLUGIN_API_VERSION = 1  # must match a supported version in app/plugins/__init__.py
+PLUGIN_API_VERSION = 2  # must match a supported version in app/plugins/__init__.py
 PLUGIN = {"slot": "downloader", "class": LidarrDownloader}
 
 
@@ -41,6 +41,11 @@ class LidarrDownloader:
             return {"status": "ok", "message": "Lidarr reachable"}
         except Exception as e:
             return {"status": "error", "message": str(e)}
+
+    def translate_path(self, storage_path: str) -> str:
+        # Lidarr writes directly to the library folder — no translation needed.
+        # Omitting this method is also fine; Core falls back to identity.
+        return storage_path
 ```
 
 The plugin is auto-discovered on app startup via `app/plugins/__init__.py:load_plugins()`.
@@ -50,12 +55,13 @@ The plugin is auto-discovered on app startup via `app/plugins/__init__.py:load_p
 ## Rules
 
 - File must be named `plugin_<name>.py`
-- Must declare `PLUGIN_API_VERSION = 1` at module level — load_plugins() skips plugins with unsupported versions
-- Must define `PLUGIN = {"slot": "<slot_name>", "class": <YourClass>}`
+- Must declare `PLUGIN_API_VERSION = 2` at module level — load_plugins() skips plugins with unsupported versions
+- Must define `PLUGIN = {"slot": "<slot_name>", "class": <YourClass>}` or `PLUGIN_SLOTS = {...}`
 - Class must implement the Protocol for its slot (see `app/plugins/__init__.py`)
 - Never import from `app/db/` — plugins are not allowed to touch SQLite directly
 - Never log secrets or raw credentials
 - `test_connection()` must always return a dict with a `status` key
+- `tag()` and `organize()` receive and return a `DownloadArtifact` — mutate in place and return it
 
 ---
 
@@ -115,9 +121,30 @@ PLUGIN_DESCRIPTION = "Downloads albums via MyService using SABnzbd pipeline."
 
 ---
 
+## The `DownloadArtifact` Envelope
+
+All post-download slot methods (`tag`, `organize`) receive and return a `DownloadArtifact`.
+Core creates it after the poller detects job completion and populates it before calling any plugin:
+
+| Field | Type | Populated by | Description |
+|---|---|---|---|
+| `job_id` | `str` | Core | `download_jobs.job_id` (e.g. `tidarr_nzo_3400963`) |
+| `artist` | `str` | Core | Artist name from the download_jobs row |
+| `album` | `str` | Core | Album name from the download_jobs row |
+| `source_dir` | `str` | Core | Locally accessible download directory (output of `translate_path`) |
+| `files` | `list[str]` | Core | Absolute paths to FLAC files found in `source_dir` |
+| `metadata` | `dict` | Core / tagger | Enrichment context; tagger may add keys |
+| `dest_dir` | `str \| None` | file_handler | Library destination path; set by `organize()` |
+
+Plugins **do not** construct `DownloadArtifact`. They receive one, optionally mutate fields, and return it.
+If you want the type annotation in your plugin: `from app.plugins import DownloadArtifact`.
+
+---
+
 ## Metadata Dict Contract
 
-The `metadata: dict` argument passed to `submit()`, `tag()`, and `organize()` follows the `PluginMetadata` shape defined in `app/plugins/__init__.py`. All fields are optional — always use `.get()`:
+The `metadata: dict` field on `DownloadArtifact` (and the `metadata` arg passed to `submit()`) follows
+the `PluginMetadata` shape defined in `app/plugins/__init__.py`. All fields are optional — always use `.get()`:
 
 | Key | Type | Description |
 |---|---|---|
@@ -142,9 +169,24 @@ The `metadata: dict` argument passed to `submit()`, `tag()`, and `organize()` fo
 
 ```python
 class DownloaderPlugin(Protocol):
-    name: str                                                   # Display name
-    def submit(self, artist: str, album: str, metadata: dict) -> str: ...  # Returns job ID
-    def test_connection(self) -> dict: ...                      # {"status": "ok"} or error
+    name: str
+
+    def submit(self, artist: str, album: str, metadata: dict) -> str:
+        """Submit album for download. Returns provider job ID or 'unresolved:...' on failure."""
+        ...
+
+    def test_connection(self) -> dict:
+        """Returns {"status": "ok", "message": "..."} or {"status": "error", "message": ".."}."""
+        ...
+
+    def translate_path(self, storage_path: str) -> str:
+        """
+        Translate the downloader-internal storage path to a locally accessible path.
+        Default (if not implemented): returns storage_path unchanged (identity).
+        Only override when your container mounts the download dir at a different path
+        than what the downloader reports in its completion history.
+        """
+        return storage_path  # identity default
 ```
 
 ### TaggerPlugin
@@ -152,7 +194,10 @@ class DownloaderPlugin(Protocol):
 ```python
 class TaggerPlugin(Protocol):
     name: str
-    def tag(self, file_path: str, metadata: dict) -> None: ...
+
+    def tag(self, artifact: DownloadArtifact) -> DownloadArtifact:
+        """Write tags to files in artifact.files. May add keys to artifact.metadata. Return artifact."""
+        ...
 ```
 
 ### FileHandlerPlugin
@@ -160,7 +205,10 @@ class TaggerPlugin(Protocol):
 ```python
 class FileHandlerPlugin(Protocol):
     name: str
-    def organize(self, file_path: str, metadata: dict) -> str: ...  # Returns new path
+
+    def organize(self, artifact: DownloadArtifact) -> DownloadArtifact:
+        """Move/copy files to the library. Set artifact.dest_dir. Return artifact."""
+        ...
 ```
 
 ---
