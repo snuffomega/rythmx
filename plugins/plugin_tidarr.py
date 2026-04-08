@@ -6,11 +6,12 @@ which downloads music via the Tidal streaming service.
 
 Resolution strategy (two-step):
   1. Search Tidarr's Newznab/Lidarr endpoint with artist + album name.
-     GET /api/lidarr?t=music&artist={artist}&album={album}&apikey={key}
+     GET /api/lidarr?t=search&q={artist} {album}&apikey={key}
   2. Parse the returned Newznab XML — extract the numeric Tidal album ID
      from the first <link> element (/api/lidarr/download/{id}/...) with
      a <guid> numeric fallback.
-  3. POST /api/save with the full Tidal album URL to queue the download.
+  3. Submit via GET /api/sabnzbd/api?mode=addurl&name={tidal_url} — returns
+     a real nzo_id (e.g. "tidarr-34277251-1234567890") used for Step 4b polling.
 
 Config — add to your .env:
   TIDARR_URL      Base URL of your Tidarr instance, e.g. http://tidarr:8484
@@ -67,10 +68,14 @@ class TidarrDownloader:
         """
         Resolve the Tidal album ID then queue the download in Tidarr.
 
+        Uses /api/sabnzbd/api?mode=addurl — Tidarr's SABnzbd-compatibility layer.
+        This returns a real nzo_id (e.g. "tidarr-34277251-1234567890") that can
+        be polled via mode=queue and mode=history for completion detection (Step 4b).
+
         Returns:
-            "tidarr:album:{tidal_id}"      — successfully queued in Tidarr
+            The nzo_id string from Tidarr  — successfully queued; use for polling
             "unresolved:{artist}:{album}"  — Tidal ID could not be resolved
-                                             or /api/save returned non-201
+                                             or addurl returned no nzo_id
         """
         if not self._url or not self._key:
             logger.warning(
@@ -89,46 +94,56 @@ class TidarrDownloader:
 
         tidal_url = f"https://listen.tidal.com/album/{tidal_id}"
         try:
-            resp = self._session.post(
-                f"{self._url}/api/save",
-                json={
-                    "item": {
-                        "url": tidal_url,
-                        "type": "album",
-                        "status": "queue",
-                    }
+            resp = self._session.get(
+                f"{self._url}/api/sabnzbd/api",
+                params={
+                    "mode": "addurl",
+                    "name": tidal_url,
+                    "apikey": self._key,
                 },
                 timeout=10,
             )
         except requests.RequestException as exc:
             logger.warning(
-                "tidarr: POST /api/save failed for %s — %s: %s", artist, album, exc
+                "tidarr: addurl failed for %s — %s: %s", artist, album, exc
             )
             return f"unresolved:{artist}:{album}"
 
-        if resp.status_code == 201:
-            logger.info(
-                "tidarr: queued %s — %s (tidal_id=%s quality=%s)",
-                artist,
-                album,
-                tidal_id,
-                self._quality,
+        if resp.status_code != 200:
+            logger.warning(
+                "tidarr: addurl returned HTTP %d for %s — %s",
+                resp.status_code, artist, album,
             )
-            return f"tidarr:album:{tidal_id}"
+            return f"unresolved:{artist}:{album}"
 
-        logger.warning(
-            "tidarr: POST /api/save returned HTTP %d for %s — %s",
-            resp.status_code,
-            artist,
-            album,
+        try:
+            data = resp.json()
+        except Exception:
+            logger.warning("tidarr: addurl response not JSON for %s — %s", artist, album)
+            return f"unresolved:{artist}:{album}"
+
+        nzo_ids = data.get("nzo_ids") or []
+        if not nzo_ids:
+            logger.warning(
+                "tidarr: addurl returned no nzo_ids for %s — %s (response: %s)",
+                artist, album, data,
+            )
+            return f"unresolved:{artist}:{album}"
+
+        nzo_id = nzo_ids[0]
+        logger.info(
+            "tidarr: queued %s — %s (tidal_id=%s nzo_id=%s quality=%s)",
+            artist, album, tidal_id, nzo_id, self._quality,
         )
-        return f"unresolved:{artist}:{album}"
+        return nzo_id
 
     def test_connection(self) -> dict:
         """
         Verify connectivity and auth against two Tidarr API surfaces:
-          1. GET /api/settings         — main API + key check
-          2. GET /api/sabnzbd/api?mode=version — SABnzbd download client (used for future job tracking)
+          1. GET /api/settings         — main Tidarr API (validates auth)
+          2. GET /api/sabnzbd/api?mode=version — Tidarr's built-in SABnzbd compatibility
+             layer (NOT a separate service — Tidarr emulates SABnzbd protocol here
+             for job tracking via addurl/queue/history).
 
         Used by the Settings → Integrations “Test connection” button.
 
@@ -164,7 +179,9 @@ class TidarrDownloader:
                 "message": f"Unexpected response from Tidarr: HTTP {resp.status_code}",
             }
 
-        # Secondary: SABnzbd version probe (confirms download pipeline is alive)
+        # Secondary: SABnzbd compatibility layer probe.
+        # Tidarr emulates the SABnzbd protocol at /api/sabnzbd/api — NOT a separate
+        # SABnzbd instance. Required for addurl/queue/history job tracking.
         try:
             sabnzbd_resp = self._session.get(
                 f"{self._url}/api/sabnzbd/api",
@@ -180,11 +197,11 @@ class TidarrDownloader:
                 "status": "ok",
                 "message": (
                     f"Tidarr reachable at {self._url} — "
-                    "warning: SABnzbd download pipeline not responding"
+                    "warning: job tracking API (/api/sabnzbd/api) not responding"
                 ),
             }
 
-        return {"status": "ok", "message": f"Tidarr reachable at {self._url} (settings + SABnzbd OK)"}
+        return {"status": "ok", "message": f"Tidarr reachable at {self._url} — all OK"}
 
     # ------------------------------------------------------------------
     # Private helpers
