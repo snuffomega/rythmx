@@ -42,6 +42,18 @@ function PipelineOrchestrator({ libraryTrackCount, libraryLastSynced, platform, 
   const { running, workers, activeWorkers, phase, substeps, lastRun } = useEnrichmentStore();
   const [showStages, setShowStages] = useState(false);
 
+  const CORE_ARTIST_KEYS = ['itunes_artist', 'deezer_artist'] as const;
+  const CORE_ALBUM_KEYS = ['itunes_album', 'deezer_album'] as const;
+  const CORE_ALL_KEYS = [...CORE_ARTIST_KEYS, ...CORE_ALBUM_KEYS] as const;
+
+  const ENHANCEMENT_ID_KEYS = ['spotify_artist', 'lastfm_artist'] as const;
+  const ENHANCEMENT_ART_KEYS = ['artist_art', 'album_art_local', 'album_art_cdn', 'album_art_prewarm'] as const;
+  const ENHANCEMENT_TAG_KEYS = [
+    'itunes_rich', 'deezer_rich', 'spotify_genres',
+    'lastfm_tags', 'lastfm_stats', 'deezer_artist_stats',
+    'similar_artists', 'musicbrainz_rich', 'musicbrainz_album_rich',
+  ] as const;
+
   // Elapsed timer — display concern only; driven by startedAt from store
   const startedAt = useEnrichmentStore(s => s.startedAt);
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -60,12 +72,23 @@ function PipelineOrchestrator({ libraryTrackCount, libraryLastSynced, platform, 
     },
     { found: 0, notFound: 0, errors: 0, total: 0 }
   );
-  const totalProcessed = totals.found + totals.notFound + totals.errors;
-  const overallPct = totals.total > 0 ? (totalProcessed / totals.total) * 100 : 0;
-  const enrichedPct = totals.total > 0 ? (totals.found / totals.total) * 100 : 0;
-  const overallFoundPct = totals.total > 0 ? (totals.found / totals.total) * 100 : 0;
-  const overallNotFoundPct = totals.total > 0 ? (totals.notFound / totals.total) * 100 : 0;
-  const overallErrorPct = totals.total > 0 ? (totals.errors / totals.total) * 100 : 0;
+  const coreArtistStats = workerStats(workers, CORE_ARTIST_KEYS);
+  const coreAlbumStats = workerStats(workers, CORE_ALBUM_KEYS);
+  const coreTotalStats = workerStats(workers, CORE_ALL_KEYS);
+  const coreProcessed = coreTotalStats.found + coreTotalStats.notFound + coreTotalStats.errors;
+  const coreProcessedPct = coreTotalStats.total > 0 ? (coreProcessed / coreTotalStats.total) * 100 : 0;
+  const coreMissing = coreTotalStats.notFound + coreTotalStats.errors;
+  const coreFoundPct = coreTotalStats.total > 0 ? (coreTotalStats.found / coreTotalStats.total) * 100 : 0;
+  const coreNotFoundPct = coreTotalStats.total > 0 ? (coreTotalStats.notFound / coreTotalStats.total) * 100 : 0;
+  const coreErrorPct = coreTotalStats.total > 0 ? (coreTotalStats.errors / coreTotalStats.total) * 100 : 0;
+
+  const enhancementIdStats = workerStats(workers, ENHANCEMENT_ID_KEYS);
+  const enhancementArtStats = workerStats(workers, ENHANCEMENT_ART_KEYS);
+  const enhancementTagStats = workerStats(workers, ENHANCEMENT_TAG_KEYS);
+  const coreHealthPct = coreTotalStats.total > 0 ? (coreTotalStats.found / coreTotalStats.total) * 100 : 0;
+  const formatCoverage = (found: number, total: number) => (total > 0
+    ? `${found.toLocaleString()} / ${total.toLocaleString()}`
+    : 'n/a');
 
   // "Currently: X" label — most recently active worker
   const activeLabel = (() => {
@@ -95,41 +118,91 @@ function PipelineOrchestrator({ libraryTrackCount, libraryLastSynced, platform, 
         </div>
       )}
 
-      {/* Overall progress — always visible */}
-      <div className="mb-4 p-4 bg-surface rounded-sm border border-border-subtle">
-        {running && activeLabel ? (
-          <div className="flex items-center gap-2 mb-2">
-            <Zap size={12} className="text-accent animate-pulse" />
-            <span className="text-xs font-mono text-text-secondary">Currently: {activeLabel}</span>
-          </div>
-        ) : totals.total > 0 && !running ? (
-          <div className="flex items-center gap-2 mb-2">
-            <CheckCircle size={12} className="text-accent" />
-            <span className="text-xs font-mono text-text-secondary">
-              {totals.found.toLocaleString()} items enriched across {sourcesWithData} sources
+      {/* Top summary - user-facing first */}
+      <div className="mb-4 grid gap-3 md:grid-cols-2">
+        <div className="p-4 bg-surface rounded-sm border border-border-subtle">
+          {running && activeLabel ? (
+            <div className="flex items-center gap-2 mb-2">
+              <Zap size={12} className="text-accent animate-pulse" />
+              <span className="text-xs font-mono text-text-secondary">Currently: {activeLabel}</span>
+            </div>
+          ) : coreTotalStats.total > 0 && !running ? (
+            <div className="flex items-center gap-2 mb-2">
+              <CheckCircle size={12} className="text-accent" />
+              <span className="text-xs font-mono text-text-secondary">
+                Primary data resolved for {coreTotalStats.found.toLocaleString()} items
+              </span>
+            </div>
+          ) : null}
+
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-text-secondary">Core Library Health</h3>
+            <span className="text-[10px] font-mono text-text-muted">
+              {coreTotalStats.total > 0 ? `${coreHealthPct.toFixed(0)}% resolved` : 'no data yet'}
             </span>
           </div>
-        ) : null}
+          <p className="text-[10px] text-text-muted mt-1">Primary artist and album identity from iTunes and Deezer.</p>
 
-        <div className="flex items-center justify-between mb-1.5">
-          <span className="text-[10px] font-mono text-text-muted uppercase tracking-wider">
-            {totalProcessed.toLocaleString()} / {totals.total.toLocaleString()} items
-          </span>
-          <span className="text-[10px] font-mono text-text-muted">{overallPct.toFixed(1)}%</span>
+          <div className="mt-2 space-y-1 text-[10px] font-mono">
+            <div className="flex items-center justify-between text-text-secondary">
+              <span>Artist IDs</span>
+              <span>{formatCoverage(coreArtistStats.found, coreArtistStats.total)}</span>
+            </div>
+            <div className="flex items-center justify-between text-text-secondary">
+              <span>Album IDs</span>
+              <span>{formatCoverage(coreAlbumStats.found, coreAlbumStats.total)}</span>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between mt-2 mb-1.5">
+            <span className="text-[10px] font-mono text-text-muted uppercase tracking-wider">
+              {coreProcessed.toLocaleString()} / {coreTotalStats.total.toLocaleString()} items
+            </span>
+            <span className="text-[10px] font-mono text-text-muted">{coreProcessedPct.toFixed(1)}%</span>
+          </div>
+
+          <ProgressBar
+            foundPct={coreFoundPct}
+            notFoundPct={coreNotFoundPct}
+            errorPct={coreErrorPct}
+            processedPct={coreFoundPct + coreNotFoundPct + coreErrorPct}
+            isActive={running}
+          />
+
+          <div className="flex items-center gap-4 mt-2 text-[10px] font-mono text-text-muted">
+            <span className="text-accent">{coreTotalStats.found.toLocaleString()} resolved</span>
+            {coreMissing > 0 && <span className="text-amber-400/90">{coreMissing.toLocaleString()} unresolved</span>}
+            {coreTotalStats.errors > 0 && <span className="text-red-400">{coreTotalStats.errors.toLocaleString()} errors</span>}
+          </div>
         </div>
 
-        <ProgressBar
-          foundPct={overallFoundPct}
-          notFoundPct={overallNotFoundPct}
-          errorPct={overallErrorPct}
-          processedPct={overallFoundPct + overallNotFoundPct + overallErrorPct}
-          isActive={running}
-        />
+        <div className="p-4 bg-surface rounded-sm border border-border-subtle">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-text-secondary">Enhancements</h3>
+            <span className="text-[10px] font-mono text-text-muted">optional signals</span>
+          </div>
+          <p className="text-[10px] text-text-muted mt-1">Adds discovery context and quality improvements, but does not block core usage.</p>
 
-        <div className="flex items-center gap-4 mt-2 text-[10px] font-mono text-text-muted">
-          <span className="text-accent">{totals.found.toLocaleString()} enriched</span>
-          {totals.notFound > 0 && <span className="text-red-400/70">{totals.notFound.toLocaleString()} not found</span>}
-          {totals.errors > 0 && <span className="text-red-400">{totals.errors.toLocaleString()} errors</span>}
+          <div className="mt-3 space-y-1.5 text-[10px] font-mono">
+            <div className="flex items-center justify-between text-text-secondary">
+              <span>Additional artist IDs</span>
+              <span>{formatCoverage(enhancementIdStats.found, enhancementIdStats.total)}</span>
+            </div>
+            <div className="flex items-center justify-between text-text-secondary">
+              <span>Artwork coverage</span>
+              <span>{formatCoverage(enhancementArtStats.found, enhancementArtStats.total)}</span>
+            </div>
+            <div className="flex items-center justify-between text-text-secondary">
+              <span>Rich metadata and tags</span>
+              <span>{formatCoverage(enhancementTagStats.found, enhancementTagStats.total)}</span>
+            </div>
+          </div>
+
+          <div className="mt-3 pt-2 border-t border-border-subtle text-[10px] text-text-muted">
+            {sourcesWithData > 0
+              ? `${totals.found.toLocaleString()} total enrichments recorded across ${sourcesWithData} sources.`
+              : 'No enrichment source data recorded yet.'}
+          </div>
         </div>
       </div>
 
@@ -146,20 +219,20 @@ function PipelineOrchestrator({ libraryTrackCount, libraryLastSynced, platform, 
             Stop
           </button>
         )}
-        {totals.total > 0 && (
+        {coreTotalStats.total > 0 && (
           <span className="text-xs font-mono text-accent font-medium">
-            {enrichedPct.toFixed(0)}% enriched
+            {coreHealthPct.toFixed(0)}% core resolved
           </span>
         )}
       </div>
 
-      {/* Pipeline stages toggle */}
+      {/* Technical detail toggle */}
       <button
         onClick={() => setShowStages(v => !v)}
         className="flex items-center gap-1.5 text-xs font-mono text-text-muted hover:text-text-secondary transition-colors mb-3"
       >
         {showStages ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-        {showStages ? 'Hide pipeline stages' : 'Show pipeline stages'}
+        {showStages ? 'Hide technical detail' : 'Show technical detail'}
       </button>
 
       {/* Phase-grouped DAG view */}
@@ -384,7 +457,7 @@ export function EnrichmentSection({ platform, libraryTrackCount, libraryLastSync
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block" />
                 {auditTotal} item{auditTotal !== 1 ? 's' : ''} need review
               </span>
-              {' '}— low-confidence matches flagged for manual confirmation.
+              {' '}- low-confidence matches flagged for manual confirmation.
             </p>
           </div>
         </div>
