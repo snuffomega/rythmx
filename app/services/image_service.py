@@ -2,6 +2,7 @@
 image_service.py — Non-blocking image URL resolution.
 
 Artist images:  Fanart.tv (real band photos, requires FANART_API_KEY) →
+                Last.fm artist.getInfo image (requires LASTFM_API_KEY) →
                 Deezer /artist/{id} (actual artist photo, free, no auth) →
                 iTunes album art last resort (always available, no auth)
 Album images:   iTunes search (artworkUrl100, upscaled to 600px)
@@ -466,6 +467,7 @@ def _fetch_and_cache(
         if entity_type == "artist":
             # --- Navidrome primary: coverArt from lib_artists (when platform=navidrome) ---
             platform = config.LIBRARY_PLATFORM
+            mbid = ""
             try:
                 platform = rythmx_store.get_setting("library_platform") or platform
             except Exception:
@@ -492,7 +494,15 @@ def _fetch_and_cache(
                 if mbid:
                     url = fanart_get_artist(mbid)
 
-            # --- Secondary: Deezer artist photo ---
+            # --- Secondary: Last.fm artist photo ---
+            if not url and config.LASTFM_API_KEY:
+                try:
+                    from app.clients.last_fm_client import get_artist_image_lastfm
+                    url = get_artist_image_lastfm(mbid=mbid, name=name)
+                except Exception as exc:
+                    logger.debug("Last.fm artist image lookup failed for '%s': %s", name, exc)
+
+            # --- Tertiary: Deezer artist photo ---
             if not url:
                 cached_artist = rythmx_store.get_cached_artist(name)
                 deezer_id = (cached_artist or {}).get("deezer_artist_id")

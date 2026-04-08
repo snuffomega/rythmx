@@ -413,6 +413,33 @@ def get_artist_info_lastfm(mbid: str = "", name: str = "") -> dict | None:
     return {"listeners": listeners, "playcount": playcount, "bio": bio}
 
 
+def get_artist_image_lastfm(mbid: str = "", name: str = "") -> str:
+    """
+    Fetch artist image URL from Last.fm artist.getInfo.
+
+    Prefers MBID lookup when available, otherwise falls back to name.
+    Returns "" when unavailable (missing key, no image, placeholder image, or API miss).
+    """
+    if not mbid and not name:
+        return ""
+
+    params: dict = {"autocorrect": 1}
+    if mbid:
+        params["mbid"] = mbid
+    else:
+        params["artist"] = name
+
+    data = _get("artist.getInfo", params)
+    if not data:
+        return ""
+
+    artist = data.get("artist", {})
+    if not artist:
+        return ""
+
+    return _extract_image(artist.get("image", []), preferred_size="mega")
+
+
 def test_connection() -> dict:
     """
     Verify Last.fm credentials work. Returns {status, username} or {status, error}.

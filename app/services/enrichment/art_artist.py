@@ -3,7 +3,8 @@ art_artist.py - Artist photo enrichment worker.
 
 Resolution order:
   1. Fanart.tv (primary upgrade path)
-  2. Deezer artist photo (fallback)
+  2. Last.fm artist photo (fallback, when LASTFM_API_KEY is configured)
+  3. Deezer artist photo (final fallback)
 
 Stores local artwork in image_cache (content_hash/local_path/artwork_source)
 and keeps per-source URL columns on lib_artists for compatibility.
@@ -32,7 +33,11 @@ _CANDIDATE_SQL = """
            ON ic.entity_type = 'artist' AND ic.entity_key = a.id
     WHERE a.removed_at IS NULL
       AND (a.deezer_artist_id IS NOT NULL OR COALESCE(a.musicbrainz_id, a.lastfm_mbid) IS NOT NULL)
-      AND (ic.content_hash IS NULL OR ic.artwork_source = 'deezer')
+      AND (
+          ic.content_hash IS NULL
+          OR ic.artwork_source = 'deezer'
+          OR (? = 1 AND ic.artwork_source = 'lastfm' AND COALESCE(a.musicbrainz_id, a.lastfm_mbid) IS NOT NULL)
+      )
 """
 
 _REMAINING_SQL = """
@@ -42,7 +47,11 @@ _REMAINING_SQL = """
            ON ic.entity_type = 'artist' AND ic.entity_key = a.id
     WHERE a.removed_at IS NULL
       AND (a.deezer_artist_id IS NOT NULL OR COALESCE(a.musicbrainz_id, a.lastfm_mbid) IS NOT NULL)
-      AND (ic.content_hash IS NULL OR ic.artwork_source = 'deezer')
+      AND (
+          ic.content_hash IS NULL
+          OR ic.artwork_source = 'deezer'
+          OR (? = 1 AND ic.artwork_source = 'lastfm' AND COALESCE(a.musicbrainz_id, a.lastfm_mbid) IS NOT NULL)
+      )
 """
 
 _session = requests.Session()
@@ -86,6 +95,7 @@ def _upsert_artist_cache(
 
 
 def _process_item(conn, row):
+    from app.clients.last_fm_client import get_artist_image_lastfm
     from app.services.image_service import deezer_get_artist_photo, fanart_get_artist
 
     artist_id = str(row["id"])
@@ -120,17 +130,38 @@ def _process_item(conn, row):
                 logger.debug("enrich_artist_art: '%s' -> fanart", artist_name)
                 return "found"
 
-    # No fanart upgrade available. If we already have a deezer hash, keep it and skip.
-    if current_hash and current_source == "deezer":
-        write_enrichment_meta(conn, "artist_art", "artist", artist_id, "not_found")
-        return "not_found"
-
-    # Never downgrade an existing fanart source to deezer fallback.
+    # Never downgrade an existing fanart source.
     if current_source == "fanart":
         write_enrichment_meta(conn, "artist_art", "artist", artist_id, "not_found")
         return "not_found"
 
-    # Fallback: Deezer photo (first-fill only; never downgrades fanart).
+    # Fallback 1: Last.fm artist photo (when configured).
+    if config.LASTFM_API_KEY:
+        lastfm_url = get_artist_image_lastfm(
+            mbid=str(mbid or ""),
+            name=str(artist_name or ""),
+        )
+        if lastfm_url:
+            payload = _download_image_bytes(lastfm_url)
+            if payload:
+                content_hash = ingest(payload)
+                _upsert_artist_cache(
+                    conn,
+                    artist_id=artist_id,
+                    image_url=lastfm_url,
+                    content_hash=content_hash,
+                    artwork_source="lastfm",
+                )
+                write_enrichment_meta(conn, "artist_art", "artist", artist_id, "found")
+                logger.debug("enrich_artist_art: '%s' -> lastfm", artist_name)
+                return "found"
+
+    # Keep existing local hashes when no higher-priority source is available.
+    if current_hash and current_source in ("lastfm", "deezer"):
+        write_enrichment_meta(conn, "artist_art", "artist", artist_id, "not_found")
+        return "not_found"
+
+    # Fallback 2: Deezer photo (first-fill only; never downgrades fanart/lastfm).
     if deezer_id:
         deezer_url = deezer_get_artist_photo(str(deezer_id))
         if deezer_url:
@@ -162,12 +193,13 @@ def _process_item(conn, row):
 
 def enrich_artist_art(batch_size=100, stop_event=None, on_progress=None):
     """Stage 2b: artist artwork enrichment with source-aware local storage."""
+    allow_lastfm_upgrade = 1 if config.FANART_API_KEY else 0
     return run_enrichment_loop(
         worker_name="enrich_artist_art",
         candidate_sql=_CANDIDATE_SQL,
-        candidate_params=(),
+        candidate_params=(allow_lastfm_upgrade,),
         remaining_sql=_REMAINING_SQL,
-        remaining_params=(),
+        remaining_params=(allow_lastfm_upgrade,),
         source="artist_art",
         entity_type="artist",
         entity_id_col="id",
