@@ -1,15 +1,16 @@
 import { PIPELINE_PHASES } from '../utils';
 
 describe('PIPELINE_PHASES', () => {
-  it('has 5 phases in expected order', () => {
-    expect(PIPELINE_PHASES).toHaveLength(5);
-    expect(PIPELINE_PHASES.map((phase) => phase.id)).toEqual(['sync', 'identity', 'artwork', 'post', 'rich']);
+  it('has 6 phases in expected order', () => {
+    expect(PIPELINE_PHASES).toHaveLength(6);
+    expect(PIPELINE_PHASES.map((phase) => phase.id)).toEqual(['sync', 'artist', 'album', 'artwork', 'post', 'tags']);
   });
 
   it('has expected worker counts for bar phases', () => {
-    expect(PIPELINE_PHASES.find((phase) => phase.id === 'identity')?.workers).toHaveLength(7);
+    expect(PIPELINE_PHASES.find((phase) => phase.id === 'artist')?.workers).toHaveLength(5);
+    expect(PIPELINE_PHASES.find((phase) => phase.id === 'album')?.workers).toHaveLength(2);
     expect(PIPELINE_PHASES.find((phase) => phase.id === 'artwork')?.workers).toHaveLength(3);
-    expect(PIPELINE_PHASES.find((phase) => phase.id === 'rich')?.workers).toHaveLength(9);
+    expect(PIPELINE_PHASES.find((phase) => phase.id === 'tags')?.workers).toHaveLength(9);
   });
 
   it('post phase is checklist with expected substeps', () => {
@@ -29,4 +30,3 @@ describe('PIPELINE_PHASES', () => {
     expect(keys).not.toContain('lastfm_id');
   });
 });
-

@@ -91,7 +91,7 @@ function PipelineOrchestrator({ libraryTrackCount, libraryLastSynced, platform, 
       )}
       {!running && lastRun && (
         <div className="text-sm text-text-secondary mb-4">
-          Last run: {new Date(lastRun.started_at).toLocaleDateString()} · {Math.floor(lastRun.duration_s / 60)}m {lastRun.duration_s % 60}s · {lastRun.enriched} enriched · {lastRun.not_found} not found · {lastRun.outcome}
+          Last run: {new Date(lastRun.started_at).toLocaleDateString()} - {Math.floor(lastRun.duration_s / 60)}m {lastRun.duration_s % 60}s - {lastRun.enriched} enriched - {lastRun.not_found} not found - {lastRun.outcome}
         </div>
       )}
 
@@ -166,19 +166,22 @@ function PipelineOrchestrator({ libraryTrackCount, libraryLastSynced, platform, 
       {showStages && (
         <div className="space-y-2 border-l border-border-subtle ml-1 pl-4">
           {PIPELINE_PHASES.map((phaseDef, idx) => {
-            const isPhaseActive = running && phaseIndex === idx;
+            const isPhaseActive = running && !!phase && phaseDef.backendPhases.includes(phase);
             const anyDataExists = totals.total > 0;
             const checklistComplete = phaseDef.displayType === 'checklist' && phaseDef.substeps
               ? phaseDef.substeps.every((step) => (substeps[step.key] ?? 'pending') === 'completed')
               : false;
+            const phaseHasWorkerData = phaseDef.displayType === 'bar'
+              ? phaseDef.workers.some((w) => workerStats(workers, [w.key]).hasData)
+              : false;
             const isPhaseDone = running
-              ? phaseIndex > idx
+              ? !isPhaseActive && (phaseIndex > idx || checklistComplete || phaseHasWorkerData)
               : phaseDef.displayType === 'bar'
-                ? phaseDef.workers.some((w) => workerStats(workers, [w.key]).hasData)
+                ? phaseHasWorkerData
                 : phaseDef.displayType === 'checklist'
                   ? checklistComplete
                   : anyDataExists;
-            const isPhaseWaiting = running && phaseIndex < idx;
+            const isPhaseWaiting = running && !isPhaseActive && !isPhaseDone;
             const hasWorkers = phaseDef.displayType === 'bar' && phaseDef.workers.length > 0;
 
             const phaseStats = hasWorkers ? phaseDef.workers.reduce(
@@ -265,17 +268,17 @@ function PipelineOrchestrator({ libraryTrackCount, libraryLastSynced, platform, 
                     {phaseDef.substeps.map((substep) => {
                       const status = substeps[substep.key as keyof EnrichmentSubsteps] ?? 'pending';
                       return (
-                        <div key={substep.key} className="flex items-center gap-2 text-sm">
+                        <div key={substep.key} className="flex items-center gap-2 text-[10px] font-mono">
                           {status === 'pending' && (
-                            <div className="w-4 h-4 border border-text-tertiary rounded-full" />
+                            <div className="w-2.5 h-2.5 border border-border-strong rounded-full" />
                           )}
                           {status === 'running' && (
-                            <Zap className="w-4 h-4 text-accent animate-pulse" />
+                            <Zap size={8} className="text-accent animate-pulse flex-shrink-0" />
                           )}
                           {status === 'completed' && (
-                            <CheckCircle className="w-4 h-4 text-success" />
+                            <CheckCircle size={8} className="text-accent/60 flex-shrink-0" />
                           )}
-                          <span className={status === 'completed' ? 'text-success' : 'text-text-secondary'}>
+                          <span className={status === 'pending' ? 'text-text-muted' : 'text-text-secondary'}>
                             {substep.label}
                           </span>
                         </div>

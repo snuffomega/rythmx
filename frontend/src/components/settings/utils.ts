@@ -28,17 +28,25 @@ export const PIPELINE_PHASES: Phase[] = [
     displayType: 'text',
   },
   {
-    id: 'identity',
-    label: 'Identity Resolution',
+    id: 'artist',
+    label: 'Artist Resolution',
     backendPhases: ['id_itunes_deezer', 'id_parallel'],
     workers: [
       { key: 'itunes_artist', label: 'Artist: iTunes' },
-      { key: 'itunes_album', label: 'Album: iTunes' },
       { key: 'deezer_artist', label: 'Artist: Deezer' },
-      { key: 'deezer_album', label: 'Album: Deezer' },
       { key: 'spotify_artist', label: 'Artist: Spotify' },
       { key: 'lastfm_artist', label: 'Artist: Last.fm' },
-      { key: 'artist_art', label: 'Artist Artwork' },
+      { key: 'artist_art', label: 'Artist: Artwork' },
+    ],
+    displayType: 'bar',
+  },
+  {
+    id: 'album',
+    label: 'Album Resolution',
+    backendPhases: ['id_itunes_deezer'],
+    workers: [
+      { key: 'itunes_album', label: 'Album: iTunes' },
+      { key: 'deezer_album', label: 'Album: Deezer' },
     ],
     displayType: 'bar',
   },
@@ -67,8 +75,8 @@ export const PIPELINE_PHASES: Phase[] = [
     ],
   },
   {
-    id: 'rich',
-    label: 'Rich Metadata',
+    id: 'tags',
+    label: 'Enrichment Tags',
     backendPhases: ['rich_data'],
     workers: [
       { key: 'itunes_rich', label: 'iTunes' },
@@ -118,4 +126,3 @@ export function workerStats(workers: Record<string, EnrichmentWorkerStatus>, key
   const processedPct = foundPct + notFoundPct + errorPct;
   return { found, notFound, errors, pending, total, foundPct, notFoundPct, errorPct, processedPct, hasData: total > 0 };
 }
-
