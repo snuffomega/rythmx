@@ -371,7 +371,7 @@ export function AlbumDetail({ albumId }: AlbumDetailProps) {
             {album.needs_verification === 1 && (
               <button
                 onClick={openFixMatchModal}
-                className="font-mono text-[10px] text-yellow-400 border border-yellow-400/30 px-1.5 py-0.5 rounded hover:bg-yellow-400/10 transition-colors"
+                className="font-mono text-[10px] text-warning-text border border-accent/30 px-1.5 py-0.5 rounded hover:bg-accent/10 transition-colors"
                 title="Open Fix Match"
               >
                 verify

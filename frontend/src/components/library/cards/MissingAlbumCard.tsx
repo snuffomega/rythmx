@@ -14,7 +14,7 @@ export function MissingAlbumCard({ release, onDismiss }: MissingAlbumCardProps) 
       {onDismiss && release.id && (
         <button
           onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDismiss(release.id!); }}
-          className="absolute top-3 left-3 z-10 opacity-0 group-hover:opacity-100 bg-black/70 hover:bg-red-500/80 text-text-muted hover:text-white rounded-full p-0.5 transition-all"
+          className="absolute top-3 left-3 z-10 opacity-0 group-hover:opacity-100 bg-black/70 hover:bg-[#BA0000]/80 text-text-muted hover:text-white rounded-full p-0.5 transition-all"
           aria-label="Dismiss"
         >
           <X size={12} />

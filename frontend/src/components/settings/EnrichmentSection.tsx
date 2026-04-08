@@ -15,8 +15,8 @@ function ProgressBar({ foundPct, notFoundPct, errorPct, processedPct, isActive, 
   return (
     <div className={`relative ${height} bg-surface-highlight rounded-full overflow-hidden`}>
       <div className="absolute top-0 left-0 h-full bg-accent transition-all duration-500 ease-out" style={{ width: `${foundPct}%` }} />
-      <div className="absolute top-0 h-full bg-red-500/50 transition-all duration-500 ease-out" style={{ left: `${foundPct}%`, width: `${notFoundPct}%` }} />
-      <div className="absolute top-0 h-full bg-red-500/70 transition-all duration-500 ease-out" style={{ left: `${foundPct + notFoundPct}%`, width: `${errorPct}%` }} />
+      <div className="absolute top-0 h-full bg-danger transition-all duration-500 ease-out" style={{ left: `${foundPct}%`, width: `${notFoundPct}%`, opacity: 0.55 }} />
+      <div className="absolute top-0 h-full bg-danger transition-all duration-500 ease-out" style={{ left: `${foundPct + notFoundPct}%`, width: `${errorPct}%`, opacity: 0.8 }} />
       {isActive && processedPct < 100 && (
         <div className="absolute top-0 h-full overflow-hidden" style={{ left: `${processedPct}%`, width: `${100 - processedPct}%` }}>
           <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent animate-shimmer" />
@@ -165,8 +165,8 @@ function PipelineOrchestrator({ libraryTrackCount, libraryLastSynced, platform, 
 
           <div className="flex items-center gap-4 mt-2 text-[10px] font-mono text-text-muted">
             <span className="text-accent">{coreTotalStats.found.toLocaleString()} resolved</span>
-            {coreMissing > 0 && <span className="text-amber-400/90">{coreMissing.toLocaleString()} unresolved</span>}
-            {coreTotalStats.errors > 0 && <span className="text-red-400">{coreTotalStats.errors.toLocaleString()} errors</span>}
+            {coreMissing > 0 && <span className="text-warning-text">{coreMissing.toLocaleString()} unresolved</span>}
+            {coreTotalStats.errors > 0 && <span className="text-danger">{coreTotalStats.errors.toLocaleString()} errors</span>}
           </div>
         </div>
 
@@ -315,7 +315,7 @@ function PipelineOrchestrator({ libraryTrackCount, libraryLastSynced, platform, 
                     <div className="flex items-center gap-3 mt-1 text-[10px] font-mono text-text-muted">
                       <span>{phaseProcessed.toLocaleString()} / {phaseStats.total.toLocaleString()}</span>
                       <span className="text-accent">{phaseStats.found.toLocaleString()} found</span>
-                      {phaseStats.notFound > 0 && <span className="text-red-400/70">{phaseStats.notFound.toLocaleString()} miss</span>}
+                      {phaseStats.notFound > 0 && <span className="text-danger opacity-80">{phaseStats.notFound.toLocaleString()} miss</span>}
                     </div>
                   </>
                 )}
@@ -455,8 +455,8 @@ export function EnrichmentSection({ platform, libraryTrackCount, libraryLastSync
               Review
             </button>
             <p className="text-xs text-text-muted">
-              <span className="inline-flex items-center gap-1.5 text-amber-500 font-medium">
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block" />
+              <span className="inline-flex items-center gap-1.5 text-warning-text font-medium">
+                <span className="w-1.5 h-1.5 rounded-full bg-warning-text inline-block" />
                 {auditTotal} item{auditTotal !== 1 ? 's' : ''} need review
               </span>
               {' '}- low-confidence matches flagged for manual confirmation.

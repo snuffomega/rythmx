@@ -50,7 +50,7 @@ export function ArtistCard({ artist, viewMode, onShufflePlay }: ArtistCardProps)
           {genre && ` · ${genre}`}
         </p>
         {artist.missing_count > 0 && (
-          <p className="text-[10px] font-mono text-amber-400 mt-0.5">{artist.missing_count} missing</p>
+          <p className="text-[10px] font-mono text-warning-text mt-0.5">{artist.missing_count} missing</p>
         )}
       </Link>
     );
@@ -83,7 +83,7 @@ export function ArtistCard({ artist, viewMode, onShufflePlay }: ArtistCardProps)
       </div>
       <div className="flex items-center gap-2 flex-shrink-0">
         {artist.missing_count > 0 && (
-          <span className="font-mono text-[10px] text-amber-400 bg-amber-400/10 px-1.5 py-0.5 rounded border border-amber-400/20">
+          <span className="font-mono text-[10px] text-warning-text bg-accent/10 px-1.5 py-0.5 rounded border border-accent/20">
             {artist.missing_count}
           </span>
         )}

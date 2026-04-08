@@ -139,9 +139,10 @@ export function ReleaseDetailView({ releaseId }: ReleaseDetailViewProps) {
           disabled={prefsLoading}
           className={`text-xs font-mono px-3 py-1.5 rounded-sm border transition-colors ${
             prefs?.dismissed
-              ? 'border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20'
+              ? 'border-danger text-danger hover:opacity-90'
               : 'border-border-strong bg-surface-raised text-text-muted hover:text-text-secondary hover:border-border-strong'
           }`}
+          style={prefs?.dismissed ? { backgroundColor: 'rgba(186, 0, 0, 0.12)' } : undefined}
         >
           {prefs?.dismissed ? 'Dismissed — Undo' : 'Dismiss'}
         </button>

@@ -223,7 +223,7 @@ export function AuditReviewModal({ open, onClose, onRefreshAuditTotal, toast }: 
                   <span className="text-xs text-text-primary truncate">{item.album_title}</span>
                   <span className="text-xs font-mono text-text-muted">{item.album_year ?? '-'}</span>
                   <div className="flex items-center gap-1.5 min-w-0">
-                    <span className="text-xs font-mono text-amber-400">{Math.round(item.match_confidence ?? 0)}%</span>
+                    <span className="text-xs font-mono text-warning-text">{Math.round(item.match_confidence ?? 0)}%</span>
                     {hasManualLock && (
                       <span
                         className="text-[9px] font-mono text-green-400 border border-green-400/30 px-1 py-0.5 truncate"
