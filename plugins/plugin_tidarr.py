@@ -487,75 +487,6 @@ class TidarrDownloader:
 
 
 # ---------------------------------------------------------------------------
-# File mover — file_handler slot
-# ---------------------------------------------------------------------------
-
-class TidarrFileMover:
-    """
-    file_handler slot implementation.
-
-    Receives a DownloadArtifact from Core — source_dir is already a locally
-    accessible path (translate_path was called by Core via TidarrDownloader),
-    and files is already populated with FLAC paths. This class only needs to:
-      1. Copy FLAC files to FILE_MOVER_DEST/{Artist}/{Album}/.
-      2. Set artifact.dest_dir to the destination directory.
-      3. Return the mutated artifact.
-
-    Requires one config var:
-      FILE_MOVER_DEST — root of your music library (absolute path, e.g. /music)
-                         Must be writable by the Rythmx container.
-
-    The path translation config (FILE_MOVER_TIDARR_PREFIX / FILE_MOVER_LOCAL_PREFIX)
-    belongs to TidarrDownloader.translate_path, not here. This mover is intentionally
-    path-agnostic — it works with any downloader that produces a DownloadArtifact.
-    """
-
-    name = "tidarr_mover"
-
-    def __init__(self) -> None:
-        self._dest = (os.environ.get("FILE_MOVER_DEST") or "").rstrip("/")
-
-    def organize(self, artifact) -> object:
-        """
-        Copy FLAC files from artifact.source_dir into the music library.
-
-        Args:
-            artifact: DownloadArtifact with .artist, .album, .files already populated.
-
-        Returns:
-            The artifact with .dest_dir set to the library destination directory,
-            or unchanged if FILE_MOVER_DEST is not configured or no files were copied.
-        """
-        import shutil as _shutil
-
-        if not self._dest:
-            logger.warning("tidarr_mover: FILE_MOVER_DEST not configured — skipping")
-            return artifact
-
-        if not artifact.files:
-            logger.warning("tidarr_mover: artifact has no files — skipping")
-            return artifact
-
-        def _safe_name(s: str) -> str:
-            return "".join(c for c in s if c not in r'\/:*?"<>|').strip()
-
-        artist   = _safe_name(artifact.artist or "Unknown Artist")
-        album    = _safe_name(artifact.album  or "Unknown Album")
-        dest_dir = os.path.join(self._dest, artist, album)
-        os.makedirs(dest_dir, exist_ok=True)
-
-        copied = 0
-        for src in sorted(artifact.files):
-            dst = os.path.join(dest_dir, os.path.basename(src))
-            _shutil.copy2(src, dst)
-            copied += 1
-
-        logger.info("tidarr_mover: copied %d FLAC(s) → %s", copied, dest_dir)
-        artifact.dest_dir = dest_dir
-        return artifact
-
-
-# ---------------------------------------------------------------------------
 # Plugin registration — must appear after class definitions
 # ---------------------------------------------------------------------------
 
@@ -564,7 +495,6 @@ PLUGIN_VERSION = "2.0.0"
 PLUGIN_DESCRIPTION = "Downloads albums via Tidarr (Tidal) and copies FLACs to your library."
 PLUGIN_SLOTS = {
     "downloader": TidarrDownloader,
-    "file_handler": TidarrFileMover,
 }
 
 CONFIG_SCHEMA = [
@@ -606,13 +536,5 @@ CONFIG_SCHEMA = [
         "type": "text",
         "required": False,
         "placeholder": "/app/downloads",
-    },
-    # --- File mover (used by TidarrFileMover.organize) ---
-    {
-        "key": "FILE_MOVER_DEST",
-        "label": "Music library destination path",
-        "type": "text",
-        "required": False,
-        "placeholder": "/music",
     },
 ]
