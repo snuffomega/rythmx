@@ -325,6 +325,66 @@ class TidarrDownloader:
         )
         return None
 
+    # ------------------------------------------------------------------
+    # Step 4b: polling helpers called by app/services/tidarr_poller.py
+    # ------------------------------------------------------------------
+
+    def poll_history(self, limit: int = 200) -> list[dict]:
+        """
+        Fetch completed/failed job slots from Tidarr's SABnzbd history endpoint.
+
+        GET /api/sabnzbd/api?mode=history&limit={n}
+
+        Returns a list of slot dicts with keys:
+            nzo_id   — matches the ID stored in download_jobs.job_id
+            name     — "Artist - Album" label
+            status   — "Completed" | "Failed"
+            storage  — absolute path on Tidarr host (only present on Completed)
+
+        Returns [] on any network or parse error — callers should treat empty
+        as "nothing resolved yet".
+        """
+        if not self._url or not self._key:
+            return []
+        try:
+            resp = self._session.get(
+                f"{self._url}/api/sabnzbd/api",
+                params={"mode": "history", "limit": limit, "apikey": self._key},
+                timeout=15,
+            )
+            resp.raise_for_status()
+            return resp.json().get("history", {}).get("slots", [])
+        except Exception as exc:
+            logger.warning("tidarr: poll_history error: %s", exc)
+            return []
+
+    def poll_queue(self) -> list[dict]:
+        """
+        Fetch in-progress job slots from Tidarr's SABnzbd queue endpoint.
+
+        GET /api/sabnzbd/api?mode=queue
+
+        Returns a list of slot dicts with keys:
+            nzo_id    — matches download_jobs.job_id
+            filename  — display name
+            status    — "Downloading" | "Queued" | "Paused"
+
+        Primarily used for UI progress display. Returns [] on error.
+        """
+        if not self._url or not self._key:
+            return []
+        try:
+            resp = self._session.get(
+                f"{self._url}/api/sabnzbd/api",
+                params={"mode": "queue", "apikey": self._key},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            return resp.json().get("queue", {}).get("slots", [])
+        except Exception as exc:
+            logger.warning("tidarr: poll_queue error: %s", exc)
+            return []
+
 
 # ---------------------------------------------------------------------------
 # Plugin registration — must appear after class definition

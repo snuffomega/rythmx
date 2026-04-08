@@ -7,6 +7,7 @@ Active responsibilities:
   - Forge scheduled runs: New Music (nm_schedule_*) and Custom Discovery (fd_schedule_*)
   - Acquisition worker tick
   - Image cache warming during idle hours
+  - Tidarr download completion poller (every 60 s)
 """
 import threading
 import logging
@@ -19,6 +20,7 @@ logger = logging.getLogger(__name__)
 # Module-level state
 _stop_event = threading.Event()
 _thread: threading.Thread | None = None
+_poll_thread: threading.Thread | None = None
 
 
 def get_status() -> dict:
@@ -49,15 +51,30 @@ def _loop():
         _stop_event.wait(timeout=3600)  # Check every hour
 
 
+def _poll_loop():
+    """Short-interval loop — polls Tidarr download completion every 60 seconds."""
+    while not _stop_event.is_set():
+        try:
+            from app.services import tidarr_poller
+            result = tidarr_poller.poll_once()
+            if result.get("completed") or result.get("failed"):
+                logger.info("tidarr_poller: %s", result)
+        except Exception as exc:
+            logger.warning("tidarr_poller tick error: %s", exc)
+        _stop_event.wait(timeout=60)
+
+
 def start():
     """Start the background scheduler thread."""
-    global _thread
+    global _thread, _poll_thread
     if _thread and _thread.is_alive():
         return
     _stop_event.clear()
     _thread = threading.Thread(target=_loop, daemon=True, name="maintenance-scheduler")
     _thread.start()
-    logger.info("Background scheduler started (Forge schedules + acquisition/image warmer active)")
+    _poll_thread = threading.Thread(target=_poll_loop, daemon=True, name="tidarr-poller")
+    _poll_thread.start()
+    logger.info("Background scheduler started (Forge schedules + acquisition/image warmer + Tidarr poller active)")
 
 
 def stop():
