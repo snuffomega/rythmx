@@ -27,6 +27,7 @@ import { AlbumCard } from './cards/AlbumCard';
 // ---------------------------------------------------------------------------
 
 const AZ_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ#'.split('');
+const PAGE_SIZE = 100;
 
 
 export function LibraryRoot() {
@@ -54,6 +55,8 @@ export function LibraryRoot() {
   // Add-to-playlist modal (tracks tab)
   const picker = usePlaylistPicker();
   const playQueue = usePlayerStore(s => s.playQueue);
+  const playerState = usePlayerStore(s => s.playerState);
+  const hasMiniPlayer = playerState === 'mini';
 
   // Filters
   const [backendFilter, setBackendFilter] = useState('all');
@@ -61,13 +64,11 @@ export function LibraryRoot() {
   const [decadeFilter, setDecadeFilter] = useState<number | null>(null);
   const [regionFilter, setRegionFilter] = useState<string | null>(null);
   const [filterOptions, setFilterOptions] = useState<{ decades: number[]; regions: string[] }>({ decades: [], regions: [] });
+  const [albumPage, setAlbumPage] = useState(1);
+  const [trackPage, setTrackPage] = useState(1);
 
   // A–Z letter filter
   const [letterFilter, setLetterFilter] = useState<string | null>(null);
-  const alphaBucket = (value: string | null | undefined) => {
-    const lead = (value ?? '').trim().charAt(0).toUpperCase();
-    return /^[A-Z]$/.test(lead) ? lead : '#';
-  };
 
   // Debounce search — clear letter filter when user types
   useEffect(() => {
@@ -102,7 +103,7 @@ export function LibraryRoot() {
     try {
       const res = await libraryBrowseApi.getArtists({
         q: q || undefined,
-        backend: backend !== 'all' ? backend : undefined,
+        platform: backend !== 'all' ? backend : undefined,
         decade: decade ?? undefined,
         region: region ?? undefined,
         letter: letter ?? undefined,
@@ -117,15 +118,23 @@ export function LibraryRoot() {
     }
   }, []);
 
-  const fetchAlbums = useCallback(async (q: string, backend: string, recordType: string) => {
+  const fetchAlbums = useCallback(async (
+    q: string,
+    backend: string,
+    recordType: string,
+    letter: string | null,
+    page: number,
+  ) => {
     setLoading(true);
     setFetchError(null);
     try {
       const res = await libraryBrowseApi.getAlbums({
         q: q || undefined,
-        backend: backend !== 'all' ? backend : undefined,
+        platform: backend !== 'all' ? backend : undefined,
         record_type: recordType !== 'all' ? recordType : undefined,
-        per_page: 1000,
+        letter: letter ?? undefined,
+        page,
+        per_page: PAGE_SIZE,
       });
       setAlbums(res.albums);
       setTotalAlbums(res.total);
@@ -136,11 +145,15 @@ export function LibraryRoot() {
     }
   }, []);
 
-  const fetchTracks = useCallback(async (q: string) => {
+  const fetchTracks = useCallback(async (q: string, page: number) => {
     setLoading(true);
     setFetchError(null);
     try {
-      const res = await libraryBrowseApi.getTracks({ q: q || undefined });
+      const res = await libraryBrowseApi.getTracks({
+        q: q || undefined,
+        page,
+        per_page: PAGE_SIZE,
+      });
       setTracks(res.tracks);
       setTotalTracks(res.total);
     } catch (err) {
@@ -152,9 +165,22 @@ export function LibraryRoot() {
 
   useEffect(() => {
     if (tab === 'artists') fetchArtists(debouncedSearch, backendFilter, decadeFilter, regionFilter, letterFilter);
-    else if (tab === 'albums') fetchAlbums(debouncedSearch, backendFilter, recordTypeFilter);
-    else fetchTracks(debouncedSearch);
-  }, [tab, debouncedSearch, backendFilter, recordTypeFilter, decadeFilter, regionFilter, letterFilter, fetchArtists, fetchAlbums, fetchTracks]);
+    else if (tab === 'albums') fetchAlbums(debouncedSearch, backendFilter, recordTypeFilter, letterFilter, albumPage);
+    else fetchTracks(debouncedSearch, trackPage);
+  }, [
+    tab,
+    debouncedSearch,
+    backendFilter,
+    recordTypeFilter,
+    decadeFilter,
+    regionFilter,
+    letterFilter,
+    albumPage,
+    trackPage,
+    fetchArtists,
+    fetchAlbums,
+    fetchTracks,
+  ]);
 
   // Run pipeline (sync + enrich in one pass)
   const handleSync = useCallback(async () => {
@@ -171,6 +197,8 @@ export function LibraryRoot() {
     setTab(t);
     setSearch('');
     setLetterFilter(null);
+    setAlbumPage(1);
+    setTrackPage(1);
     if (t === 'albums') {
       setRecordTypeFilter('all');
     }
@@ -255,15 +283,35 @@ export function LibraryRoot() {
     playQueue(queueTracks.slice(idx));
   }, [playQueue, status?.platform, tracks]);
 
-  const visibleAlbums = tab === 'albums' && letterFilter
-    ? albums.filter(al => alphaBucket(al.title) === letterFilter)
-    : albums;
+  const totalAlbumPages = Math.max(1, Math.ceil(totalAlbums / PAGE_SIZE));
+  const totalTrackPages = Math.max(1, Math.ceil(totalTracks / PAGE_SIZE));
+  const showPagination = !loading && !fetchError && (
+    (tab === 'albums' && totalAlbums > PAGE_SIZE) ||
+    (tab === 'tracks' && totalTracks > PAGE_SIZE)
+  );
+  const currentPage = tab === 'albums' ? albumPage : trackPage;
+  const maxPage = tab === 'albums' ? totalAlbumPages : totalTrackPages;
+  const startIndex = tab === 'albums'
+    ? (totalAlbums ? (albumPage - 1) * PAGE_SIZE + 1 : 0)
+    : tab === 'tracks'
+      ? (totalTracks ? (trackPage - 1) * PAGE_SIZE + 1 : 0)
+      : 0;
+  const endIndex = tab === 'albums'
+    ? Math.min(albumPage * PAGE_SIZE, totalAlbums)
+    : tab === 'tracks'
+      ? Math.min(trackPage * PAGE_SIZE, totalTracks)
+      : 0;
 
   // Root view
   const footerText = loading ? null
     : tab === 'artists' ? `${totalArtists} artist${totalArtists !== 1 ? 's' : ''}`
-    : tab === 'albums'  ? `${(letterFilter ? visibleAlbums.length : totalAlbums)} album${(letterFilter ? visibleAlbums.length : totalAlbums) !== 1 ? 's' : ''}`
-    :                     `${totalTracks} track${totalTracks !== 1 ? 's' : ''}`;
+    : tab === 'albums'
+      ? (totalAlbums === 0
+        ? '0 releases'
+        : `${startIndex.toLocaleString()}-${endIndex.toLocaleString()} of ${totalAlbums.toLocaleString()} releases`)
+      : (totalTracks === 0
+        ? '0 tracks'
+        : `${startIndex.toLocaleString()}-${endIndex.toLocaleString()} of ${totalTracks.toLocaleString()} tracks`);
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -339,7 +387,10 @@ export function LibraryRoot() {
             {tab === 'albums' && (
               <select
                 value={recordTypeFilter}
-                onChange={e => setRecordTypeFilter(e.target.value)}
+                onChange={e => {
+                  setRecordTypeFilter(e.target.value);
+                  setAlbumPage(1);
+                }}
                 className="bg-surface border border-border text-text-primary text-xs font-mono rounded-sm px-2 py-1.5 appearance-none cursor-pointer focus:outline-none focus:border-accent"
               >
                 <option value="all">All Releases</option>
@@ -379,7 +430,10 @@ export function LibraryRoot() {
             {tab === 'albums' && (
               <select
                 value={backendFilter}
-                onChange={e => setBackendFilter(e.target.value)}
+                onChange={e => {
+                  setBackendFilter(e.target.value);
+                  setAlbumPage(1);
+                }}
                 className="bg-surface border border-border text-text-primary text-xs font-mono rounded-sm px-2 py-1.5 appearance-none cursor-pointer focus:outline-none focus:border-accent"
               >
                 <option value="all">All Sources</option>
@@ -412,7 +466,11 @@ export function LibraryRoot() {
                 type="text"
                 placeholder={`Search ${tab}…`}
                 value={search}
-                onChange={e => setSearch(e.target.value)}
+                onChange={e => {
+                  setSearch(e.target.value);
+                  if (tab === 'albums') setAlbumPage(1);
+                  if (tab === 'tracks') setTrackPage(1);
+                }}
                 className="bg-surface border border-border text-text-primary placeholder-text-muted rounded-sm pl-8 pr-3 py-1.5 text-xs font-mono w-44 focus:outline-none focus:border-accent transition-colors"
               />
             </div>
@@ -429,8 +487,8 @@ export function LibraryRoot() {
               error={fetchError}
               onRetry={() => {
                 if (tab === 'artists') fetchArtists(debouncedSearch, backendFilter, decadeFilter, regionFilter, letterFilter);
-                else if (tab === 'albums') fetchAlbums(debouncedSearch, backendFilter, recordTypeFilter);
-                else fetchTracks(debouncedSearch);
+                else if (tab === 'albums') fetchAlbums(debouncedSearch, backendFilter, recordTypeFilter, letterFilter, albumPage);
+                else fetchTracks(debouncedSearch, trackPage);
               }}
             />
           </div>
@@ -471,11 +529,11 @@ export function LibraryRoot() {
         {!loading && !fetchError && tab === 'albums' && (
           viewMode === 'grid' ? (
             <div className="p-4 grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-3">
-              {visibleAlbums.map(al => <AlbumCard key={al.id} album={al} viewMode="grid" onHoverPlay={handleHoverPlayAlbumCard} />)}
+              {albums.map(al => <AlbumCard key={al.id} album={al} viewMode="grid" onHoverPlay={handleHoverPlayAlbumCard} />)}
             </div>
           ) : (
             <div className="py-2">
-              {visibleAlbums.map(al => <AlbumCard key={al.id} album={al} viewMode="list" onHoverPlay={handleHoverPlayAlbumCard} />)}
+              {albums.map(al => <AlbumCard key={al.id} album={al} viewMode="list" onHoverPlay={handleHoverPlayAlbumCard} />)}
             </div>
           )
         )}
@@ -505,10 +563,12 @@ export function LibraryRoot() {
                 >
                   <Play size={14} className="fill-current" />
                 </button>
-                <span className="font-mono text-xs text-text-muted tabular-nums text-right">{String(i + 1).padStart(3, '0')}</span>
+                <span className="font-mono text-xs text-text-muted tabular-nums text-right">
+                  {String((trackPage - 1) * PAGE_SIZE + i + 1).padStart(3, '0')}
+                </span>
                 <span className="text-sm text-text-primary group-hover:text-accent truncate">{t.title}</span>
                 <span className="font-mono text-xs text-text-secondary group-hover:text-accent/80 truncate">{t.artist_name}</span>
-                <span className="font-mono text-xs text-text-muted group-hover:text-accent/80 truncate">{t.album_title}</span>
+                <span className="font-mono text-xs text-text-secondary group-hover:text-accent/80 truncate">{t.album_title}</span>
                 <span className="font-mono text-xs text-text-muted group-hover:text-accent/80 tabular-nums text-right">{formatDuration(t.duration)}</span>
                 <button
                   onClick={() => picker.openPicker(t)}
@@ -525,7 +585,7 @@ export function LibraryRoot() {
 
         {!loading && !fetchError && (
           (tab === 'artists' && artists.length === 0) ||
-          (tab === 'albums' && visibleAlbums.length === 0) ||
+          (tab === 'albums' && albums.length === 0) ||
           (tab === 'tracks' && tracks.length === 0)
         ) && (
           <p className="text-center text-text-muted text-sm py-20">
@@ -541,15 +601,18 @@ export function LibraryRoot() {
         {/* A–Z filter rail — visible for artists tab when no search active */}
         {(tab === 'artists' || tab === 'albums') && !debouncedSearch && (
           <div className="w-8 flex-shrink-0 sticky top-0 self-stretch py-2 pr-1">
-            <div className="h-full min-h-[420px] flex flex-col justify-between items-center">
+            <div className="h-full min-h-[420px] flex flex-col justify-evenly items-center">
               {AZ_LETTERS.map(letter => (
                 <button
                   key={letter}
-                  onClick={() => setLetterFilter(letterFilter === letter ? null : letter)}
+                  onClick={() => {
+                    setLetterFilter(letterFilter === letter ? null : letter);
+                    if (tab === 'albums') setAlbumPage(1);
+                  }}
                   className={`font-mono text-[11px] leading-[1] w-6 py-0.5 text-center rounded transition-colors ${
                     letterFilter === letter
-                      ? 'text-accent bg-accent/10 font-bold'
-                      : 'text-text-muted hover:text-text-secondary hover:bg-surface-raised'
+                      ? 'bg-accent text-black font-bold'
+                      : 'text-text-muted hover:text-accent hover:bg-accent/15'
                   }`}
                 >
                   {letter}
@@ -562,8 +625,37 @@ export function LibraryRoot() {
 
       {/* Footer count */}
       {footerText && (
-        <div className="px-6 py-2 border-t border-border-subtle flex-shrink-0">
-          <span className="font-mono text-[10px] text-text-muted">{footerText}</span>
+        <div className={`px-6 py-2 border-t border-border-subtle flex-shrink-0 ${hasMiniPlayer ? 'mb-24' : ''}`}>
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-mono text-[10px] text-text-muted">{footerText}</span>
+            {showPagination && (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    if (tab === 'albums') setAlbumPage(p => Math.max(1, p - 1));
+                    if (tab === 'tracks') setTrackPage(p => Math.max(1, p - 1));
+                  }}
+                  disabled={currentPage <= 1}
+                  className="px-2 py-1 text-[10px] font-mono border border-border rounded-sm text-text-muted hover:text-text-primary hover:border-border-strong disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  Prev
+                </button>
+                <span className="font-mono text-[10px] text-text-muted">
+                  Page {currentPage} / {maxPage}
+                </span>
+                <button
+                  onClick={() => {
+                    if (tab === 'albums') setAlbumPage(p => Math.min(totalAlbumPages, p + 1));
+                    if (tab === 'tracks') setTrackPage(p => Math.min(totalTrackPages, p + 1));
+                  }}
+                  disabled={currentPage >= maxPage}
+                  className="px-2 py-1 text-[10px] font-mono border border-border rounded-sm text-text-muted hover:text-text-primary hover:border-border-strong disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  Next
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       )}
 

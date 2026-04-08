@@ -23,6 +23,7 @@ import {
   Loader2,
   ListMusic,
   Clock,
+  Library as LibraryIcon,
 } from 'lucide-react';
 import { useNavigate } from '@tanstack/react-router';
 import { enrichmentApi, libraryApi, libraryPlaylistsApi } from '../services/api';
@@ -547,19 +548,22 @@ export function LibraryPlaylists({ toast }: LibraryPlaylistsProps) {
       {/* Status banner */}
       {status && (
         <div className="px-6 py-2.5 bg-base border-b border-border-subtle flex items-center justify-between flex-shrink-0">
-          <div className="flex items-center gap-2 text-xs font-mono text-text-secondary">
-            <span>{status.track_count?.toLocaleString()} tracks</span>
-            <span className="text-text-faint">-</span>
-            <span>{(status as unknown as { enrich_pct?: number }).enrich_pct ?? 0}% enriched</span>
-            {status.last_synced && (
-              <>
-                <span className="text-text-faint">-</span>
-                <span className="text-text-muted flex items-center gap-1">
-                  <RefreshCw size={10} />
-                  {new Date(status.last_synced).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                </span>
-              </>
-            )}
+          <div className="flex items-center gap-3">
+            <LibraryIcon size={14} className="text-accent flex-shrink-0" />
+            <div className="flex items-center gap-2 text-xs font-mono text-text-secondary">
+              <span>{status.track_count?.toLocaleString()} tracks</span>
+              <span className="text-text-faint">-</span>
+              <span>{(status as unknown as { enrich_pct?: number }).enrich_pct ?? 0}% enriched</span>
+              {status.last_synced && (
+                <>
+                  <span className="text-text-faint">-</span>
+                  <span className="text-text-muted flex items-center gap-1">
+                    <RefreshCw size={10} />
+                    {new Date(status.last_synced).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                </>
+              )}
+            </div>
           </div>
           <button
             onClick={handleRunNow}

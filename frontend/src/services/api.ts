@@ -262,9 +262,12 @@ export const forgeDiscoveryApi = {
 };
 
 export const libraryBrowseApi = {
-  getArtists: (p: { q?: string; page?: number; per_page?: number; backend?: string; decade?: number | null; region?: string | null; letter?: string | null } = {}) => {
+  getArtists: (p: { q?: string; page?: number; per_page?: number; backend?: string; platform?: string; decade?: number | null; region?: string | null; letter?: string | null } = {}) => {
+    const platform = p.platform ?? p.backend;
+    const rest = { ...p };
+    delete rest.backend;
     const qs = new URLSearchParams(
-      Object.entries({ per_page: '50', ...p }).filter(([, v]) => v != null && v !== '') as [string, string][]
+      Object.entries({ per_page: '50', ...rest, platform }).filter(([, v]) => v != null && v !== '') as [string, string][]
     ).toString();
     return request<{ status: string; artists: LibArtist[]; total: number; page: number }>(`/library/artists?${qs}`);
   },
@@ -274,9 +277,12 @@ export const libraryBrowseApi = {
     request<{ status: string } & LibArtistDetail>(`/library/artists/${encodeURIComponent(id)}`),
   getSimilarArtists: (id: string) =>
     request<{ status: string; similar: SimilarArtist[] }>(`/library/artists/${encodeURIComponent(id)}/similar`),
-  getAlbums: (p: { q?: string; page?: number; per_page?: number; backend?: string; record_type?: string } = {}) => {
+  getAlbums: (p: { q?: string; page?: number; per_page?: number; backend?: string; platform?: string; record_type?: string; letter?: string } = {}) => {
+    const platform = p.platform ?? p.backend;
+    const rest = { ...p };
+    delete rest.backend;
     const qs = new URLSearchParams(
-      Object.entries({ per_page: '50', ...p }).filter(([, v]) => v != null) as [string, string][]
+      Object.entries({ per_page: '50', ...rest, platform }).filter(([, v]) => v != null && v !== '') as [string, string][]
     ).toString();
     return request<{ status: string; albums: LibAlbum[]; total: number; page: number }>(`/library/albums?${qs}`);
   },

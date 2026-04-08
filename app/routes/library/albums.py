@@ -22,6 +22,7 @@ def library_albums(
     per_page: int = Query(default=50, le=200),
     platform: str = "all",
     record_type: str = "all",
+    letter: str = "",
 ):
     q = q.strip()
     where = ["al.removed_at IS NULL"]
@@ -35,6 +36,15 @@ def library_albums(
     if record_type != "all":
         where.append("al.record_type_deezer = ?")
         params.append(record_type)
+    letter = (letter or "").strip().upper()
+    if letter:
+        if letter == "#":
+            where.append(
+                "NOT (substr(upper(trim(al.title)), 1, 1) BETWEEN 'A' AND 'Z')"
+            )
+        elif len(letter) == 1 and "A" <= letter <= "Z":
+            where.append("substr(upper(trim(al.title)), 1, 1) = ?")
+            params.append(letter)
 
     where_clause = " AND ".join(where)
     offset = (page - 1) * per_page
