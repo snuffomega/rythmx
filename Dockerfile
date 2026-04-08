@@ -46,6 +46,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # Copy application code (tests/ and scripts/ excluded via .dockerignore)
 COPY app/ ./app/
 COPY migrations/ ./migrations/
+COPY plugins/ ./plugins/
 
 # Copy the compiled React app into the webui/ folder FastAPI serves
 COPY --from=builder /build/dist ./webui/

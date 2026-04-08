@@ -36,9 +36,10 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-# Matches /api/lidarr/download/{albumId}/{quality} in a Tidarr link URL.
-# e.g. http://tidarr:8484/api/lidarr/download/251082404/high  →  "251082404"
-_DOWNLOAD_URL_RE = re.compile(r"/api/lidarr/download/(\d+)/")
+# Matches the Tidal album ID from Tidarr's Newznab <link> URLs.
+# Actual format (port 3030): http://host:3030/album/20115556       → group(1) = "20115556"
+# Legacy format (port 8484): http://host:8484/api/lidarr/download/20115556/high → group(2)
+_DOWNLOAD_URL_RE = re.compile(r"/album/(\d+)|/api/lidarr/download/(\d+)/")
 
 
 class TidarrDownloader:
@@ -276,15 +277,15 @@ class TidarrDownloader:
         """
         Parse Tidarr's Newznab XML response and return the first Tidal album ID.
 
-        Primary path:
-            <link>http://tidarr:8484/api/lidarr/download/251082404/high</link>
-            → regex extracts "251082404"
+        Primary path (port 3030):
+            <link>http://host:3030/album/20115556</link>
+            → group(1) = "20115556"
 
-        Fallback path:
-            <guid>tidarr-251082404</guid>  (or similar)
-            → first run of 5+ digits extracted
+        Legacy path (port 8484):
+            <link>http://host:8484/api/lidarr/download/20115556/high</link>
+            → group(2) = "20115556"
 
-        Returns the numeric ID string, or None if neither path yields a result.
+        Returns the numeric ID string, or None if no match found.
         """
         try:
             root = ET.fromstring(xml_text)
@@ -304,19 +305,14 @@ class TidarrDownloader:
 
         first = items[0]
 
-        # Primary: <link> contains /api/lidarr/download/{albumId}/{quality}
+        # Extract Tidal album ID from <link>.
+        # Actual format:  http://host:3030/album/20115556        → group(1)
+        # Legacy format:  http://host:8484/api/lidarr/download/20115556/high → group(2)
         link_el = first.find("link")
         if link_el is not None and link_el.text:
             m = _DOWNLOAD_URL_RE.search(link_el.text)
             if m:
-                return m.group(1)
-
-        # Fallback: <guid> — extract first run of 5+ digits
-        guid_el = first.find("guid")
-        if guid_el is not None and guid_el.text:
-            digits = re.findall(r"\d{5,}", guid_el.text)
-            if digits:
-                return digits[0]
+                return m.group(1) or m.group(2)
 
         logger.warning(
             "tidarr: could not extract Tidal ID from Newznab result for %s — %s",

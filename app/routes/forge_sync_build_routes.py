@@ -778,6 +778,7 @@ def forge_builds_fetch(build_id: str):
 
     fetch_enabled = facade._is_truthy(facade.rythmx_store.get_setting("fetch_enabled", "false"))
     if not fetch_enabled:
+        logger.info("forge/fetch: blocked — fetch_enabled=False for build %s", build_id)
         return facade._error(
             "Fetch is disabled in Settings.",
             status_code=400,
