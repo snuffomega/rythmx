@@ -43,7 +43,10 @@ export function AlbumCard({ album, viewMode, onHoverPlay }: AlbumCardProps) {
           )}
         </div>
         <p className="text-text-primary text-sm font-medium truncate">{album.title}</p>
-        {album.year && <p className="text-text-muted text-xs font-mono">{album.year}</p>}
+        <p className="text-text-muted text-xs font-mono truncate">
+          {album.artist_name}
+          {album.year ? ` * ${album.year}` : ''}
+        </p>
       </Link>
     );
   }
@@ -71,10 +74,12 @@ export function AlbumCard({ album, viewMode, onHoverPlay }: AlbumCardProps) {
       </div>
       <div className="flex-1 min-w-0 text-left">
         <p className="text-text-primary text-sm font-medium truncate">{album.title}</p>
-        <p className="text-text-muted text-xs font-mono truncate">{album.artist_name}</p>
+        <p className="text-text-muted text-xs font-mono truncate">
+          {album.artist_name}
+          {album.year ? ` * ${album.year}` : ''}
+        </p>
       </div>
       <div className="flex items-center gap-2 flex-shrink-0 text-text-muted text-xs font-mono">
-        {album.year && <span>{album.year}</span>}
         {album.record_type && <span className="capitalize">{album.record_type}</span>}
         <SourceChip backend={album.source_platform} />
       </div>

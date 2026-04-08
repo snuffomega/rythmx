@@ -25,12 +25,12 @@ import {
   Clock,
 } from 'lucide-react';
 import { useNavigate } from '@tanstack/react-router';
-import { libraryPlaylistsApi } from '../services/api';
-import { usePlayerStore } from '../stores/usePlayerStore';
+import { enrichmentApi, libraryApi, libraryPlaylistsApi } from '../services/api';
+import { usePlayerStore, type PlayerTrack } from '../stores/usePlayerStore';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { ApiErrorBanner } from '../components/common';
 import { getImageUrl } from '../utils/imageUrl';
-import type { LibPlaylist, LibPlaylistTrack } from '../types';
+import type { LibPlaylist, LibPlaylistTrack, LibraryStatus } from '../types';
 
 interface LibraryPlaylistsProps {
   toast: { success: (m: string) => void; error: (m: string) => void };
@@ -363,19 +363,37 @@ function PlaylistDetail({
 function PlaylistCard({
   playlist,
   onClick,
+  onHoverPlay,
 }: {
   playlist: LibPlaylist;
   onClick: () => void;
+  onHoverPlay?: (playlist: LibPlaylist) => void;
 }) {
+  const showHoverPlay = Boolean(onHoverPlay);
+
+  function handleHoverPlayClick(event: React.MouseEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    onHoverPlay?.(playlist);
+  }
+
   return (
-    <button
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onClick();
+        }
+      }}
       className="flex flex-col bg-surface hover:bg-surface-highlight border border-border-subtle
                  hover:border-border-input rounded-xl p-4 text-left transition-colors
                  group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
     >
       {/* Cover */}
-      <div className="w-full aspect-square rounded-lg bg-surface-raised flex items-center justify-center mb-3 overflow-hidden">
+      <div className="relative w-full aspect-square rounded-lg bg-surface-raised flex items-center justify-center mb-3 overflow-hidden group/playlist">
         {playlist.cover_url ? (
           <img
             src={getImageUrl(playlist.cover_url)}
@@ -384,6 +402,18 @@ function PlaylistCard({
           />
         ) : (
           <ListMusic size={36} className="text-text-muted opacity-40 group-hover:opacity-60 transition-opacity" />
+        )}
+        {showHoverPlay && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-0 group-hover/playlist:opacity-100 transition-opacity">
+            <button
+              onClick={handleHoverPlayClick}
+              className="pointer-events-auto w-11 h-11 rounded-full bg-accent text-black flex items-center justify-center shadow-lg hover:bg-accent/85 transition-colors"
+              aria-label={`Play ${playlist.name}`}
+              title="Play playlist"
+            >
+              <Play size={18} className="fill-current" />
+            </button>
+          </div>
         )}
       </div>
 
@@ -399,7 +429,7 @@ function PlaylistCard({
         <div className="flex-1" />
         <PlatformBadge platform={playlist.source_platform} />
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -408,11 +438,14 @@ function PlaylistCard({
 // ---------------------------------------------------------------------------
 export function LibraryPlaylists({ toast }: LibraryPlaylistsProps) {
   const navigate = useNavigate();
+  const playQueue = usePlayerStore((s) => s.playQueue);
   const [playlists, setPlaylists] = useState<LibPlaylist[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [runningNow, setRunningNow] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<LibPlaylist | null>(null);
+  const [status, setStatus] = useState<LibraryStatus | null>(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -428,6 +461,10 @@ export function LibraryPlaylists({ toast }: LibraryPlaylistsProps) {
     load();
   }, [load]);
 
+  useEffect(() => {
+    libraryApi.getStatus().then(setStatus).catch(() => {});
+  }, []);
+
   const handleSync = useCallback(async () => {
     setSyncing(true);
     try {
@@ -436,12 +473,49 @@ export function LibraryPlaylists({ toast }: LibraryPlaylistsProps) {
         `Synced ${result.playlists_synced} playlists, ${result.tracks_synced} tracks`
       );
       load();
+      libraryApi.getStatus().then(setStatus).catch(() => {});
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : 'Sync failed');
     } finally {
       setSyncing(false);
     }
   }, [load, toast]);
+
+  const handleRunNow = useCallback(async () => {
+    setRunningNow(true);
+    try {
+      await enrichmentApi.runFull();
+      const s = await libraryApi.getStatus();
+      setStatus(s);
+    } catch {
+      // no-op
+    } finally {
+      setRunningNow(false);
+    }
+  }, []);
+
+  const handleHoverPlayPlaylistCard = useCallback(async (playlist: LibPlaylist) => {
+    try {
+      const tracks = await libraryPlaylistsApi.getTracks(playlist.id);
+      const queueTracks: PlayerTrack[] = tracks.map((t) => ({
+        id: t.track_id,
+        title: t.title,
+        artist: t.artist_name ?? '',
+        album: t.album_title ?? '',
+        duration: t.duration,
+        thumb_url: playlist.cover_url ?? null,
+        thumb_hash: null,
+        source_platform: playlist.source_platform,
+      }));
+      if (!queueTracks.length) {
+        toast.error(`No playable tracks found for "${playlist.name}"`);
+        return;
+      }
+      playQueue(queueTracks);
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to play playlist');
+    }
+  }, [playQueue, toast]);
 
   const handleDeleted = useCallback((id: string) => {
     setPlaylists((prev) => prev.filter((p) => p.id !== id));
@@ -470,6 +544,34 @@ export function LibraryPlaylists({ toast }: LibraryPlaylistsProps) {
 
   return (
     <div className="flex flex-col h-full">
+      {/* Status banner */}
+      {status && (
+        <div className="px-6 py-2.5 bg-base border-b border-border-subtle flex items-center justify-between flex-shrink-0">
+          <div className="flex items-center gap-2 text-xs font-mono text-text-secondary">
+            <span>{status.track_count?.toLocaleString()} tracks</span>
+            <span className="text-text-faint">-</span>
+            <span>{(status as unknown as { enrich_pct?: number }).enrich_pct ?? 0}% enriched</span>
+            {status.last_synced && (
+              <>
+                <span className="text-text-faint">-</span>
+                <span className="text-text-muted flex items-center gap-1">
+                  <RefreshCw size={10} />
+                  {new Date(status.last_synced).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                </span>
+              </>
+            )}
+          </div>
+          <button
+            onClick={handleRunNow}
+            disabled={runningNow}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-surface-skeleton hover:bg-surface-raised border border-border text-text-muted hover:text-text-primary rounded-sm transition-colors"
+          >
+            <RefreshCw size={11} className={runningNow ? 'animate-spin' : ''} />
+            {runningNow ? 'Running...' : 'Run Now'}
+          </button>
+        </div>
+      )}
+
       {/* Header */}
       <div className="px-6 pt-5 pb-3 border-b border-border-subtle flex-shrink-0">
         <div className="flex items-center justify-between mb-3">
@@ -513,7 +615,7 @@ export function LibraryPlaylists({ toast }: LibraryPlaylistsProps) {
             tracks
           </button>
           <button
-            className="px-4 py-1.5 text-sm font-medium rounded-sm transition-colors capitalize bg-accent text-white"
+            className="px-4 py-1.5 text-sm font-medium rounded-sm transition-colors capitalize bg-accent text-black"
           >
             playlists
           </button>
@@ -548,6 +650,7 @@ export function LibraryPlaylists({ toast }: LibraryPlaylistsProps) {
                 key={pl.id}
                 playlist={pl}
                 onClick={() => setSelected(pl)}
+                onHoverPlay={handleHoverPlayPlaylistCard}
               />
             ))}
           </div>

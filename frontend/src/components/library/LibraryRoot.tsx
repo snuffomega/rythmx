@@ -64,6 +64,10 @@ export function LibraryRoot() {
 
   // A–Z letter filter
   const [letterFilter, setLetterFilter] = useState<string | null>(null);
+  const alphaBucket = (value: string | null | undefined) => {
+    const lead = (value ?? '').trim().charAt(0).toUpperCase();
+    return /^[A-Z]$/.test(lead) ? lead : '#';
+  };
 
   // Debounce search — clear letter filter when user types
   useEffect(() => {
@@ -121,6 +125,7 @@ export function LibraryRoot() {
         q: q || undefined,
         backend: backend !== 'all' ? backend : undefined,
         record_type: recordType !== 'all' ? recordType : undefined,
+        per_page: 1000,
       });
       setAlbums(res.albums);
       setTotalAlbums(res.total);
@@ -165,6 +170,7 @@ export function LibraryRoot() {
   const handleTabChange = (t: Tab) => {
     setTab(t);
     setSearch('');
+    setLetterFilter(null);
     if (t === 'albums') {
       setRecordTypeFilter('all');
     }
@@ -249,10 +255,14 @@ export function LibraryRoot() {
     playQueue(queueTracks.slice(idx));
   }, [playQueue, status?.platform, tracks]);
 
+  const visibleAlbums = tab === 'albums' && letterFilter
+    ? albums.filter(al => alphaBucket(al.title) === letterFilter)
+    : albums;
+
   // Root view
   const footerText = loading ? null
     : tab === 'artists' ? `${totalArtists} artist${totalArtists !== 1 ? 's' : ''}`
-    : tab === 'albums'  ? `${totalAlbums} album${totalAlbums !== 1 ? 's' : ''}`
+    : tab === 'albums'  ? `${(letterFilter ? visibleAlbums.length : totalAlbums)} album${(letterFilter ? visibleAlbums.length : totalAlbums) !== 1 ? 's' : ''}`
     :                     `${totalTracks} track${totalTracks !== 1 ? 's' : ''}`;
 
   return (
@@ -305,7 +315,7 @@ export function LibraryRoot() {
                 key={t}
                 onClick={() => handleTabChange(t)}
                 className={`px-4 py-1.5 text-sm font-medium rounded-sm transition-colors capitalize ${
-                  tab === t ? 'bg-accent text-white' : 'text-text-muted hover:text-text-secondary'
+                  tab === t ? 'bg-accent text-black' : 'text-text-muted hover:text-text-secondary'
                 }`}
               >
                 {t}
@@ -461,11 +471,11 @@ export function LibraryRoot() {
         {!loading && !fetchError && tab === 'albums' && (
           viewMode === 'grid' ? (
             <div className="p-4 grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-3">
-              {albums.map(al => <AlbumCard key={al.id} album={al} viewMode="grid" onHoverPlay={handleHoverPlayAlbumCard} />)}
+              {visibleAlbums.map(al => <AlbumCard key={al.id} album={al} viewMode="grid" onHoverPlay={handleHoverPlayAlbumCard} />)}
             </div>
           ) : (
             <div className="py-2">
-              {albums.map(al => <AlbumCard key={al.id} album={al} viewMode="list" onHoverPlay={handleHoverPlayAlbumCard} />)}
+              {visibleAlbums.map(al => <AlbumCard key={al.id} album={al} viewMode="list" onHoverPlay={handleHoverPlayAlbumCard} />)}
             </div>
           )
         )}
@@ -515,7 +525,7 @@ export function LibraryRoot() {
 
         {!loading && !fetchError && (
           (tab === 'artists' && artists.length === 0) ||
-          (tab === 'albums' && albums.length === 0) ||
+          (tab === 'albums' && visibleAlbums.length === 0) ||
           (tab === 'tracks' && tracks.length === 0)
         ) && (
           <p className="text-center text-text-muted text-sm py-20">
@@ -529,21 +539,23 @@ export function LibraryRoot() {
         </div>
 
         {/* A–Z filter rail — visible for artists tab when no search active */}
-        {tab === 'artists' && !debouncedSearch && (
-          <div className="w-7 flex-shrink-0 flex flex-col items-center py-2 sticky top-0 self-start">
-            {AZ_LETTERS.map(letter => (
-              <button
-                key={letter}
-                onClick={() => setLetterFilter(letterFilter === letter ? null : letter)}
-                className={`font-mono text-[11px] leading-[18px] w-6 text-center rounded transition-colors ${
-                  letterFilter === letter
-                    ? 'text-accent bg-accent/10 font-bold'
-                    : 'text-text-muted hover:text-text-secondary hover:bg-surface-raised'
-                }`}
-              >
-                {letter}
-              </button>
-            ))}
+        {(tab === 'artists' || tab === 'albums') && !debouncedSearch && (
+          <div className="w-8 flex-shrink-0 sticky top-0 self-stretch py-2 pr-1">
+            <div className="h-full min-h-[420px] flex flex-col justify-between items-center">
+              {AZ_LETTERS.map(letter => (
+                <button
+                  key={letter}
+                  onClick={() => setLetterFilter(letterFilter === letter ? null : letter)}
+                  className={`font-mono text-[11px] leading-[1] w-6 py-0.5 text-center rounded transition-colors ${
+                    letterFilter === letter
+                      ? 'text-accent bg-accent/10 font-bold'
+                      : 'text-text-muted hover:text-text-secondary hover:bg-surface-raised'
+                  }`}
+                >
+                  {letter}
+                </button>
+              ))}
+            </div>
           </div>
         )}
       </div>
