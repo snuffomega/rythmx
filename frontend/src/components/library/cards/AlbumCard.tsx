@@ -25,9 +25,9 @@ export function AlbumCard({ album, viewMode, onHoverPlay }: AlbumCardProps) {
       <Link
         to="/library/album/$id"
         params={{ id: album.id }}
-        className="text-left group hover:bg-surface rounded-sm p-2 transition-colors block"
+        className="text-left group rounded-sm p-2 border border-transparent hover:bg-surface-raised hover:border-accent/40 transition-colors block"
       >
-        <div className="relative aspect-square bg-surface-raised rounded-sm overflow-hidden flex items-center justify-center mb-2 border border-border group/album">
+        <div className="relative aspect-square bg-surface-raised rounded-sm overflow-hidden flex items-center justify-center mb-2 border border-border group-hover:border-accent/30 group/album">
           <AlbumImage title={album.title} artist={album.artist_name} size={32} thumbUrl={album.thumb_url} thumbHash={album.thumb_hash} matchConfidence={album.match_confidence} />
           {showHoverPlay && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-0 group-hover/album:opacity-100 transition-opacity">
@@ -52,9 +52,9 @@ export function AlbumCard({ album, viewMode, onHoverPlay }: AlbumCardProps) {
     <Link
       to="/library/album/$id"
       params={{ id: album.id }}
-      className="w-full flex items-center gap-3 px-2 py-2 hover:bg-surface transition-colors rounded-sm"
+      className="w-full flex items-center gap-3 px-2 py-2 rounded-sm border border-transparent hover:bg-surface-raised hover:border-border-strong transition-colors"
     >
-      <div className="relative w-10 h-10 flex-shrink-0 bg-surface-raised rounded-sm overflow-hidden flex items-center justify-center border border-border group/album">
+      <div className="relative w-10 h-10 flex-shrink-0 bg-surface-raised rounded-sm overflow-hidden flex items-center justify-center border border-border group-hover:border-accent/30 group/album">
         <AlbumImage title={album.title} artist={album.artist_name} size={18} thumbUrl={album.thumb_url} thumbHash={album.thumb_hash} matchConfidence={album.match_confidence} />
         {showHoverPlay && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-0 group-hover/album:opacity-100 transition-opacity">

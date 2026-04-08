@@ -470,8 +470,29 @@ export function LibraryPlaylists({ toast }: LibraryPlaylistsProps) {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Library tabs */}
-      <div className="px-6 pt-4">
+      {/* Header */}
+      <div className="px-6 pt-5 pb-3 border-b border-border-subtle flex-shrink-0">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h1 className="page-title">Library</h1>
+            <p className="text-text-muted text-sm mt-0.5">Browse your music collection</p>
+          </div>
+          <button
+            onClick={handleSync}
+            disabled={syncing}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-raised hover:bg-border
+                       border border-border-input rounded-lg text-xs text-text-muted
+                       hover:text-text-primary transition-colors disabled:opacity-50"
+          >
+            {syncing ? (
+              <Loader2 size={13} className="animate-spin" />
+            ) : (
+              <RefreshCw size={13} />
+            )}
+            Sync
+          </button>
+        </div>
+
         <div className="flex gap-1 bg-surface p-0.5 rounded-sm w-fit">
           <button
             onClick={() => navigate({ to: '/library' })}
@@ -492,30 +513,11 @@ export function LibraryPlaylists({ toast }: LibraryPlaylistsProps) {
             tracks
           </button>
           <button
-            className="px-4 py-1.5 text-sm font-medium rounded-sm transition-colors capitalize bg-surface-overlay text-text-primary"
+            className="px-4 py-1.5 text-sm font-medium rounded-sm transition-colors capitalize bg-accent text-white"
           >
             playlists
           </button>
         </div>
-      </div>
-
-      {/* Toolbar */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-border-subtle shrink-0">
-        <h1 className="text-lg font-semibold text-text-primary">Playlists</h1>
-        <button
-          onClick={handleSync}
-          disabled={syncing}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-raised hover:bg-border
-                     border border-border-input rounded-lg text-xs text-text-muted
-                     hover:text-text-primary transition-colors disabled:opacity-50"
-        >
-          {syncing ? (
-            <Loader2 size={13} className="animate-spin" />
-          ) : (
-            <RefreshCw size={13} />
-          )}
-          Sync
-        </button>
       </div>
 
       {/* Body */}

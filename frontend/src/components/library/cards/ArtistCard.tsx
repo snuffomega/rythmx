@@ -27,9 +27,9 @@ export function ArtistCard({ artist, viewMode, onShufflePlay }: ArtistCardProps)
       <Link
         to="/library/artist/$id"
         params={{ id: artist.id }}
-        className="text-left group hover:bg-surface rounded-sm p-2 transition-colors block"
+        className="text-left group rounded-sm p-2 border border-transparent hover:bg-surface-raised hover:border-accent/40 transition-colors block"
       >
-        <div className="relative aspect-square bg-surface-raised rounded-sm overflow-hidden flex items-center justify-center mb-2 border border-border group/art">
+        <div className="relative aspect-square bg-surface-raised rounded-sm overflow-hidden flex items-center justify-center mb-2 border border-border group-hover:border-accent/30 group/art">
           <ArtistImage name={artist.name} size={32} imageUrl={artist.image_url} imageHash={artist.image_hash} matchConfidence={artist.match_confidence} />
           {showHoverPlay && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-0 group-hover/art:opacity-100 transition-opacity">
@@ -49,9 +49,6 @@ export function ArtistCard({ artist, viewMode, onShufflePlay }: ArtistCardProps)
           {artist.album_count} album{artist.album_count !== 1 ? 's' : ''}
           {genre && ` · ${genre}`}
         </p>
-        {artist.missing_count > 0 && (
-          <p className="text-[10px] font-mono text-warning-text mt-0.5">{artist.missing_count} missing</p>
-        )}
       </Link>
     );
   }
@@ -60,9 +57,9 @@ export function ArtistCard({ artist, viewMode, onShufflePlay }: ArtistCardProps)
     <Link
       to="/library/artist/$id"
       params={{ id: artist.id }}
-      className="w-full flex items-center gap-3 px-2 py-2 hover:bg-surface transition-colors rounded-sm"
+      className="w-full flex items-center gap-3 px-2 py-2 rounded-sm border border-transparent hover:bg-surface-raised hover:border-border-strong transition-colors"
     >
-      <div className="relative w-10 h-10 flex-shrink-0 bg-surface-raised rounded-sm overflow-hidden flex items-center justify-center border border-border group/art">
+      <div className="relative w-10 h-10 flex-shrink-0 bg-surface-raised rounded-sm overflow-hidden flex items-center justify-center border border-border group-hover:border-accent/30 group/art">
         <ArtistImage name={artist.name} size={18} imageUrl={artist.image_url} imageHash={artist.image_hash} matchConfidence={artist.match_confidence} />
         {showHoverPlay && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-0 group-hover/art:opacity-100 transition-opacity">
@@ -82,11 +79,6 @@ export function ArtistCard({ artist, viewMode, onShufflePlay }: ArtistCardProps)
         <p className="text-text-muted text-xs font-mono">{artist.album_count} albums{genre && ` · ${genre}`}</p>
       </div>
       <div className="flex items-center gap-2 flex-shrink-0">
-        {artist.missing_count > 0 && (
-          <span className="font-mono text-[10px] text-warning-text bg-accent/10 px-1.5 py-0.5 rounded border border-accent/20">
-            {artist.missing_count}
-          </span>
-        )}
         <ConfidenceBadge value={artist.match_confidence} />
         <SourceChip backend={artist.source_platform} />
       </div>
