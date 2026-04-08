@@ -57,7 +57,7 @@ def _poll_loop():
         try:
             from app.services import tidarr_poller
             result = tidarr_poller.poll_once()
-            if result.get("completed") or result.get("failed"):
+            if result.get("checked"):
                 logger.info("tidarr_poller: %s", result)
         except Exception as exc:
             logger.warning("tidarr_poller tick error: %s", exc)
