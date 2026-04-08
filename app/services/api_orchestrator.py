@@ -42,6 +42,9 @@ import random
 import threading
 import time
 from datetime import datetime, timezone
+
+from app.db import rythmx_store
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -216,12 +219,19 @@ class EnrichmentOrchestrator:
 
     _instance: "EnrichmentOrchestrator | None" = None
     _instance_lock = threading.Lock()
+    _DEFAULT_SUBSTEPS = {
+        "ownership_sync": "pending",
+        "normalize_titles": "pending",
+        "missing_counts": "pending",
+        "canonical": "pending",
+    }
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._started_at: str | None = None
+        self.current_substeps = dict(self._DEFAULT_SUBSTEPS)
 
     @classmethod
     def get(cls) -> "EnrichmentOrchestrator":
@@ -239,6 +249,7 @@ class EnrichmentOrchestrator:
                 return
             self._stop_event.clear()
             self._started_at = datetime.now(timezone.utc).isoformat()
+            self.current_substeps = dict(self._DEFAULT_SUBSTEPS)
             self._thread = threading.Thread(
                 target=self._run,
                 args=(batch_size,),
@@ -286,23 +297,58 @@ class EnrichmentOrchestrator:
                 pass
         return _fn
 
+    def _make_substep_fn(self):
+        """Return a callback that updates in-memory substeps and broadcasts via WS."""
+        def _fn(substep: str, status: str) -> None:
+            self.current_substeps[substep] = status
+            try:
+                from app.routes.ws import broadcast
+                broadcast("enrichment_substep", {"substep": substep, "status": status})
+            except Exception:
+                pass
+        return _fn
+
+    @staticmethod
+    def _read_last_run() -> dict | None:
+        started_at = rythmx_store.get_setting("last_run_started_at")
+        ended_at = rythmx_store.get_setting("last_run_ended_at")
+        outcome = rythmx_store.get_setting("last_run_outcome")
+        if not started_at or not ended_at or not outcome:
+            return None
+        duration_raw = rythmx_store.get_setting("last_run_duration_s", "0") or "0"
+        enriched_raw = rythmx_store.get_setting("last_run_enriched", "0") or "0"
+        not_found_raw = rythmx_store.get_setting("last_run_not_found", "0") or "0"
+        try:
+            duration_s = int(duration_raw)
+        except (TypeError, ValueError):
+            duration_s = 0
+        try:
+            enriched = int(enriched_raw)
+        except (TypeError, ValueError):
+            enriched = 0
+        try:
+            not_found = int(not_found_raw)
+        except (TypeError, ValueError):
+            not_found = 0
+        return {
+            "started_at": started_at,
+            "ended_at": ended_at,
+            "duration_s": duration_s,
+            "outcome": outcome,
+            "enriched": enriched,
+            "not_found": not_found,
+        }
+
     def _broadcast_complete(self) -> None:
         try:
             from app.routes.ws import broadcast
-            from app.db.rythmx_store import _connect
-            with _connect() as conn:
-                rows = conn.execute(
-                    "SELECT source, status, COUNT(*) as cnt FROM enrichment_meta GROUP BY source, status"
-                ).fetchall()
-            workers: dict = {}
-            for r in rows:
-                src = r["source"]
-                if src not in workers:
-                    workers[src] = {"found": 0, "not_found": 0, "errors": 0, "pending": 0, "running": False}
-                field = "errors" if r["status"] == "error" else r["status"]
-                if field in workers[src]:
-                    workers[src][field] = r["cnt"]
-            broadcast("enrichment_complete", {"workers": workers})
+            from app.services.enrichment.runner import PipelineRunner
+
+            workers = PipelineRunner.read_worker_snapshot()
+            broadcast("enrichment_complete", {
+                "workers": workers,
+                "last_run": self._read_last_run(),
+            })
         except Exception as e:
             logger.warning("EnrichmentOrchestrator: broadcast_complete failed: %s", e)
 
@@ -318,13 +364,17 @@ class EnrichmentOrchestrator:
                 stop_event=self._stop_event,
                 on_progress=self._make_progress_fn,
                 on_phase=self._make_phase_fn(),
+                on_substep=self._make_substep_fn(),
             )
 
             if result.get("status") == "stopped":
                 self._started_at = None
                 try:
                     from app.routes.ws import broadcast
-                    broadcast("enrichment_stopped", {"message": "Enrichment stopped by user"})
+                    broadcast("enrichment_stopped", {
+                        "message": "Enrichment stopped by user",
+                        "last_run": self._read_last_run(),
+                    })
                 except Exception:
                     pass
                 logger.info("EnrichmentOrchestrator: pipeline stopped by user")

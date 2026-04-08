@@ -446,21 +446,40 @@ export interface EnrichmentWorkerStatus {
   pending: number;
 }
 
+export type EnrichmentSubstepStatus = 'pending' | 'running' | 'completed';
+
+export interface EnrichmentSubsteps {
+  ownership_sync: EnrichmentSubstepStatus;
+  normalize_titles: EnrichmentSubstepStatus;
+  missing_counts: EnrichmentSubstepStatus;
+  canonical: EnrichmentSubstepStatus;
+}
+
+export interface EnrichmentLastRun {
+  started_at: string;
+  ended_at: string;
+  duration_s: number;
+  outcome: 'completed' | 'stopped' | 'error';
+  enriched: number;
+  not_found: number;
+}
+
+export type EnrichmentWorkerKey =
+  | 'itunes_artist' | 'deezer_artist' | 'spotify_artist' | 'lastfm_artist'
+  | 'itunes_album' | 'deezer_album'
+  | 'artist_art' | 'album_art_local' | 'album_art_cdn' | 'album_art_prewarm'
+  | 'itunes_rich' | 'deezer_rich' | 'spotify_genres'
+  | 'lastfm_tags' | 'lastfm_stats'
+  | 'deezer_artist_stats' | 'similar_artists'
+  | 'musicbrainz_rich' | 'musicbrainz_album_rich';
+
 export interface EnrichmentPipelineStatus {
   running: boolean;
-  // started_at: ISO 8601 UTC string set when run_full() is called; null when not running.
   started_at?: string | null;
-  // Current pipeline phase (sync, id_itunes_deezer, id_parallel, etc.). Null when idle.
   phase?: string | null;
-  // Per-source worker stats from enrichment_meta. During live runs the
-  // id_itunes_deezer worker broadcasts combined progress as "library";
-  // REST and completion payloads return individual sub-sources.
-  workers: Partial<Record<
-    'library' | 'itunes_artist' | 'deezer_artist' | 'itunes' | 'deezer' |
-    'itunes_rich' | 'deezer_rich' | 'spotify_id' | 'spotify_genres' |
-    'lastfm_id' | 'lastfm_tags' | 'lastfm_stats' | 'artist_art' | 'album_art',
-    EnrichmentWorkerStatus
-  >>;
+  workers: Partial<Record<EnrichmentWorkerKey, EnrichmentWorkerStatus>> & Record<string, EnrichmentWorkerStatus>;
+  substeps?: Partial<EnrichmentSubsteps>;
+  last_run?: EnrichmentLastRun | null;
 }
 
 export interface EnrichmentStopResponse {
@@ -489,15 +508,22 @@ export interface WsEnrichmentProgress {
 }
 
 export interface WsEnrichmentComplete {
-  workers: Record<string, WsEnrichmentProgress>;
+  workers: Record<string, EnrichmentWorkerStatus>;
+  last_run?: EnrichmentLastRun | null;
 }
 
 export interface WsEnrichmentStopped {
   message: string;
+  last_run?: EnrichmentLastRun | null;
 }
 
 export interface WsEnrichmentPhase {
   phase: string;
+}
+
+export interface WsEnrichmentSubstep {
+  substep: string;
+  status: 'running' | 'completed';
 }
 
 // New Music pipeline events (scheduler)

@@ -22,28 +22,17 @@ router = APIRouter(dependencies=[Depends(verify_api_key)])
 @router.get("/library/enrich/status")
 def enrich_status():
     """
-    Returns unified pipeline status grouped by enrichment_meta source.
+    Return enrichment pipeline status using canonical worker keys.
 
-    Note: this route returns raw per-source counters from enrichment_meta
-    (e.g. itunes_artist, deezer_artist, itunes, deezer, spotify_id, ...).
-    Any higher-level aggregation (such as a combined "library" view) should be
-    done by the client.
-
-    Response:
-      {
-        "status": "ok",
-        "running": bool,
-        "started_at": "ISO8601 UTC string | null",
-        "workers": {
-          "library":        { "found": int, "not_found": int, "errors": int, "pending": int },
-          "itunes_rich":    { ... },
-          ...
-        }
-      }
+    Response shape includes:
+      - running / started_at / phase
+      - workers: canonical worker key counters from enrichment_meta
+      - substeps: Post-Processing checklist state
+      - last_run: persisted summary from app_settings
     """
     from app.services.api_orchestrator import EnrichmentOrchestrator
     from app.db import rythmx_store
-    from app.db.rythmx_store import _connect
+    from app.services.enrichment.runner import PipelineRunner
 
     orch = EnrichmentOrchestrator.get()
     running = orch.is_running()
@@ -51,30 +40,53 @@ def enrich_status():
     phase = rythmx_store.get_setting("pipeline_phase") if running else None
 
     try:
-        with _connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT source, status, COUNT(*) AS cnt
-                FROM enrichment_meta
-                GROUP BY source, status
-                """
-            ).fetchall()
+        workers = PipelineRunner.read_worker_snapshot()
     except Exception as e:
-        logger.error("enrich_status: DB query failed: %s", e)
+        logger.error("enrich_status: worker snapshot failed: %s", e)
         return JSONResponse(
-            {"status": "error", "message": "DB query failed"}, status_code=500
+            {"status": "error", "message": "Failed to load enrichment status"}, status_code=500
         )
 
-    workers: dict = {}
-    for r in rows:
-        src = r["source"]
-        if src not in workers:
-            workers[src] = {"found": 0, "not_found": 0, "errors": 0, "pending": 0}
-        field = "errors" if r["status"] == "error" else r["status"]
-        if field in workers[src]:
-            workers[src][field] = r["cnt"]
+    last_run = None
+    started = rythmx_store.get_setting("last_run_started_at")
+    ended = rythmx_store.get_setting("last_run_ended_at")
+    outcome = rythmx_store.get_setting("last_run_outcome")
+    if started and ended and outcome:
+        duration_raw = rythmx_store.get_setting("last_run_duration_s", "0") or "0"
+        enriched_raw = rythmx_store.get_setting("last_run_enriched", "0") or "0"
+        not_found_raw = rythmx_store.get_setting("last_run_not_found", "0") or "0"
+        try:
+            duration_s = int(duration_raw)
+        except (TypeError, ValueError):
+            duration_s = 0
+        try:
+            enriched = int(enriched_raw)
+        except (TypeError, ValueError):
+            enriched = 0
+        try:
+            not_found = int(not_found_raw)
+        except (TypeError, ValueError):
+            not_found = 0
+        last_run = {
+            "started_at": started,
+            "ended_at": ended,
+            "duration_s": duration_s,
+            "outcome": outcome,
+            "enriched": enriched,
+            "not_found": not_found,
+        }
 
-    return {"status": "ok", "running": running, "started_at": started_at, "phase": phase, "workers": workers}
+    substeps = getattr(orch, "current_substeps", {}) or {}
+
+    return {
+        "status": "ok",
+        "running": running,
+        "started_at": started_at,
+        "phase": phase,
+        "workers": workers,
+        "substeps": substeps,
+        "last_run": last_run,
+    }
 
 
 @router.post("/library/enrich/full")

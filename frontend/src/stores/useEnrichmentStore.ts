@@ -1,44 +1,45 @@
 /**
- * useEnrichmentStore — global enrichment pipeline state.
- *
- * Holds the full pipeline state so any component can read live enrichment
- * progress without owning a WebSocket connection.
- *
- * Write path: wsService routes WS events to handleProgress / handleComplete /
- *             handleStopped / handlePhase. App.tsx seeds initial state via
- *             setFromStatus on load. Start button calls reset() before runFull().
- *
- * Read path: components subscribe with selectors, e.g.:
- *   const running = useEnrichmentStore(s => s.running);
- *   const { workers, activeWorkers, phase } = useEnrichmentStore();
+ * useEnrichmentStore - global enrichment pipeline state.
  */
 import { create } from 'zustand';
 import type {
+  EnrichmentLastRun,
   EnrichmentPipelineStatus,
+  EnrichmentSubstepStatus,
+  EnrichmentSubsteps,
   EnrichmentWorkerStatus,
+  WsEnrichmentComplete,
+  WsEnrichmentPhase,
   WsEnrichmentProgress,
+  WsEnrichmentStopped,
+  WsEnrichmentSubstep,
 } from '../types';
+
+const DEFAULT_SUBSTEPS: EnrichmentSubsteps = {
+  ownership_sync: 'pending',
+  normalize_titles: 'pending',
+  missing_counts: 'pending',
+  canonical: 'pending',
+};
 
 interface EnrichmentStore {
   running: boolean;
   workers: Record<string, EnrichmentWorkerStatus>;
   activeWorkers: Set<string>;
-  /** Epoch ms when current run started. Components compute elapsed from this. */
   startedAt: number | null;
-  /** Current pipeline phase (sync, id_itunes_deezer, id_parallel, etc.). */
   phase: string | null;
+  substeps: EnrichmentSubsteps;
+  lastRun: EnrichmentLastRun | null;
 
-  /** Called by wsService on enrichment_progress events. */
   handleProgress: (p: unknown) => void;
-  /** Called by wsService on enrichment_complete events. */
   handleComplete: (p: unknown) => void;
-  /** Called by wsService on enrichment_stopped events. */
-  handleStopped: () => void;
-  /** Called by wsService on enrichment_phase events. */
+  handleStopped: (p?: unknown) => void;
   handlePhase: (p: unknown) => void;
-  /** Seed state from the REST /enrich/status response on app load. */
+  handleSubstep: (p: unknown) => void;
+  updateSubstep: (substep: string, status: EnrichmentSubstepStatus) => void;
+  resetSubsteps: () => void;
+  setLastRun: (lastRun: EnrichmentLastRun | null) => void;
   setFromStatus: (s: EnrichmentPipelineStatus) => void;
-  /** Optimistic reset before starting a new run. */
   reset: () => void;
 }
 
@@ -48,10 +49,12 @@ export const useEnrichmentStore = create<EnrichmentStore>((set) => ({
   activeWorkers: new Set(),
   startedAt: null,
   phase: null,
+  substeps: { ...DEFAULT_SUBSTEPS },
+  lastRun: null,
 
   handleProgress: (p) => {
     const { worker, found, not_found, errors, pending, running } = p as WsEnrichmentProgress;
-    set(s => ({
+    set((s) => ({
       running,
       startedAt: s.startedAt ?? Date.now(),
       activeWorkers: new Set([...s.activeWorkers, worker]),
@@ -60,33 +63,78 @@ export const useEnrichmentStore = create<EnrichmentStore>((set) => ({
   },
 
   handleComplete: (p) => {
-    const { workers } = p as { workers: Record<string, EnrichmentWorkerStatus> };
-    set({ running: false, workers, activeWorkers: new Set(), startedAt: null, phase: null });
+    const { workers, last_run } = p as WsEnrichmentComplete;
+    set({
+      running: false,
+      workers,
+      activeWorkers: new Set(),
+      startedAt: null,
+      phase: null,
+      lastRun: last_run ?? null,
+    });
   },
 
-  handleStopped: () => {
-    set({ running: false, activeWorkers: new Set(), startedAt: null, phase: null });
+  handleStopped: (p) => {
+    const payload = (p ?? {}) as WsEnrichmentStopped;
+    set({
+      running: false,
+      activeWorkers: new Set(),
+      startedAt: null,
+      phase: null,
+      lastRun: payload.last_run ?? null,
+    });
   },
 
   handlePhase: (p) => {
-    const { phase } = p as { phase: string };
-    set({ phase });
+    const { phase } = p as WsEnrichmentPhase;
+    set((s) => ({
+      phase,
+      substeps: phase === 'sync' ? { ...DEFAULT_SUBSTEPS } : s.substeps,
+    }));
   },
 
+  handleSubstep: (p) => {
+    const { substep, status } = p as WsEnrichmentSubstep;
+    set((s) => ({
+      substeps: {
+        ...s.substeps,
+        [substep]: status,
+      } as EnrichmentSubsteps,
+    }));
+  },
+
+  updateSubstep: (substep, status) => {
+    set((s) => ({
+      substeps: {
+        ...s.substeps,
+        [substep]: status,
+      } as EnrichmentSubsteps,
+    }));
+  },
+
+  resetSubsteps: () => set({ substeps: { ...DEFAULT_SUBSTEPS } }),
+
+  setLastRun: (lastRun) => set({ lastRun }),
+
   setFromStatus: (s) => {
+    const parsedStartedAt = s.running && s.started_at ? new Date(s.started_at).getTime() : null;
     set({
       running: s.running ?? false,
       workers: s.workers ?? {},
-      startedAt: s.running && s.started_at ? new Date(s.started_at).getTime() : null,
+      startedAt: parsedStartedAt && !Number.isNaN(parsedStartedAt) ? parsedStartedAt : null,
       phase: s.phase ?? null,
+      substeps: { ...DEFAULT_SUBSTEPS, ...(s.substeps ?? {}) },
+      lastRun: s.last_run ?? null,
     });
   },
 
   reset: () => set((s) => ({
     running: true,
-    workers: s.workers,       // preserve previous bars — no flash to zero
+    workers: s.workers,
     activeWorkers: new Set(),
     startedAt: Date.now(),
     phase: null,
+    substeps: { ...DEFAULT_SUBSTEPS },
   })),
 }));
+

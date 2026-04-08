@@ -3,7 +3,7 @@ import { CheckCircle, ChevronDown, ChevronUp, Play, Square, Clock, Zap } from 'l
 import { enrichmentApi } from '../../services/api';
 import { useEnrichmentStore } from '../../stores/useEnrichmentStore';
 import { PIPELINE_PHASES, ALL_BACKEND_KEYS, WORKER_LABELS, formatElapsed, workerStats } from './utils';
-import type { LibraryPlatform } from '../../types';
+import type { EnrichmentSubsteps, LibraryPlatform } from '../../types';
 
 // ---------------------------------------------------------------------------
 // ProgressBar — stacked progress bar used for overall and per-phase/worker bars
@@ -39,7 +39,7 @@ interface PipelineOrchestratorProps {
 }
 
 function PipelineOrchestrator({ libraryTrackCount, libraryLastSynced, platform, onRunFull, onStop }: PipelineOrchestratorProps) {
-  const { running, workers, activeWorkers, phase } = useEnrichmentStore();
+  const { running, workers, activeWorkers, phase, substeps, lastRun } = useEnrichmentStore();
   const [showStages, setShowStages] = useState(false);
 
   // Elapsed timer — display concern only; driven by startedAt from store
@@ -79,7 +79,7 @@ function PipelineOrchestrator({ libraryTrackCount, libraryLastSynced, platform, 
   const sourcesWithData = ALL_BACKEND_KEYS.filter(k => workerStats(workers, [k]).hasData).length;
 
   // Determine phase state for each pipeline phase
-  const phaseIndex = phase ? PIPELINE_PHASES.findIndex(p => (p.backendPhases as readonly string[]).includes(phase)) : -1;
+  const phaseIndex = phase ? PIPELINE_PHASES.findIndex((p) => p.backendPhases.includes(phase)) : -1;
 
   return (
     <div data-testid="pipeline-orchestrator" className="max-w-3xl">
@@ -87,6 +87,11 @@ function PipelineOrchestrator({ libraryTrackCount, libraryLastSynced, platform, 
         <div className="flex items-center gap-2 text-sm font-mono text-text-muted mb-4">
           <Clock size={14} />
           <span>{formatElapsed(elapsedMs)}</span>
+        </div>
+      )}
+      {!running && lastRun && (
+        <div className="text-sm text-text-secondary mb-4">
+          Last run: {new Date(lastRun.started_at).toLocaleDateString()} · {Math.floor(lastRun.duration_s / 60)}m {lastRun.duration_s % 60}s · {lastRun.enriched} enriched · {lastRun.not_found} not found · {lastRun.outcome}
         </div>
       )}
 
@@ -163,17 +168,22 @@ function PipelineOrchestrator({ libraryTrackCount, libraryLastSynced, platform, 
           {PIPELINE_PHASES.map((phaseDef, idx) => {
             const isPhaseActive = running && phaseIndex === idx;
             const anyDataExists = totals.total > 0;
+            const checklistComplete = phaseDef.displayType === 'checklist' && phaseDef.substeps
+              ? phaseDef.substeps.every((step) => (substeps[step.key] ?? 'pending') === 'completed')
+              : false;
             const isPhaseDone = running
               ? phaseIndex > idx
-              : phaseDef.workers.length > 0
-                ? phaseDef.workers.some(w => workerStats(workers, w.keys).hasData)
-                : anyDataExists;
+              : phaseDef.displayType === 'bar'
+                ? phaseDef.workers.some((w) => workerStats(workers, [w.key]).hasData)
+                : phaseDef.displayType === 'checklist'
+                  ? checklistComplete
+                  : anyDataExists;
             const isPhaseWaiting = running && phaseIndex < idx;
-            const hasWorkers = phaseDef.workers.length > 0;
+            const hasWorkers = phaseDef.displayType === 'bar' && phaseDef.workers.length > 0;
 
             const phaseStats = hasWorkers ? phaseDef.workers.reduce(
               (acc, w) => {
-                const s = workerStats(workers, w.keys);
+                const s = workerStats(workers, [w.key]);
                 acc.found += s.found; acc.notFound += s.notFound; acc.errors += s.errors;
                 acc.total += s.total;
                 return acc;
@@ -232,28 +242,45 @@ function PipelineOrchestrator({ libraryTrackCount, libraryLastSynced, platform, 
                   </>
                 )}
 
-                {/* No-bar phases: just show status text */}
-                {!hasWorkers && (
-                  <div className="mt-0.5">
-                    {phaseDef.id === 'sync' ? (
-                      <div className="space-y-0.5">
-                        <p className="text-[10px] font-mono text-text-muted/50">Library platform sync</p>
-                        {libraryTrackCount !== undefined && (
-                          <p className="text-[10px] font-mono text-text-muted/40">
-                            Tracks indexed: {libraryTrackCount.toLocaleString()}
-                          </p>
-                        )}
-                        {libraryLastSynced && (
-                          <p className="text-[10px] font-mono text-text-muted/40">
-                            Last synced: {libraryLastSynced}
-                          </p>
-                        )}
-                      </div>
-                    ) : (
-                      <p className="text-[10px] font-mono text-text-muted/50">
-                        Ownership, title normalization, canonical grouping
+                {/* Text-only phases */}
+                {phaseDef.displayType === 'text' && (
+                  <div className="mt-0.5 space-y-0.5">
+                    <p className="text-[10px] font-mono text-text-muted/50">Library platform sync</p>
+                    {libraryTrackCount !== undefined && (
+                      <p className="text-[10px] font-mono text-text-muted/40">
+                        Tracks indexed: {libraryTrackCount.toLocaleString()}
                       </p>
                     )}
+                    {libraryLastSynced && (
+                      <p className="text-[10px] font-mono text-text-muted/40">
+                        Last synced: {libraryLastSynced}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Checklist phases */}
+                {phaseDef.displayType === 'checklist' && phaseDef.substeps && (
+                  <div className="mt-2 space-y-1">
+                    {phaseDef.substeps.map((substep) => {
+                      const status = substeps[substep.key as keyof EnrichmentSubsteps] ?? 'pending';
+                      return (
+                        <div key={substep.key} className="flex items-center gap-2 text-sm">
+                          {status === 'pending' && (
+                            <div className="w-4 h-4 border border-text-tertiary rounded-full" />
+                          )}
+                          {status === 'running' && (
+                            <Zap className="w-4 h-4 text-accent animate-pulse" />
+                          )}
+                          {status === 'completed' && (
+                            <CheckCircle className="w-4 h-4 text-success" />
+                          )}
+                          <span className={status === 'completed' ? 'text-success' : 'text-text-secondary'}>
+                            {substep.label}
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
 
@@ -261,8 +288,8 @@ function PipelineOrchestrator({ libraryTrackCount, libraryLastSynced, platform, 
                 {hasWorkers && phaseStats && phaseStats.total > 0 && (
                   <div className="mt-2 space-y-1 pl-3 border-l border-border-subtle">
                     {phaseDef.workers.map(w => {
-                      const s = workerStats(workers, w.keys);
-                      const isWorkerActive = running && (w.keys).some(k => activeWorkers.has(k));
+                      const s = workerStats(workers, [w.key]);
+                      const isWorkerActive = running && activeWorkers.has(w.key);
                       if (!s.hasData) return null;
                       return (
                         <div key={w.key} className="flex items-center gap-2 text-[10px] font-mono">

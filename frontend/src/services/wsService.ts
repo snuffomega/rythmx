@@ -31,8 +31,9 @@ let _stopped = false;
 const ROUTES: Record<string, (payload: unknown) => void> = {
   enrichment_progress: (p) => useEnrichmentStore.getState().handleProgress(p),
   enrichment_complete: (p) => useEnrichmentStore.getState().handleComplete(p),
-  enrichment_stopped:  ()  => useEnrichmentStore.getState().handleStopped(),
+  enrichment_stopped:  (p) => useEnrichmentStore.getState().handleStopped(p),
   enrichment_phase:    (p) => useEnrichmentStore.getState().handlePhase(p),
+  enrichment_substep:  (p) => useEnrichmentStore.getState().handleSubstep(p),
   pipeline_progress:   (p) => useForgePipelineStore.getState().handleProgress(p),
   pipeline_complete:   (p) => useForgePipelineStore.getState().handleComplete(p),
   pipeline_error:      (p) => useForgePipelineStore.getState().handleError(p),

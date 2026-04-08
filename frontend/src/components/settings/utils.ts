@@ -1,42 +1,95 @@
-import type { EnrichmentWorkerStatus } from '../../types';
+import type { EnrichmentSubsteps, EnrichmentWorkerKey, EnrichmentWorkerStatus } from '../../types';
 
-// Pipeline phases matching backend DAG — grouped by service, not task.
-// Each worker entry lists one or more backend keys to sum (handles the
-// id_itunes_deezer combined "library" key during live runs vs individual
-// sub-source keys from REST/completion payloads).
-export const PIPELINE_PHASES = [
-  { id: 'sync', label: 'Library Platform Sync', backendPhases: ['sync'], workers: [] },
-  { id: 'identity', label: 'Identity Resolution', backendPhases: ['id_itunes_deezer', 'id_parallel'], workers: [
-    { key: 'itunes_ids',   keys: ['itunes_artist', 'itunes'],  label: 'iTunes',   desc: 'Artist & album identity matching' },
-    { key: 'deezer_ids',   keys: ['deezer_artist', 'deezer'],  label: 'Deezer',   desc: 'Artist & album identity matching' },
-    { key: 'library',      keys: ['library'],                   label: 'iTunes / Deezer',  desc: 'Combined live progress' },
-    { key: 'spotify_id',   keys: ['spotify_id'],                label: 'Spotify',  desc: 'Artist ID from Spotify' },
-    { key: 'lastfm_id',    keys: ['lastfm_id'],                 label: 'Last.fm',  desc: 'Artist MBID from Last.fm' },
-    { key: 'artist_art',   keys: ['artist_art'],                label: 'Artist Artwork',  desc: 'Fanart.tv + Deezer photos' },
-  ]},
-  { id: 'post', label: 'Post-Processing', backendPhases: ['ownership_sync', 'normalize_titles', 'missing_counts', 'canonical'], workers: [] },
-  { id: 'rich', label: 'Rich Metadata', backendPhases: ['rich_data'], workers: [
-    { key: 'itunes_rich',    keys: ['itunes_rich'],    label: 'iTunes Enrichment',   desc: 'Release date, genre, label' },
-    { key: 'deezer_rich',    keys: ['deezer_rich'],    label: 'Deezer Enrichment',   desc: 'Record type, album art' },
-    { key: 'spotify_genres', keys: ['spotify_genres'], label: 'Spotify Enrichment',  desc: 'Artist genre tags' },
-    { key: 'lastfm_tags',   keys: ['lastfm_tags'],    label: 'Last.fm Enrichment',  desc: 'Community tags' },
-    { key: 'lastfm_stats',  keys: ['lastfm_stats'],   label: 'Last.fm Stats',       desc: 'Playcount, listeners' },
-  ]},
-] as const;
+export interface PhaseWorker {
+  key: EnrichmentWorkerKey;
+  label: string;
+}
 
-// All backend keys across all phases (for overall totals — deduped).
-export const ALL_BACKEND_KEYS = [...new Set(
-  PIPELINE_PHASES.flatMap(p => p.workers.flatMap(w => w.keys))
-)];
+export interface PhaseSubstep {
+  key: keyof EnrichmentSubsteps;
+  label: string;
+}
 
-// Human-readable label for the currently active worker (keyed by backend worker name).
-export const WORKER_LABELS: Record<string, string> = {
-  library: 'iTunes/Deezer IDs',
-  itunes_artist: 'iTunes', itunes: 'iTunes', deezer_artist: 'Deezer', deezer: 'Deezer',
-  spotify_id: 'Spotify', lastfm_id: 'Last.fm', artist_art: 'Artist Artwork',
-  itunes_rich: 'iTunes Enrichment', deezer_rich: 'Deezer Enrichment',
-  spotify_genres: 'Spotify Enrichment', lastfm_tags: 'Last.fm Enrichment', lastfm_stats: 'Last.fm Stats',
-};
+export interface Phase {
+  id: string;
+  label: string;
+  backendPhases: readonly string[];
+  workers: PhaseWorker[];
+  displayType: 'text' | 'bar' | 'checklist';
+  substeps?: PhaseSubstep[];
+}
+
+export const PIPELINE_PHASES: Phase[] = [
+  {
+    id: 'sync',
+    label: 'Library Platform Sync',
+    backendPhases: ['sync', 'tag_enrichment', 'artwork_repair'],
+    workers: [],
+    displayType: 'text',
+  },
+  {
+    id: 'identity',
+    label: 'Identity Resolution',
+    backendPhases: ['id_itunes_deezer', 'id_parallel'],
+    workers: [
+      { key: 'itunes_artist', label: 'Artist: iTunes' },
+      { key: 'itunes_album', label: 'Album: iTunes' },
+      { key: 'deezer_artist', label: 'Artist: Deezer' },
+      { key: 'deezer_album', label: 'Album: Deezer' },
+      { key: 'spotify_artist', label: 'Artist: Spotify' },
+      { key: 'lastfm_artist', label: 'Artist: Last.fm' },
+      { key: 'artist_art', label: 'Artist Artwork' },
+    ],
+    displayType: 'bar',
+  },
+  {
+    id: 'artwork',
+    label: 'Album Artwork',
+    backendPhases: ['album_art_local', 'album_art_cdn', 'album_art_prewarm'],
+    workers: [
+      { key: 'album_art_local', label: 'Local Files' },
+      { key: 'album_art_cdn', label: 'CDN (Deezer / iTunes)' },
+      { key: 'album_art_prewarm', label: 'Cache Warm' },
+    ],
+    displayType: 'bar',
+  },
+  {
+    id: 'post',
+    label: 'Post-Processing',
+    backendPhases: ['ownership_sync', 'normalize_titles', 'missing_counts', 'canonical'],
+    workers: [],
+    displayType: 'checklist',
+    substeps: [
+      { key: 'ownership_sync', label: 'Ownership' },
+      { key: 'normalize_titles', label: 'Title Normalization' },
+      { key: 'missing_counts', label: 'Missing Counts' },
+      { key: 'canonical', label: 'Canonical Grouping' },
+    ],
+  },
+  {
+    id: 'rich',
+    label: 'Rich Metadata',
+    backendPhases: ['rich_data'],
+    workers: [
+      { key: 'itunes_rich', label: 'iTunes' },
+      { key: 'deezer_rich', label: 'Deezer' },
+      { key: 'spotify_genres', label: 'Spotify' },
+      { key: 'lastfm_tags', label: 'Last.fm Tags' },
+      { key: 'lastfm_stats', label: 'Last.fm Stats' },
+      { key: 'deezer_artist_stats', label: 'Deezer Artist' },
+      { key: 'similar_artists', label: 'Similar Artists' },
+      { key: 'musicbrainz_rich', label: 'MusicBrainz' },
+      { key: 'musicbrainz_album_rich', label: 'MusicBrainz Albums' },
+    ],
+    displayType: 'bar',
+  },
+];
+
+export const ALL_BACKEND_KEYS = PIPELINE_PHASES.flatMap((phase) => phase.workers.map((worker) => worker.key));
+
+export const WORKER_LABELS: Record<string, string> = Object.fromEntries(
+  PIPELINE_PHASES.flatMap((phase) => phase.workers.map((worker) => [worker.key, worker.label])),
+);
 
 export function formatElapsed(ms: number): string {
   const s = Math.floor(ms / 1000);
@@ -46,11 +99,17 @@ export function formatElapsed(ms: number): string {
 
 /** Sum stats across one or more backend worker keys. */
 export function workerStats(workers: Record<string, EnrichmentWorkerStatus>, keys: readonly string[]) {
-  let found = 0, notFound = 0, errors = 0, pending = 0;
-  for (const k of keys) {
-    const w = workers[k];
-    if (!w) continue;
-    found += w.found; notFound += w.not_found; errors += w.errors; pending += w.pending;
+  let found = 0;
+  let notFound = 0;
+  let errors = 0;
+  let pending = 0;
+  for (const key of keys) {
+    const worker = workers[key];
+    if (!worker) continue;
+    found += worker.found;
+    notFound += worker.not_found;
+    errors += worker.errors;
+    pending += worker.pending;
   }
   const total = found + notFound + errors + pending;
   const foundPct = total > 0 ? (found / total) * 100 : 0;
@@ -59,3 +118,4 @@ export function workerStats(workers: Record<string, EnrichmentWorkerStatus>, key
   const processedPct = foundPct + notFoundPct + errorPct;
   return { found, notFound, errors, pending, total, foundPct, notFoundPct, errorPct, processedPct, hasData: total > 0 };
 }
+

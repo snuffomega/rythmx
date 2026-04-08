@@ -48,7 +48,7 @@ _event_loop: asyncio.AbstractEventLoop | None = None
 # Events the server is allowed to emit (SHRTA Section 6)
 _SERVER_EVENTS = frozenset({
     "pipeline_progress", "pipeline_complete", "pipeline_error",
-    "enrichment_progress", "enrichment_complete", "enrichment_stopped", "enrichment_phase",
+    "enrichment_progress", "enrichment_complete", "enrichment_stopped", "enrichment_phase", "enrichment_substep",
     "library_sync_progress", "player_state",
     "ping", "protocol_error",
 })

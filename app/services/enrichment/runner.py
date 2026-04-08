@@ -17,6 +17,40 @@ from app.db import rythmx_store
 
 logger = logging.getLogger(__name__)
 
+# Worker key constants - canonical source of truth for pipeline progress/status.
+WORKER_KEYS = {
+    # Identity - artist
+    "itunes_artist": "itunes_artist",
+    "deezer_artist": "deezer_artist",
+    "spotify_artist": "spotify_artist",
+    "lastfm_artist": "lastfm_artist",
+    # Identity - album
+    "itunes_album": "itunes_album",
+    "deezer_album": "deezer_album",
+    # Artwork
+    "artist_art": "artist_art",
+    "album_art_local": "album_art_local",
+    "album_art_cdn": "album_art_cdn",
+    "album_art_prewarm": "album_art_prewarm",
+    # Rich metadata
+    "itunes_rich": "itunes_rich",
+    "deezer_rich": "deezer_rich",
+    "spotify_genres": "spotify_genres",
+    "lastfm_tags": "lastfm_tags",
+    "lastfm_stats": "lastfm_stats",
+    "deezer_artist_stats": "deezer_artist_stats",
+    "similar_artists": "similar_artists",
+    "musicbrainz_rich": "musicbrainz_rich",
+    "musicbrainz_album_rich": "musicbrainz_album_rich",
+}
+
+LEGACY_TO_CANONICAL_WORKER_KEYS = {
+    "itunes": WORKER_KEYS["itunes_album"],
+    "deezer": WORKER_KEYS["deezer_album"],
+    "spotify_id": WORKER_KEYS["spotify_artist"],
+    "lastfm_id": WORKER_KEYS["lastfm_artist"],
+}
+
 # ---------------------------------------------------------------------------
 # DB-persisted pipeline state keys (stored in app_settings)
 # ---------------------------------------------------------------------------
@@ -46,6 +80,7 @@ class PipelineRunner:
         stop_event: threading.Event | None = None,
         on_progress: "callable | None" = None,
         on_phase: "callable | None" = None,
+        on_substep: "callable | None" = None,
     ) -> dict:
         """Execute the full enrichment DAG. Returns summary dict."""
         if not self._lock.acquire(blocking=False):
@@ -53,7 +88,7 @@ class PipelineRunner:
             return {"status": "skipped", "reason": "already_running"}
 
         try:
-            return self._execute(batch_size, stop_event, on_progress, on_phase)
+            return self._execute(batch_size, stop_event, on_progress, on_phase, on_substep)
         finally:
             self._clear_state()
             self._lock.release()
@@ -126,6 +161,86 @@ class PipelineRunner:
             return None
         return on_progress(key)
 
+    @staticmethod
+    def _fanout_progress_fn(on_progress, keys: tuple[str, ...]):
+        """Broadcast one worker's aggregate progress to multiple UI worker keys."""
+        if on_progress is None:
+            return None
+        callbacks = [on_progress(k) for k in keys]
+
+        def _fn(found: int, not_found: int, errors: int, total: int) -> None:
+            for cb in callbacks:
+                cb(found, not_found, errors, total)
+
+        return _fn
+
+    @staticmethod
+    def _emit_substep(on_substep, substep: str, status: str) -> None:
+        if on_substep is None:
+            return
+        try:
+            on_substep(substep, status)
+        except Exception:
+            pass
+
+    @staticmethod
+    def read_worker_snapshot() -> dict[str, dict[str, int]]:
+        """
+        Read worker counters from enrichment_meta and normalize legacy keys to
+        canonical worker names used by the UI contract.
+        """
+        from app.db.rythmx_store import _connect
+
+        workers: dict[str, dict[str, int]] = {}
+        with _connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT source, status, COUNT(*) AS cnt
+                FROM enrichment_meta
+                GROUP BY source, status
+                """
+            ).fetchall()
+
+        for row in rows:
+            source = str(row["source"])
+            key = LEGACY_TO_CANONICAL_WORKER_KEYS.get(source, source)
+            if key not in workers:
+                workers[key] = {"found": 0, "not_found": 0, "errors": 0, "pending": 0}
+            field = "errors" if row["status"] == "error" else row["status"]
+            if field in workers[key]:
+                workers[key][field] += int(row["cnt"] or 0)
+
+        return workers
+
+    @classmethod
+    def _persist_last_run(cls, started_at: str | None, outcome: str) -> None:
+        """Persist pipeline run summary into app_settings for REST/UI consumers."""
+        ended_at = datetime.utcnow().isoformat()
+        started = started_at or ended_at
+        try:
+            duration_s = max(
+                0,
+                int((datetime.fromisoformat(ended_at) - datetime.fromisoformat(started)).total_seconds()),
+            )
+        except Exception:
+            duration_s = 0
+
+        enriched = 0
+        not_found = 0
+        try:
+            workers = cls.read_worker_snapshot()
+            enriched = sum(int(v.get("found", 0)) for v in workers.values())
+            not_found = sum(int(v.get("not_found", 0)) for v in workers.values())
+        except Exception:
+            pass
+
+        rythmx_store.set_setting("last_run_started_at", started)
+        rythmx_store.set_setting("last_run_ended_at", ended_at)
+        rythmx_store.set_setting("last_run_duration_s", str(duration_s))
+        rythmx_store.set_setting("last_run_outcome", outcome)
+        rythmx_store.set_setting("last_run_enriched", str(enriched))
+        rythmx_store.set_setting("last_run_not_found", str(not_found))
+
     # ------------------------------------------------------------------
     # Pipeline execution
     # ------------------------------------------------------------------
@@ -139,6 +254,7 @@ class PipelineRunner:
         stop_event: threading.Event | None,
         on_progress: "callable | None",
         on_phase: "callable | None" = None,
+        on_substep: "callable | None" = None,
     ) -> dict:
         # Prune stale lock from a crashed previous run
         if self._is_stale_lock():
@@ -146,7 +262,8 @@ class PipelineRunner:
             self._clear_state()
 
         # Mark start
-        rythmx_store.set_setting(_KEY_STARTED, datetime.utcnow().isoformat())
+        run_started_at = datetime.utcnow().isoformat()
+        rythmx_store.set_setting(_KEY_STARTED, run_started_at)
         heartbeat_cancel = self._start_heartbeat(stop_event)
 
         result: dict = {"status": "ok"}
@@ -169,6 +286,7 @@ class PipelineRunner:
 
             if self._stopped(stop_event):
                 result["status"] = "stopped"
+                self._persist_last_run(run_started_at, "stopped")
                 return result
 
             # === Stage 1.1: Tag Enrichment (bitrate/codec/container from local files) ===
@@ -197,6 +315,7 @@ class PipelineRunner:
 
             if self._stopped(stop_event):
                 result["status"] = "stopped"
+                self._persist_last_run(run_started_at, "stopped")
                 return result
 
             # === Stage 1.15: Repair stale artwork hashes (missing originals) ===
@@ -215,6 +334,7 @@ class PipelineRunner:
 
             if self._stopped(stop_event):
                 result["status"] = "stopped"
+                self._persist_last_run(run_started_at, "stopped")
                 return result
 
             # === Stage 1.2a: Album Artwork — Local File Pass ===
@@ -226,7 +346,7 @@ class PipelineRunner:
                 local_art_result = enrich_album_art_local(
                     batch_size=2000,
                     stop_event=stop_event,
-                    on_progress=self._progress_fn(on_progress, "album_art_local"),
+                    on_progress=self._progress_fn(on_progress, WORKER_KEYS["album_art_local"]),
                 )
                 result["album_art_local"] = local_art_result
                 logger.info(
@@ -240,6 +360,7 @@ class PipelineRunner:
 
             if self._stopped(stop_event):
                 result["status"] = "stopped"
+                self._persist_last_run(run_started_at, "stopped")
                 return result
 
             # === Stage 2a: iTunes/Deezer IDs (sequential — feeds catalog promotion) ===
@@ -250,14 +371,25 @@ class PipelineRunner:
                 s2a_result = enrich_library(
                     batch_size=batch_size,
                     stop_event=stop_event,
-                    on_progress=self._progress_fn(on_progress, "library"),
+                    on_progress=self._fanout_progress_fn(
+                        on_progress,
+                        (WORKER_KEYS["itunes_album"], WORKER_KEYS["deezer_album"]),
+                    ),
                 )
                 modified_artist_ids = s2a_result.get("modified_artist_ids", [])
+                logger.info(
+                    "PipelineRunner: id_itunes_deezer - enriched=%d skipped=%d failed=%d remaining=%d",
+                    s2a_result.get("enriched", 0),
+                    s2a_result.get("skipped", 0),
+                    s2a_result.get("failed", 0),
+                    s2a_result.get("remaining", 0),
+                )
             except Exception as e:
                 logger.error("PipelineRunner: iTunes/Deezer IDs failed: %s", e)
 
             if self._stopped(stop_event):
                 result["status"] = "stopped"
+                self._persist_last_run(run_started_at, "stopped")
                 return result
 
             # === Stage 1.2b: Album Artwork — CDN Pass ===
@@ -265,6 +397,7 @@ class PipelineRunner:
             # Skips albums with no metadata match. 30-day gate via enrichment_meta.
             if self._stopped(stop_event):
                 result["status"] = "stopped"
+                self._persist_last_run(run_started_at, "stopped")
                 return result
 
             self._set_phase("album_art_cdn", on_phase)
@@ -273,7 +406,7 @@ class PipelineRunner:
                 cdn_art_result = enrich_album_art_cdn(
                     batch_size=200,
                     stop_event=stop_event,
-                    on_progress=self._progress_fn(on_progress, "album_art_cdn"),
+                    on_progress=self._progress_fn(on_progress, WORKER_KEYS["album_art_cdn"]),
                 )
                 result["album_art_cdn"] = cdn_art_result
                 logger.info(
@@ -299,13 +432,13 @@ class PipelineRunner:
                     enrich_artist_ids_spotify,
                     batch_size=batch_size,
                     stop_event=stop_event,
-                    on_progress=self._progress_fn(on_progress, "spotify_id"),
+                    on_progress=self._progress_fn(on_progress, WORKER_KEYS["spotify_artist"]),
                 )
                 fut_lastfm = pool.submit(
                     enrich_artist_ids_lastfm,
                     batch_size=batch_size,
                     stop_event=stop_event,
-                    on_progress=self._progress_fn(on_progress, "lastfm_id"),
+                    on_progress=self._progress_fn(on_progress, WORKER_KEYS["lastfm_artist"]),
                 )
 
                 # Wait for Last.fm only — artwork + MusicBrainz need MBID from Last.fm
@@ -319,7 +452,7 @@ class PipelineRunner:
                     enrich_artist_art,
                     batch_size=batch_size,
                     stop_event=stop_event,
-                    on_progress=self._progress_fn(on_progress, "artist_art"),
+                    on_progress=self._progress_fn(on_progress, WORKER_KEYS["artist_art"]),
                 )
                 fut_musicbrainz = pool.submit(
                     enrich_artist_ids_musicbrainz,
@@ -338,12 +471,14 @@ class PipelineRunner:
 
             if self._stopped(stop_event):
                 result["status"] = "stopped"
+                self._persist_last_run(run_started_at, "stopped")
                 return result
 
             # === Ownership Chain (sequential — each reads previous output) ===
 
             # Ownership sync
             self._set_phase("ownership_sync", on_phase)
+            self._emit_substep(on_substep, "ownership_sync", "running")
             try:
                 from app.services.enrichment.ownership_sync import sync_release_ownership
                 own_result = sync_release_ownership()
@@ -353,45 +488,54 @@ class PipelineRunner:
                     own_result.get("owned_by_id", 0),
                     own_result.get("owned_by_title", 0),
                 )
+                self._emit_substep(on_substep, "ownership_sync", "completed")
             except Exception as e:
                 logger.warning("PipelineRunner: ownership sync failed: %s", e)
 
             if self._stopped(stop_event):
                 result["status"] = "stopped"
+                self._persist_last_run(run_started_at, "stopped")
                 return result
 
             # Normalize titles (scoped to modified artists when available)
             self._set_phase("normalize_titles", on_phase)
+            self._emit_substep(on_substep, "normalize_titles", "running")
             scope = modified_artist_ids or None
             try:
                 from app.db.rythmx_store import recompute_normalized_titles
                 recomputed = recompute_normalized_titles(artist_ids=scope)
                 result["recompute_titles"] = recomputed
                 logger.info("PipelineRunner: normalized_title recomputed for %d rows", recomputed)
+                self._emit_substep(on_substep, "normalize_titles", "completed")
             except Exception as e:
                 logger.warning("PipelineRunner: normalized_title recompute failed: %s", e)
 
             # Missing counts (scoped to modified artists when available)
             self._set_phase("missing_counts", on_phase)
+            self._emit_substep(on_substep, "missing_counts", "running")
             try:
                 from app.db.rythmx_store import refresh_missing_counts
-                refresh_missing_counts(artist_ids=scope)
-                logger.info("PipelineRunner: missing_count refresh complete")
+                missing_updated = refresh_missing_counts(artist_ids=scope)
+                logger.info("PipelineRunner: missing_count refresh - %d artists updated", missing_updated)
+                self._emit_substep(on_substep, "missing_counts", "completed")
             except Exception as e:
                 logger.warning("PipelineRunner: missing_count refresh failed: %s", e)
 
             # Canonical grouping (scoped to modified artists when available)
             self._set_phase("canonical", on_phase)
+            self._emit_substep(on_substep, "canonical", "running")
             try:
                 from app.db.rythmx_store import populate_canonical_release_ids
                 canonical_updated = populate_canonical_release_ids(artist_ids=scope)
                 result["canonical_refresh"] = canonical_updated
+                self._emit_substep(on_substep, "canonical", "completed")
                 logger.info("PipelineRunner: canonical refresh — %d rows", canonical_updated)
             except Exception as e:
                 logger.warning("PipelineRunner: canonical refresh failed: %s", e)
 
             if self._stopped(stop_event):
                 result["status"] = "stopped"
+                self._persist_last_run(run_started_at, "stopped")
                 return result
 
             # === Stage 3: Rich Data PARALLEL (8 workers, 4 threads) ===
@@ -407,15 +551,15 @@ class PipelineRunner:
             from app.services.enrichment.rich_musicbrainz_album import enrich_musicbrainz_album_rich
 
             stage3_workers = [
-                (enrich_itunes_rich, "itunes_rich"),
-                (enrich_deezer_release, "deezer_rich"),
-                (enrich_genres_spotify, "spotify_genres"),
-                (enrich_tags_lastfm, "lastfm_tags"),
-                (enrich_stats_lastfm, "lastfm_stats"),
-                (enrich_deezer_artist, "deezer_artist_stats"),
-                (enrich_similar_artists, "similar_artists"),
-                (enrich_musicbrainz_rich, "musicbrainz_rich"),
-                (enrich_musicbrainz_album_rich, "musicbrainz_album_rich"),
+                (enrich_itunes_rich, WORKER_KEYS["itunes_rich"]),
+                (enrich_deezer_release, WORKER_KEYS["deezer_rich"]),
+                (enrich_genres_spotify, WORKER_KEYS["spotify_genres"]),
+                (enrich_tags_lastfm, WORKER_KEYS["lastfm_tags"]),
+                (enrich_stats_lastfm, WORKER_KEYS["lastfm_stats"]),
+                (enrich_deezer_artist, WORKER_KEYS["deezer_artist_stats"]),
+                (enrich_similar_artists, WORKER_KEYS["similar_artists"]),
+                (enrich_musicbrainz_rich, WORKER_KEYS["musicbrainz_rich"]),
+                (enrich_musicbrainz_album_rich, WORKER_KEYS["musicbrainz_album_rich"]),
             ]
 
             with concurrent.futures.ThreadPoolExecutor(
@@ -439,6 +583,7 @@ class PipelineRunner:
 
             if self._stopped(stop_event):
                 result["status"] = "stopped"
+                self._persist_last_run(run_started_at, "stopped")
                 return result
 
             # === Post-Stage-3: low-priority album artwork pre-warmer ===
@@ -459,14 +604,17 @@ class PipelineRunner:
             # === Pipeline complete ===
             if self._stopped(stop_event):
                 result["status"] = "stopped"
+                self._persist_last_run(run_started_at, "stopped")
             else:
                 rythmx_store.set_setting("library_last_synced", datetime.utcnow().isoformat())
+                self._persist_last_run(run_started_at, "completed")
                 logger.info("PipelineRunner: pipeline complete")
 
         except Exception as e:
             logger.exception("PipelineRunner: unhandled error: %s", e)
             result["status"] = "error"
             result["error"] = str(e)
+            self._persist_last_run(run_started_at, "error")
 
         finally:
             heartbeat_cancel.set()

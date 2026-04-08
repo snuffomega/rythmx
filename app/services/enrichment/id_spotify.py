@@ -22,6 +22,18 @@ from app.services.api_orchestrator import rate_limiter
 logger = logging.getLogger(__name__)
 
 
+class _SpotifyRateLimited(Exception):
+    """Raised when Spotify returns HTTP 429 so the worker can stop gracefully."""
+
+
+def _is_rate_limited_error(exc: Exception) -> bool:
+    status = getattr(exc, "http_status", None)
+    if status == 429:
+        return True
+    msg = str(exc)
+    return "429" in msg or "rate" in msg.lower()
+
+
 def enrich_artist_ids_spotify(batch_size: int = 20, stop_event: threading.Event | None = None,
                                on_progress: "callable | None" = None) -> dict:
     """
@@ -35,6 +47,7 @@ def enrich_artist_ids_spotify(batch_size: int = 20, stop_event: threading.Event 
 
     try:
         import spotipy
+        from spotipy.exceptions import SpotifyException
         from spotipy.oauth2 import SpotifyClientCredentials
         sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
             client_id=config.SPOTIFY_CLIENT_ID,
@@ -56,7 +69,7 @@ def enrich_artist_ids_spotify(batch_size: int = 20, stop_event: threading.Event 
                 WHERE spotify_artist_id IS NULL
                   AND id NOT IN (
                       SELECT entity_id FROM enrichment_meta
-                      WHERE entity_type = 'artist' AND source = 'spotify_id'
+                      WHERE entity_type = 'artist' AND source IN ('spotify_artist', 'spotify_id')
                         AND (status = 'found'
                              OR (status = 'not_found'
                                  AND (retry_after IS NULL OR retry_after > date('now'))))
@@ -96,11 +109,26 @@ def enrich_artist_ids_spotify(batch_size: int = 20, stop_event: threading.Event 
             ]
 
             rate_limiter.acquire("spotify")
-            results = sp.search(q=f'artist:"{artist_name}"', type="artist", limit=5)
+            try:
+                results = sp.search(q=f'artist:"{artist_name}"', type="artist", limit=5)
+            except SpotifyException as e:
+                if _is_rate_limited_error(e):
+                    rate_limiter.record_429("spotify")
+                    write_enrichment_meta(
+                        conn,
+                        "spotify_artist",
+                        "artist",
+                        artist_id,
+                        "error",
+                        error_msg="Rate limit exceeded (HTTP 429)",
+                    )
+                    logger.warning("enrich_artist_ids_spotify: Spotify API rate limited (429) - stopping worker")
+                    raise _SpotifyRateLimited() from e
+                raise
             items = results.get("artists", {}).get("items", [])
 
             if not items:
-                write_enrichment_meta(conn, "spotify_id", "artist", artist_id,
+                write_enrichment_meta(conn, "spotify_artist", "artist", artist_id,
                                       "not_found", confidence=0)
                 skipped += 1
                 if on_progress:
@@ -117,9 +145,24 @@ def enrich_artist_ids_spotify(batch_size: int = 20, stop_event: threading.Event 
                 if nb == 0:
                     continue
                 rate_limiter.acquire("spotify")
-                albums_resp = sp.artist_albums(
-                    candidate["id"], include_groups="album,single", limit=50
-                )
+                try:
+                    albums_resp = sp.artist_albums(
+                        candidate["id"], include_groups="album,single", limit=50
+                    )
+                except SpotifyException as e:
+                    if _is_rate_limited_error(e):
+                        rate_limiter.record_429("spotify")
+                        write_enrichment_meta(
+                            conn,
+                            "spotify_artist",
+                            "artist",
+                            artist_id,
+                            "error",
+                            error_msg="Rate limit exceeded (HTTP 429)",
+                        )
+                        logger.warning("enrich_artist_ids_spotify: Spotify API rate limited (429) - stopping worker")
+                        raise _SpotifyRateLimited() from e
+                    raise
                 catalog_titles = [a["name"] for a in albums_resp.get("items", [])]
                 overlap = sum(
                     1 for lt in lib_titles
@@ -132,7 +175,7 @@ def enrich_artist_ids_spotify(batch_size: int = 20, stop_event: threading.Event 
                     best_conf = 95 if overlap >= 3 else (85 if overlap >= 1 else 70)
 
             if best_candidate is None:
-                write_enrichment_meta(conn, "spotify_id", "artist", artist_id,
+                write_enrichment_meta(conn, "spotify_artist", "artist", artist_id,
                                       "not_found", confidence=0)
                 skipped += 1
                 if on_progress:
@@ -150,7 +193,7 @@ def enrich_artist_ids_spotify(batch_size: int = 20, stop_event: threading.Event 
                 """,
                 (best_candidate["id"], needs_verification, artist_id),
             )
-            write_enrichment_meta(conn, "spotify_id", "artist", artist_id,
+            write_enrichment_meta(conn, "spotify_artist", "artist", artist_id,
                                   "found", confidence=best_conf)
             enriched += 1
             if on_progress:
@@ -158,13 +201,14 @@ def enrich_artist_ids_spotify(batch_size: int = 20, stop_event: threading.Event 
             logger.debug("enrich_artist_ids_spotify: '%s' -> id=%s conf=%d",
                          artist_name, best_candidate["id"], best_conf)
 
+        except _SpotifyRateLimited:
+            break
         except Exception as e:
-            msg = str(e)
-            if "429" in msg or "rate" in msg.lower():
+            if _is_rate_limited_error(e):
                 logger.warning("enrich_artist_ids_spotify: rate limit hit on '%s' — stopping", artist_name)
                 break
             logger.warning("enrich_artist_ids_spotify: failed for '%s': %s", artist_name, e)
-            write_enrichment_meta(conn, "spotify_id", "artist", artist_id,
+            write_enrichment_meta(conn, "spotify_artist", "artist", artist_id,
                                   "error", error_msg=str(e)[:200])
             failed += 1
             if on_progress:
@@ -184,7 +228,7 @@ def enrich_artist_ids_spotify(batch_size: int = 20, stop_event: threading.Event 
                 WHERE spotify_artist_id IS NULL
                   AND id NOT IN (
                       SELECT entity_id FROM enrichment_meta
-                      WHERE entity_type = 'artist' AND source = 'spotify_id'
+                      WHERE entity_type = 'artist' AND source IN ('spotify_artist', 'spotify_id')
                         AND (status = 'found'
                              OR (status = 'not_found'
                                  AND (retry_after IS NULL OR retry_after > date('now'))))

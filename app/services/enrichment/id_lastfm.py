@@ -29,7 +29,7 @@ def enrich_artist_ids_lastfm(batch_size: int = 50, stop_event: threading.Event |
                 WHERE lastfm_mbid IS NULL
                   AND id NOT IN (
                       SELECT entity_id FROM enrichment_meta
-                      WHERE entity_type = 'artist' AND source = 'lastfm_id'
+                      WHERE entity_type = 'artist' AND source IN ('lastfm_artist', 'lastfm_id')
                         AND (status = 'found'
                              OR (status = 'not_found'
                                  AND (retry_after IS NULL OR retry_after > date('now'))))
@@ -80,7 +80,7 @@ def enrich_artist_ids_lastfm(batch_size: int = 50, stop_event: threading.Event |
                     """,
                     (mbid, needs_verification, artist_id),
                 )
-                write_enrichment_meta(conn, "lastfm_id", "artist", artist_id,
+                write_enrichment_meta(conn, "lastfm_artist", "artist", artist_id,
                                       "found", confidence=val["confidence"])
                 enriched += 1
                 if on_progress:
@@ -88,7 +88,7 @@ def enrich_artist_ids_lastfm(batch_size: int = 50, stop_event: threading.Event |
                 logger.debug("enrich_artist_ids_lastfm: '%s' -> mbid=%s conf=%d",
                              artist_name, mbid, val["confidence"])
             else:
-                write_enrichment_meta(conn, "lastfm_id", "artist", artist_id,
+                write_enrichment_meta(conn, "lastfm_artist", "artist", artist_id,
                                       "not_found", confidence=0)
                 skipped += 1
                 if on_progress:
@@ -96,7 +96,7 @@ def enrich_artist_ids_lastfm(batch_size: int = 50, stop_event: threading.Event |
 
         except Exception as e:
             logger.warning("enrich_artist_ids_lastfm: failed for '%s': %s", artist_name, e)
-            write_enrichment_meta(conn, "lastfm_id", "artist", artist_id,
+            write_enrichment_meta(conn, "lastfm_artist", "artist", artist_id,
                                   "error", error_msg=str(e)[:200])
             failed += 1
             if on_progress:
@@ -116,7 +116,7 @@ def enrich_artist_ids_lastfm(batch_size: int = 50, stop_event: threading.Event |
                 WHERE lastfm_mbid IS NULL
                   AND id NOT IN (
                       SELECT entity_id FROM enrichment_meta
-                      WHERE entity_type = 'artist' AND source = 'lastfm_id'
+                      WHERE entity_type = 'artist' AND source IN ('lastfm_artist', 'lastfm_id')
                         AND (status = 'found'
                              OR (status = 'not_found'
                                  AND (retry_after IS NULL OR retry_after > date('now'))))
