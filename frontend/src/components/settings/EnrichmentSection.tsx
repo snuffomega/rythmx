@@ -112,14 +112,8 @@ function PipelineOrchestrator({ libraryTrackCount, libraryLastSynced, platform, 
           <span>{formatElapsed(elapsedMs)}</span>
         </div>
       )}
-      {!running && lastRun && (
-        <div className="text-sm text-text-secondary mb-4">
-          Last run: {new Date(lastRun.started_at).toLocaleDateString()} - {Math.floor(lastRun.duration_s / 60)}m {lastRun.duration_s % 60}s - {lastRun.enriched} enriched - {lastRun.not_found} not found - {lastRun.outcome}
-        </div>
-      )}
-
       {/* Top summary - user-facing first */}
-      <div className="mb-4 grid gap-3 md:grid-cols-2">
+      <div className="mb-4 space-y-3">
         <div className="p-4 bg-surface rounded-sm border border-border-subtle">
           {running && activeLabel ? (
             <div className="flex items-center gap-2 mb-2">
@@ -207,22 +201,30 @@ function PipelineOrchestrator({ libraryTrackCount, libraryLastSynced, platform, 
       </div>
 
       {/* Controls */}
-      <div className="flex items-center gap-3 mb-4">
-        {!running ? (
-          <button onClick={onRunFull} className="btn-primary flex items-center gap-2 text-sm">
-            <Play size={14} />
-            Start Enrichment
-          </button>
-        ) : (
-          <button onClick={onStop} className="btn-danger flex items-center gap-2 text-sm">
-            <Square size={14} />
-            Stop
-          </button>
-        )}
-        {coreTotalStats.total > 0 && (
-          <span className="text-xs font-mono text-accent font-medium">
-            {coreHealthPct.toFixed(0)}% core resolved
-          </span>
+      <div className="mb-4">
+        <div className="flex items-center gap-3">
+          {!running ? (
+            <button onClick={onRunFull} className="btn-primary flex items-center gap-2 text-sm">
+              <Play size={14} />
+              Start Enrichment
+            </button>
+          ) : (
+            <button onClick={onStop} className="btn-danger flex items-center gap-2 text-sm">
+              <Square size={14} />
+              Stop
+            </button>
+          )}
+          {coreTotalStats.total > 0 && (
+            <span className="text-xs font-mono text-accent font-medium">
+              {coreHealthPct.toFixed(0)}% core resolved
+            </span>
+          )}
+        </div>
+
+        {!running && lastRun && (
+          <div className="mt-1 text-xs font-mono text-text-secondary/80">
+            Last run: {new Date(lastRun.started_at).toLocaleDateString()} - {Math.floor(lastRun.duration_s / 60)}m {lastRun.duration_s % 60}s - {lastRun.enriched} enriched - {lastRun.not_found} not found - {lastRun.outcome}
+          </div>
         )}
       </div>
 
@@ -432,7 +434,7 @@ export function EnrichmentSection({ platform, libraryTrackCount, libraryLastSync
 
   return (
     <section className="border-t border-border-subtle pt-8">
-      <h2 className="text-text-muted text-xs font-semibold uppercase tracking-widest mb-1">Library Enrichment Pipeline</h2>
+      <h2 className="text-text-primary text-xs font-semibold uppercase tracking-widest mb-1">Library Enrichment Pipeline</h2>
       <p className="text-[11px] text-text-dim mb-6">Syncs library, resolves IDs, enriches metadata from iTunes, Deezer, Last.fm, and Spotify</p>
 
       <PipelineOrchestrator
