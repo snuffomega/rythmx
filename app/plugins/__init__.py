@@ -12,6 +12,7 @@ Rules:
 import importlib.util
 import logging
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, TypedDict, runtime_checkable
 
@@ -27,8 +28,8 @@ PLUGINS_DIR = Path(__file__).parents[2] / "plugins"
 # load_plugins() skips any plugin declaring an unsupported version.
 # When the contract changes incompatibly, increment PLUGIN_API_VERSION here
 # and document the migration in PLUGINS.md.
-PLUGIN_API_VERSION = 1
-SUPPORTED_PLUGIN_API_VERSIONS: frozenset[int] = frozenset({1})
+PLUGIN_API_VERSION = 2
+SUPPORTED_PLUGIN_API_VERSIONS: frozenset[int] = frozenset({2})
 
 
 class PluginMetadata(TypedDict, total=False):
@@ -63,6 +64,31 @@ class ConfigField(TypedDict, total=False):
     placeholder: str
 
 
+@dataclass
+class DownloadArtifact:
+    """
+    Shared data envelope that flows through the post-download plugin pipeline.
+
+    Created by Core (tidarr_poller) after completion detection:
+      - job_id:     matches download_jobs.job_id
+      - artist/album: from download_jobs row
+      - source_dir: locally-accessible download directory (output of translate_path)
+      - files:      absolute FLAC paths found in source_dir
+      - metadata:   enrichment context (tagger may add to this)
+      - dest_dir:   set by file_handler.organize() — library destination path
+
+    Plugin authors receive this object and return it (optionally mutated).
+    To use the type annotation in a plugin: from app.plugins import DownloadArtifact
+    """
+    job_id: str
+    artist: str
+    album: str
+    source_dir: str
+    files: list[str] = field(default_factory=list)
+    metadata: dict = field(default_factory=dict)
+    dest_dir: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Protocol definitions — the interface contract for each plugin slot
 # ---------------------------------------------------------------------------
@@ -78,22 +104,34 @@ class DownloaderPlugin(Protocol):
     def test_connection(self) -> dict:
         ...
 
+    def translate_path(self, storage_path: str) -> str:
+        """
+        Translate a downloader-internal storage path to a locally accessible path.
+
+        Default behaviour (identity) is correct for any downloader whose output
+        directory is already accessible at the same path inside Rythmx.
+        Override only when the downloader container uses a different internal path
+        than the Rythmx-mounted path (e.g. Tidarr writes to /shared/nzb_downloads,
+        Rythmx mounts the same host dir at /app/downloads).
+        """
+        return storage_path
+
 
 @runtime_checkable
 class TaggerPlugin(Protocol):
-    """Tags a downloaded file with track/album metadata."""
+    """Tags downloaded files. Receives a DownloadArtifact, returns it (optionally mutated)."""
     name: str
 
-    def tag(self, file_path: str, metadata: dict) -> None:
+    def tag(self, artifact: DownloadArtifact) -> DownloadArtifact:
         ...
 
 
 @runtime_checkable
 class FileHandlerPlugin(Protocol):
-    """Organizes/moves a file after tagging. Returns the new path."""
+    """Organizes/moves downloaded files into the library. Returns the mutated artifact."""
     name: str
 
-    def organize(self, file_path: str, metadata: dict) -> str:
+    def organize(self, artifact: DownloadArtifact) -> DownloadArtifact:
         ...
 
 
@@ -111,19 +149,22 @@ class _StubDownloader:
     def test_connection(self) -> dict:
         return {"status": "ok", "message": "Stub downloader — no real connection"}
 
+    def translate_path(self, storage_path: str) -> str:
+        return storage_path
+
 
 class _NoopTagger:
     name = "noop"
 
-    def tag(self, file_path: str, metadata: dict) -> None:
-        pass
+    def tag(self, artifact: DownloadArtifact) -> DownloadArtifact:
+        return artifact
 
 
 class _NoopFileHandler:
     name = "noop"
 
-    def organize(self, file_path: str, metadata: dict) -> str:
-        return file_path
+    def organize(self, artifact: DownloadArtifact) -> DownloadArtifact:
+        return artifact
 
 
 # ---------------------------------------------------------------------------

@@ -58,6 +58,15 @@ class TidarrDownloader:
         self._key = os.environ.get("TIDARR_API_KEY") or ""
         quality_raw = (os.environ.get("TIDARR_QUALITY") or "lossless").lower()
         self._quality = quality_raw if quality_raw in ("lossless", "hires_lossless") else "lossless"
+        # Path translation: Tidarr-internal prefix → locally accessible prefix.
+        # Only needed when Tidarr's container path differs from Rythmx's mount point.
+        # If both containers mount the same host dir at the same container path, leave blank.
+        self._tidarr_prefix = (
+            os.environ.get("FILE_MOVER_TIDARR_PREFIX") or ""
+        ).rstrip("/")
+        self._local_prefix = (
+            os.environ.get("FILE_MOVER_LOCAL_PREFIX") or ""
+        ).rstrip("/")
         self._session = requests.Session()
         if self._key:
             self._session.headers.update({"X-Api-Key": self._key})
@@ -140,7 +149,31 @@ class TidarrDownloader:
             logger.warning(
                 "tidarr: addfile returned no nzo_ids for %s — %s", artist, album
             )
-            return f"unresolved:{artist}:{album}"
+         ranslate_path(self, storage_path: str) -> str:
+        """
+        Translate a Tidarr-internal storage path to the Rythmx-accessible path.
+
+        Tidarr reports storage paths using its own container root (e.g.
+        /shared/nzb_downloads/tidarr_nzo_123/Artist/Album). If Rythmx mounts
+        the same host directory at a different container path (e.g. /app/downloads),
+        this method swaps the prefix so Core can locate the files.
+
+        When FILE_MOVER_TIDARR_PREFIX and FILE_MOVER_LOCAL_PREFIX are both set:
+          /shared/nzb_downloads/... → /app/downloads/...
+
+        When not configured (default): returns path unchanged (identity).
+        Volume tip: mount the same host dir at the same path in both containers
+        and leave these settings empty — no translation needed.
+        """
+        if (
+            self._tidarr_prefix
+            and self._local_prefix
+            and storage_path.startswith(self._tidarr_prefix)
+        ):
+            return self._local_prefix + storage_path[len(self._tidarr_prefix):]
+        return storage_path
+
+    def t   return f"unresolved:{artist}:{album}"
 
         nzo_id = nzo_ids[0]
         logger.info(
@@ -454,13 +487,85 @@ class TidarrDownloader:
 
 
 # ---------------------------------------------------------------------------
-# Plugin registration — must appear after class definition
+# File mover — file_handler slot
 # ---------------------------------------------------------------------------
 
-PLUGIN_API_VERSION = 1
-PLUGIN_VERSION = "1.0.0"
-PLUGIN_DESCRIPTION = "Downloads albums via Tidarr (Tidal) using SABnzbd pipeline."
-PLUGIN = {"slot": "downloader", "class": TidarrDownloader}
+class TidarrFileMover:
+    """
+    file_handler slot implementation.
+
+    Receives a DownloadArtifact from Core — source_dir is already a locally
+    accessible path (translate_path was called by Core via TidarrDownloader),
+    and files is already populated with FLAC paths. This class only needs to:
+      1. Copy FLAC files to FILE_MOVER_DEST/{Artist}/{Album}/.
+      2. Set artifact.dest_dir to the destination directory.
+      3. Return the mutated artifact.
+
+    Requires one config var:
+      FILE_MOVER_DEST — root of your music library (absolute path, e.g. /music)
+                         Must be writable by the Rythmx container.
+
+    The path translation config (FILE_MOVER_TIDARR_PREFIX / FILE_MOVER_LOCAL_PREFIX)
+    belongs to TidarrDownloader.translate_path, not here. This mover is intentionally
+    path-agnostic — it works with any downloader that produces a DownloadArtifact.
+    """
+
+    name = "tidarr_mover"
+
+    def __init__(self) -> None:
+        self._dest = (os.environ.get("FILE_MOVER_DEST") or "").rstrip("/")
+
+    def organize(self, artifact) -> object:
+        """
+        Copy FLAC files from artifact.source_dir into the music library.
+
+        Args:
+            artifact: DownloadArtifact with .artist, .album, .files already populated.
+
+        Returns:
+            The artifact with .dest_dir set to the library destination directory,
+            or unchanged if FILE_MOVER_DEST is not configured or no files were copied.
+        """
+        import shutil as _shutil
+
+        if not self._dest:
+            logger.warning("tidarr_mover: FILE_MOVER_DEST not configured — skipping")
+            return artifact
+
+        if not artifact.files:
+            logger.warning("tidarr_mover: artifact has no files — skipping")
+            return artifact
+
+        def _safe_name(s: str) -> str:
+            return "".join(c for c in s if c not in r'\/:*?"<>|').strip()
+
+        artist   = _safe_name(artifact.artist or "Unknown Artist")
+        album    = _safe_name(artifact.album  or "Unknown Album")
+        dest_dir = os.path.join(self._dest, artist, album)
+        os.makedirs(dest_dir, exist_ok=True)
+
+        copied = 0
+        for src in sorted(artifact.files):
+            dst = os.path.join(dest_dir, os.path.basename(src))
+            _shutil.copy2(src, dst)
+            copied += 1
+
+        logger.info("tidarr_mover: copied %d FLAC(s) → %s", copied, dest_dir)
+        artifact.dest_dir = dest_dir
+        return artifact
+
+
+# ---------------------------------------------------------------------------
+# Plugin registration — must appear after class definitions
+# ---------------------------------------------------------------------------
+
+PLUGIN_API_VERSION = 2
+PLUGIN_VERSION = "2.0.0"
+PLUGIN_DESCRIPTION = "Downloads albums via Tidarr (Tidal) and copies FLACs to your library."
+PLUGIN_SLOTS = {
+    "downloader": TidarrDownloader,
+    "file_handler": TidarrFileMover,
+}
 
 CONFIG_SCHEMA = [
     {
@@ -468,7 +573,7 @@ CONFIG_SCHEMA = [
         "label": "Tidarr URL",
         "type": "url",
         "required": True,
-        "placeholder": "http://tidarr:8484",
+        "placeholder": "http://tidarr:3030",
     },
     {
         "key": "TIDARR_API_KEY",
@@ -484,5 +589,30 @@ CONFIG_SCHEMA = [
         "required": False,
         "default": "lossless",
         "options": ["lossless", "hires_lossless"],
+    },
+    # --- Path translation (used by TidarrDownloader.translate_path) ---
+    # Only needed when Tidarr's container path differs from Rythmx's mount point.
+    # Leave blank if both containers mount the shared download dir at the same path.
+    {
+        "key": "FILE_MOVER_TIDARR_PREFIX",
+        "label": "Tidarr download path (container-internal prefix)",
+        "type": "text",
+        "required": False,
+        "placeholder": "/shared/nzb_downloads",
+    },
+    {
+        "key": "FILE_MOVER_LOCAL_PREFIX",
+        "label": "Download path (Rythmx mount point — same host dir)",
+        "type": "text",
+        "required": False,
+        "placeholder": "/app/downloads",
+    },
+    # --- File mover (used by TidarrFileMover.organize) ---
+    {
+        "key": "FILE_MOVER_DEST",
+        "label": "Music library destination path",
+        "type": "text",
+        "required": False,
+        "placeholder": "/music",
     },
 ]

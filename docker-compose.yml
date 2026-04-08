@@ -11,10 +11,14 @@ services:
       - ./data:/data/rythmx
       # Plugin directory — bind-mounted so plugins can be added/updated without rebuild.
       - ./plugins:/app/plugins
-      # Music directory — READ ONLY. Same path Plex reads from on the host.
-      # Required for: local artwork fallback (folder.jpg), tag enrichment, codec info.
-      # Uncomment and adjust to your host path:
-      # - /mnt/user/data/media/music:/music:ro
+      # Music library — writable; the file mover copies completed FLACs here.
+      # Must match FILE_MOVER_DEST in Settings → Integrations → Tidarr.
+      # Uncomment and set to the path your media server (Plex/Navidrome) watches.
+      # - /mnt/user/data/media/music:/music
+      # Tidarr download output — read-only; Core reads FLACs after Tidarr completes.
+      # Must be the same host directory Tidarr mounts as its download destination.
+      # Set FILE_MOVER_LOCAL_PREFIX=/app/downloads in Settings → Integrations → Tidarr.
+      # - /mnt/user/downloads:/app/downloads:ro
     env_file:
       - .env
     environment:
