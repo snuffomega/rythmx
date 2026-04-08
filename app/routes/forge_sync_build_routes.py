@@ -801,10 +801,12 @@ def forge_builds_fetch(build_id: str):
     for item in track_list:
         if not isinstance(item, dict):
             continue
-        if bool(item.get("is_owned", False)):
-            continue  # skip already-owned tracks
+        # is_owned: sync builds | in_library: new_music builds
+        if bool(item.get("is_owned", False)) or bool(item.get("in_library", 0)):
+            continue
         artist = str(item.get("artist_name") or "").strip()
-        album = str(item.get("album_name") or "").strip()
+        # album_name: sync builds | title: new_music builds
+        album = str(item.get("album_name") or item.get("title") or "").strip()
         if not artist or not album:
             continue
         key = (artist.lower(), album.lower())
