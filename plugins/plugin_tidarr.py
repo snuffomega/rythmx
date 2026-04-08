@@ -4,14 +4,16 @@ plugin_tidarr.py — Rythmx downloader plugin for Tidarr.
 Submits albums to a running Tidarr instance (https://github.com/cstaelen/tidarr)
 which downloads music via the Tidal streaming service.
 
-Resolution strategy (two-step):
-  1. Search Tidarr's Newznab/Lidarr endpoint with artist + album name.
+Resolution strategy (three-step):
+  1. Search Tidarr's Newznab/Lidarr endpoint:
      GET /api/lidarr?t=search&q={artist} {album}&apikey={key}
-  2. Parse the returned Newznab XML — extract the numeric Tidal album ID
-     from the first <link> element (/api/lidarr/download/{id}/...) with
-     a <guid> numeric fallback.
-  3. Submit via GET /api/sabnzbd/api?mode=addurl&name={tidal_url} — returns
-     a real nzo_id (e.g. "tidarr-34277251-1234567890") used for Step 4b polling.
+  2. Score the results: filter to configured quality, fuzzy-match artist+album,
+     pick the best result. Extract enclosure URL and Tidal album ID from <guid>
+     (format: "{album_id}-{quality}").
+  3. Download the NZB file bytes from the enclosure URL, then submit via:
+     POST /api/sabnzbd/api?mode=addfile  (multipart/form-data)
+     Returns a real nzo_id ("tidarr_nzo_{id}") used for Step 4b polling.
+     addurl is NOT used — it returns tidarr_nzo_unknown and cannot be tracked.
 
 Config — add to your .env:
   TIDARR_URL      Base URL of your Tidarr instance, e.g. http://tidarr:8484
@@ -26,9 +28,9 @@ Constraints (enforced by the plugin system):
   - submit() never raises — unresolvable items return "unresolved:…" and log
     a warning so the caller can record the miss without crashing.
 """
+import difflib
 import logging
 import os
-import re
 import xml.etree.ElementTree as ET
 from typing import Optional
 
@@ -36,10 +38,9 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-# Matches the Tidal album ID from Tidarr's Newznab <link> URLs.
-# Actual format (port 3030): http://host:3030/album/20115556       → group(1) = "20115556"
-# Legacy format (port 8484): http://host:8484/api/lidarr/download/20115556/high → group(2)
-_DOWNLOAD_URL_RE = re.compile(r"/album/(\d+)|/api/lidarr/download/(\d+)/")
+# Newznab namespace used by Tidarr's indexer for extended attributes.
+_NEWZNAB_NS = "http://www.newzbin.com/DTD/2003/nzb"
+_NZB_NS = {"newznab": "http://www.newznab.com/DTD:2010:feeds:attributes@"}
 
 
 class TidarrDownloader:
@@ -67,67 +68,77 @@ class TidarrDownloader:
 
     def submit(self, artist: str, album: str, metadata: dict) -> str:
         """
-        Resolve the Tidal album ID then queue the download in Tidarr.
+        Find the best Tidal match for artist+album, download its NZB, and submit
+        via mode=addfile (multipart POST) to get a real trackable nzo_id.
 
-        Uses /api/sabnzbd/api?mode=addurl — Tidarr's SABnzbd-compatibility layer.
-        This returns a real nzo_id (e.g. "tidarr-34277251-1234567890") that can
-        be polled via mode=queue and mode=history for completion detection (Step 4b).
+        Flow:
+          1. Search Newznab → score results by quality + fuzzy artist/album match
+          2. GET the enclosure URL to download raw NZB bytes
+          3. POST NZB bytes to /api/sabnzbd/api?mode=addfile — returns real nzo_id
+
+        NOTE: addurl is NOT used — it always returns "tidarr_nzo_unknown" when
+        passed a tidal.com URL, making polling impossible.
 
         Returns:
-            The nzo_id string from Tidarr  — successfully queued; use for polling
-            "unresolved:{artist}:{album}"  — Tidal ID could not be resolved
-                                             or addurl returned no nzo_id
+            nzo_id string ("tidarr_nzo_{id}")  — queued, trackable
+            "unresolved:{artist}:{album}"        — search/submit failed
         """
         if not self._url or not self._key:
             logger.warning(
                 "tidarr: TIDARR_URL or TIDARR_API_KEY not configured — skipping %s — %s",
-                artist,
-                album,
+                artist, album,
             )
             return f"unresolved:{artist}:{album}"
 
-        tidal_id = self._resolve_tidal_id(artist, album)
-        if tidal_id is None:
-            logger.warning(
-                "tidarr: could not resolve Tidal ID for %s — %s", artist, album
-            )
+        result = self._find_best_result(artist, album)
+        if result is None:
+            logger.warning("tidarr: no matching result for %s — %s", artist, album)
             return f"unresolved:{artist}:{album}"
 
-        tidal_url = f"https://listen.tidal.com/album/{tidal_id}"
+        enclosure_url, tidal_id = result
+
+        # Step 2: download the NZB bytes
         try:
-            resp = self._session.get(
-                f"{self._url}/api/sabnzbd/api",
-                params={
-                    "mode": "addurl",
-                    "name": tidal_url,
-                    "apikey": self._key,
-                },
-                timeout=10,
-            )
+            nzb_resp = self._session.get(enclosure_url, timeout=15)
+            nzb_resp.raise_for_status()
+            nzb_bytes = nzb_resp.content
         except requests.RequestException as exc:
             logger.warning(
-                "tidarr: addurl failed for %s — %s: %s", artist, album, exc
+                "tidarr: NZB download failed for %s — %s: %s", artist, album, exc
             )
             return f"unresolved:{artist}:{album}"
 
-        if resp.status_code != 200:
-            logger.warning(
-                "tidarr: addurl returned HTTP %d for %s — %s",
-                resp.status_code, artist, album,
-            )
-            return f"unresolved:{artist}:{album}"
-
+        # Step 3: submit via addfile (multipart POST — the only method that
+        # returns a real nzo_id rather than tidarr_nzo_unknown)
         try:
+            resp = self._session.post(
+                f"{self._url}/api/sabnzbd/api",
+                params={"mode": "addfile", "cat": "music", "apikey": self._key},
+                files={"name": ("album.nzb", nzb_bytes, "application/x-nzb")},
+                timeout=15,
+            )
+            resp.raise_for_status()
             data = resp.json()
+        except requests.RequestException as exc:
+            logger.warning(
+                "tidarr: addfile request failed for %s — %s: %s", artist, album, exc
+            )
+            return f"unresolved:{artist}:{album}"
         except Exception:
-            logger.warning("tidarr: addurl response not JSON for %s — %s", artist, album)
+            logger.warning("tidarr: addfile response not JSON for %s — %s", artist, album)
+            return f"unresolved:{artist}:{album}"
+
+        if not data.get("status"):
+            logger.warning(
+                "tidarr: addfile failed for %s — %s: %s",
+                artist, album, data.get("error", data),
+            )
             return f"unresolved:{artist}:{album}"
 
         nzo_ids = data.get("nzo_ids") or []
         if not nzo_ids:
             logger.warning(
-                "tidarr: addurl returned no nzo_ids for %s — %s (response: %s)",
-                artist, album, data,
+                "tidarr: addfile returned no nzo_ids for %s — %s", artist, album
             )
             return f"unresolved:{artist}:{album}"
 
@@ -208,43 +219,85 @@ class TidarrDownloader:
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _resolve_tidal_id(self, artist: str, album: str) -> Optional[str]:
+    def _find_best_result(
+        self, artist: str, album: str
+    ) -> Optional[tuple[str, str]]:
         """
-        Query Tidarr's Newznab/Lidarr indexer and extract the Tidal album ID.
+        Search Tidarr's Newznab indexer and return (enclosure_url, tidal_album_id)
+        for the highest-confidence match at the configured quality.
 
-        Primary search: t=search&q={artist} {album}
-          This is the general Newznab search query and is the proven path
-          (used by SoulSync and other *arr integrations against Tidarr).
-
-        Fallback search: t=music&artist={artist}&album={album}
-          The structured Newznab music search. More precise but not always
-          available or differently ranked.
-
-        The `apikey` query param is used because the Newznab spec requires
-        it as a query parameter; the session X-Api-Key header is also sent.
-
-        Returns the numeric Tidal album ID string, or None on failure.
+        Strategy:
+          1. Fetch Newznab XML via t=search&q={artist} {album}
+          2. Filter items to those whose <guid> ends with the configured quality
+             (format: "{album_id}-{quality}")
+          3. Score remaining items using fuzzy match against <newznab:attr>
+             artist and album values; fall back to title string matching
+          4. Return the enclosure URL + album_id of the best-scoring item
         """
-        # Primary: general search query (proven with Tidarr in the wild)
-        result = self._newznab_search(
-            params={"t": "search", "q": f"{artist} {album}", "apikey": self._key},
-            artist=artist,
-            album=album,
-        )
-        if result:
-            return result
+        xml_text = self._newznab_search_raw(artist, album)
+        if xml_text is None:
+            xml_text = self._newznab_search_raw(artist, album, structured=True)
+        if xml_text is None:
+            return None
 
-        # Fallback: structured music search
-        return self._newznab_search(
-            params={"t": "music", "artist": artist, "album": album, "apikey": self._key},
-            artist=artist,
-            album=album,
-        )
+        try:
+            root = ET.fromstring(xml_text)
+        except ET.ParseError as exc:
+            logger.warning("tidarr: XML parse error for %s — %s: %s", artist, album, exc)
+            return None
 
-    def _newznab_search(
-        self, params: dict, artist: str, album: str
+        items = root.findall(".//item")
+        if not items:
+            logger.debug("tidarr: no Newznab results for %s — %s", artist, album)
+            return None
+
+        # Filter to configured quality using <guid> = "{album_id}-{quality}"
+        quality_items = [
+            item for item in items
+            if self._item_quality(item) == self._quality
+        ]
+        if not quality_items:
+            logger.debug(
+                "tidarr: no %s results for %s — %s, using any quality",
+                self._quality, artist, album,
+            )
+            quality_items = items
+
+        best_item = self._pick_best_item(quality_items, artist, album)
+        if best_item is None:
+            return None
+
+        enclosure = best_item.find("enclosure")
+        if enclosure is None:
+            logger.warning("tidarr: best result has no enclosure for %s — %s", artist, album)
+            return None
+        enclosure_url = enclosure.get("url", "")
+        if not enclosure_url:
+            return None
+
+        # guid format: "{album_id}-{quality}"  e.g. "33816889-lossless"
+        guid_el = best_item.find("guid")
+        guid_text = (guid_el.text or "") if guid_el is not None else ""
+        tidal_id = guid_text.split("-")[0] if "-" in guid_text else guid_text
+        if not tidal_id.isdigit():
+            import re as _re
+            m = _re.search(r"/download/([0-9]+)/", enclosure_url)
+            tidal_id = m.group(1) if m else "unknown"
+
+        logger.debug(
+            "tidarr: selected tidal_id=%s quality=%s for %s — %s",
+            tidal_id, self._quality, artist, album,
+        )
+        return enclosure_url, tidal_id
+
+    def _newznab_search_raw(
+        self, artist: str, album: str, structured: bool = False
     ) -> Optional[str]:
-        """Execute one Newznab search request and return the parsed Tidal ID, or None."""
+        """Execute one Newznab search and return raw XML text, or None on failure."""
+        if structured:
+            params: dict = {"t": "music", "artist": artist, "album": album, "apikey": self._key}
+        else:
+            params = {"t": "search", "q": f"{artist} {album}", "apikey": self._key}
         try:
             resp = self._session.get(
                 f"{self._url}/api/lidarr",
@@ -253,73 +306,91 @@ class TidarrDownloader:
             )
         except requests.RequestException as exc:
             logger.warning(
-                "tidarr: Newznab search request failed for %s — %s: %s",
-                artist,
-                album,
-                exc,
+                "tidarr: Newznab search failed for %s — %s: %s", artist, album, exc
             )
             return None
-
         if resp.status_code != 200:
             logger.warning(
-                "tidarr: Newznab search returned HTTP %d for %s — %s",
-                resp.status_code,
-                artist,
-                album,
+                "tidarr: Newznab search HTTP %d for %s — %s", resp.status_code, artist, album
             )
             return None
+        return resp.text
 
-        return self._parse_newznab_id(resp.text, artist, album)
+    @staticmethod
+    def _item_quality(item: ET.Element) -> str:
+        """Extract quality from <guid> text (format: '{album_id}-{quality}')."""
+        guid_el = item.find("guid")
+        if guid_el is None or not guid_el.text:
+            return ""
+        parts = guid_el.text.split("-", 1)
+        return parts[1] if len(parts) == 2 else ""
 
-    def _parse_newznab_id(
-        self, xml_text: str, artist: str, album: str
-    ) -> Optional[str]:
+    @staticmethod
+    def _item_attrs(item: ET.Element) -> dict[str, str]:
         """
-        Parse Tidarr's Newznab XML response and return the first Tidal album ID.
-
-        Primary path (port 3030):
-            <link>http://host:3030/album/20115556</link>
-            → group(1) = "20115556"
-
-        Legacy path (port 8484):
-            <link>http://host:8484/api/lidarr/download/20115556/high</link>
-            → group(2) = "20115556"
-
-        Returns the numeric ID string, or None if no match found.
+        Extract <newznab:attr name=... value=...> elements into a flat dict.
+        Tidarr emits: artist, album, year, tracks, type, size.
+        The namespace tag is matched by local name to avoid hardcoding the URI.
         """
-        try:
-            root = ET.fromstring(xml_text)
-        except ET.ParseError as exc:
+        attrs: dict[str, str] = {}
+        for el in item:
+            tag = el.tag
+            local = tag.split("}")[-1] if "}" in tag else tag
+            if local == "attr":
+                name = el.get("name", "")
+                value = el.get("value", "")
+                if name:
+                    attrs[name] = value
+        return attrs
+
+    def _pick_best_item(
+        self, items: list[ET.Element], artist: str, album: str
+    ) -> Optional[ET.Element]:
+        """
+        Score each item by fuzzy matching artist+album against Newznab attrs,
+        return the highest-scoring item.
+
+        Score = average of artist_ratio and album_ratio (0.0–1.0).
+        Items with score < 0.3 are discarded (likely garbage results).
+        """
+        artist_lower = artist.lower()
+        album_lower = album.lower()
+        best_score = -1.0
+        best_item: Optional[ET.Element] = None
+
+        for item in items:
+            attrs = self._item_attrs(item)
+            item_artist = (attrs.get("artist") or "").lower()
+            item_album = (attrs.get("album") or "").lower()
+
+            if item_artist and item_album:
+                artist_score = difflib.SequenceMatcher(
+                    None, artist_lower, item_artist
+                ).ratio()
+                album_score = difflib.SequenceMatcher(
+                    None, album_lower, item_album
+                ).ratio()
+                score = (artist_score + album_score) / 2
+            else:
+                # No attrs — fall back to fuzzy match against <title>
+                title_el = item.find("title")
+                title = (title_el.text or "").lower() if title_el is not None else ""
+                combined = f"{artist_lower} {album_lower}"
+                score = difflib.SequenceMatcher(None, combined, title).ratio()
+
+            if score > best_score:
+                best_score = score
+                best_item = item
+
+        if best_score < 0.3:
             logger.warning(
-                "tidarr: failed to parse Newznab XML for %s — %s: %s",
-                artist,
-                album,
-                exc,
+                "tidarr: best match score %.2f too low for %s — %s (no confident result)",
+                best_score, artist, album,
             )
             return None
 
-        items = root.findall(".//item")
-        if not items:
-            logger.debug("tidarr: no Newznab results for %s — %s", artist, album)
-            return None
-
-        first = items[0]
-
-        # Extract Tidal album ID from <link>.
-        # Actual format:  http://host:3030/album/20115556        → group(1)
-        # Legacy format:  http://host:8484/api/lidarr/download/20115556/high → group(2)
-        link_el = first.find("link")
-        if link_el is not None and link_el.text:
-            m = _DOWNLOAD_URL_RE.search(link_el.text)
-            if m:
-                return m.group(1) or m.group(2)
-
-        logger.warning(
-            "tidarr: could not extract Tidal ID from Newznab result for %s — %s",
-            artist,
-            album,
-        )
-        return None
+        logger.debug("tidarr: best match score=%.2f for %s — %s", best_score, artist, album)
+        return best_item
 
     # ------------------------------------------------------------------
     # Step 4b: polling helpers called by app/services/tidarr_poller.py
