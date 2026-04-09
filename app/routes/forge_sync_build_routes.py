@@ -793,29 +793,45 @@ def forge_builds_fetch(build_id: str):
             code="FORGE_NO_DOWNLOADER",
         )
     try:
-        run = fetch_pipeline.start_fetch_run(build_id, triggered_by="manual")
+        queued = fetch_pipeline.enqueue_fetch_build(
+            build_id,
+            requested_by="manual",
+            source="build_fetch",
+            payload={"build_id": build_id},
+        )
     except ValueError:
         return facade._error("Build not found", status_code=404, code="FORGE_BUILD_NOT_FOUND")
     except Exception as exc:
-        logger.error("forge/fetch start failed for build %s: %s", build_id, exc, exc_info=True)
+        logger.error("forge/fetch enqueue failed for build %s: %s", build_id, exc, exc_info=True)
         return facade._error(str(exc), status_code=500, code="FORGE_FETCH_FAILED")
 
-    submission = run.get("submission", {}) if isinstance(run.get("submission"), dict) else {}
+    queue = queued.get("queue") if isinstance(queued.get("queue"), dict) else {}
+    run = queued.get("started_run") if isinstance(queued.get("started_run"), dict) else None
+    if not run:
+        queue_run_id = str(queue.get("run_id") or "").strip()
+        if queue_run_id:
+            run = fetch_pipeline.get_fetch_run(queue_run_id)
+
+    submission = run.get("submission", {}) if isinstance((run or {}).get("submission"), dict) else {}
     submitted = int(submission.get("submitted", 0) or 0)
     unresolved = int(submission.get("unresolved", 0) or 0)
     failed_submit = int(submission.get("failed", 0) or 0)
     skipped = unresolved + failed_submit
-    total_tasks = int(run.get("total_tasks", 0) or 0)
-    run_id = str(run.get("id") or "")
-    message = (
-        "No missing albums to fetch."
-        if total_tasks == 0
-        else f"Fetch run queued ({submitted} submitted, {skipped} unresolved/failed)."
-    )
+    total_tasks = int((run or {}).get("total_tasks", 0) or 0)
+    run_id = str((run or {}).get("id") or queue.get("run_id") or "")
+    queue_status = str(queue.get("status") or "")
+    if total_tasks == 0 and run:
+        message = "No missing albums to fetch."
+    elif queue_status == "pending":
+        message = "Fetch queued. It will start when earlier queue items finish."
+    else:
+        message = f"Fetch run queued ({submitted} submitted, {skipped} unresolved/failed)."
 
     return {
         "status": "ok",
         "build_id": build_id,
+        "queue_id": queue.get("id"),
+        "queue_status": queue_status,
         "run_id": run_id,
         "message": message,
         # Compatibility fields for existing callers.
@@ -824,91 +840,9 @@ def forge_builds_fetch(build_id: str):
         "jobs": submission.get("jobs", []),
         # New control-plane payload.
         "run": run,
+        "queue": queue,
+        "existing": bool(queued.get("existing")),
     }
-    if False:
-            pass
-            "No downloader plugin configured. Install a plugin and enable it in Settings → Integrations.",
-    track_list = build.get("track_list") or []
-
-    # Deduplicate by (artist_name, album_name) — one submission per unique missing album.
-    seen: set[tuple[str, str]] = set()
-    albums_to_fetch: list[dict] = []
-    for item in track_list:
-        if not isinstance(item, dict):
-            continue
-        # is_owned: sync builds | in_library: new_music builds
-        if bool(item.get("is_owned", False)) or bool(item.get("in_library", 0)):
-            continue
-        artist = str(item.get("artist_name") or "").strip()
-        # album_name: sync builds | title: new_music builds
-        album = str(item.get("album_name") or item.get("title") or "").strip()
-        if not artist or not album:
-            continue
-        key = (artist.lower(), album.lower())
-        if key in seen:
-            continue
-        seen.add(key)
-        albums_to_fetch.append(item)
-
-    if not albums_to_fetch:
-        return {
-            "status": "ok",
-            "build_id": build_id,
-            "message": "No missing albums to fetch.",
-            "submitted": 0,
-            "skipped": 0,
-            "jobs": [],
-        }
-
-    submitted = 0
-    skipped = 0
-    jobs = []
-    for item in albums_to_fetch:
-        artist = str(item.get("artist_name") or "").strip()
-        album = str(item.get("album_name") or "").strip()
-        metadata = {
-            "deezer_id": item.get("deezer_album_id"),
-            "itunes_id": item.get("itunes_album_id"),
-            "release_date": item.get("release_date"),
-            "thumb_url": item.get("thumb_url"),
-        }
-        try:
-            job_id = downloader.submit(artist, album, metadata)
-        except Exception as exc:
-            logger.warning(
-                "forge/fetch: downloader submit failed for '%s — %s': %s",
-                artist, album, exc,
-            )
-            skipped += 1
-            continue
-
-        if job_id.startswith("unresolved:"):
-            logger.warning(
-                "forge/fetch: downloader could not resolve '%s — %s': %s",
-                artist, album, job_id,
-            )
-            skipped += 1
-            continue
-
-        _store.insert_download_job(
-            build_id=build_id,
-            job_id=job_id,
-            provider=downloader.name,
-            artist_name=artist,
-            album_name=album,
-        )
-        submitted += 1
-        jobs.append({"job_id": job_id, "artist": artist, "album": album})
-
-    return {
-        "status": "ok",
-        "build_id": build_id,
-        "submitted": submitted,
-        "skipped": skipped,
-        "jobs": jobs,
-    }
-
-
 @router.get("/forge/builds/{build_id}/fetch/status")
 def forge_builds_fetch_status(build_id: str):
     from app.routes import forge as facade
@@ -937,6 +871,108 @@ def forge_fetch_runs_list(
         limit=limit,
     )
     return {"status": "ok", "runs": runs}
+
+
+@router.get("/forge/fetch/queue")
+def forge_fetch_queue_list(
+    status: str | None = Query(default=None),
+    build_source: str | None = Query(default=None),
+    include_canceled: bool = Query(default=False),
+    limit: int = Query(default=200, ge=1, le=2000),
+):
+    from app.services import fetch_pipeline
+
+    queue = fetch_pipeline.list_fetch_queue(
+        status=str(status).strip().lower() if status else None,
+        build_source=str(build_source).strip().lower() if build_source else None,
+        include_canceled=bool(include_canceled),
+        limit=limit,
+    )
+    return {"status": "ok", "queue": queue}
+
+
+@router.post("/forge/fetch/queue")
+def forge_fetch_queue_enqueue(data: Optional[dict[str, Any]] = Body(default=None)):
+    from app.routes import forge as facade
+    from app.plugins import get_downloader
+    from app.services import fetch_pipeline
+
+    payload = data if isinstance(data, dict) else {}
+    build_id = str(payload.get("build_id") or "").strip()
+    if not build_id:
+        return facade._error("build_id is required", status_code=400, code="FORGE_VALIDATION_ERROR")
+
+    build = facade.rythmx_store.get_forge_build(build_id)
+    if not build:
+        return facade._error("Build not found", status_code=404, code="FORGE_BUILD_NOT_FOUND")
+
+    fetch_enabled = facade._is_truthy(facade.rythmx_store.get_setting("fetch_enabled", "false"))
+    if not fetch_enabled:
+        return facade._error(
+            "Fetch is disabled in Settings.",
+            status_code=400,
+            code="FORGE_FETCH_DISABLED",
+        )
+
+    downloader = get_downloader()
+    if getattr(downloader, "name", "stub") == "stub":
+        return facade._error(
+            "No downloader plugin configured. Install a plugin and enable it in Settings -> Integrations.",
+            status_code=400,
+            code="FORGE_NO_DOWNLOADER",
+        )
+
+    try:
+        result = fetch_pipeline.enqueue_fetch_build(
+            build_id,
+            requested_by=str(payload.get("requested_by") or "manual"),
+            source=str(payload.get("source") or "build_fetch"),
+            payload={"build_id": build_id},
+        )
+    except Exception as exc:
+        logger.error("forge/fetch queue enqueue failed for build %s: %s", build_id, exc, exc_info=True)
+        return facade._error(str(exc), status_code=500, code="FORGE_FETCH_QUEUE_FAILED")
+
+    return {"status": "ok", **result}
+
+
+@router.post("/forge/fetch/queue/{queue_id}/cancel")
+def forge_fetch_queue_cancel_item(queue_id: str):
+    from app.routes import forge as facade
+    from app.services import fetch_pipeline
+
+    try:
+        result = fetch_pipeline.cancel_fetch_queue_item(queue_id)
+    except ValueError:
+        return facade._error("Queue item not found", status_code=404, code="FORGE_FETCH_QUEUE_NOT_FOUND")
+    except Exception as exc:
+        logger.error("forge/fetch queue cancel failed queue=%s: %s", queue_id, exc, exc_info=True)
+        return facade._error(str(exc), status_code=500, code="FORGE_FETCH_QUEUE_CANCEL_FAILED")
+    return {"status": "ok", "queue_id": queue_id, **result}
+
+
+@router.post("/forge/fetch/queue/cancel")
+def forge_fetch_queue_cancel_batch(data: Optional[dict[str, Any]] = Body(default=None)):
+    from app.routes import forge as facade
+    from app.services import fetch_pipeline
+
+    payload = data if isinstance(data, dict) else {}
+    raw_ids = payload.get("queue_ids")
+    queue_ids: list[str] | None = None
+    if isinstance(raw_ids, list):
+        parsed = [str(v).strip() for v in raw_ids if str(v).strip()]
+        queue_ids = parsed if parsed else []
+
+    try:
+        result = fetch_pipeline.cancel_fetch_queue_batch(
+            queue_ids=queue_ids,
+            status=str(payload.get("status") or "").strip().lower() or None,
+            build_source=str(payload.get("build_source") or "").strip().lower() or None,
+        )
+    except Exception as exc:
+        logger.error("forge/fetch queue batch cancel failed: %s", exc, exc_info=True)
+        return facade._error(str(exc), status_code=500, code="FORGE_FETCH_QUEUE_CANCEL_FAILED")
+    return {"status": "ok", **result}
 
 
 @router.get("/forge/fetch/runs/{run_id}")
