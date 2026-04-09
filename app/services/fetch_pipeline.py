@@ -1,12 +1,5 @@
 """
 fetch_pipeline.py - Provider-agnostic fetch control plane (Tidarr first).
-
-Owns run/task orchestration for Forge fetch flows:
-  - run persistence (`fetch_runs`)
-  - task persistence (`fetch_tasks`)
-  - provider submission + polling
-  - post-download plugin pipeline (tagger/file_handler)
-  - stage-1 library sync + ownership confirmation
 """
 from __future__ import annotations
 
@@ -14,7 +7,9 @@ import glob as _glob
 import json
 import logging
 import os
+import re
 import threading
+import unicodedata
 import uuid
 from datetime import datetime, timedelta
 from typing import Any
@@ -24,6 +19,7 @@ from app.db import get_library_reader
 from app.db import rythmx_store
 from app.plugins import DownloadArtifact
 from app.routes.ws import broadcast
+from app.services.api_orchestrator import EnrichmentOrchestrator
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +36,13 @@ FETCH_STAGES = (
     "unresolved",
 )
 
+FETCH_RUN_STATUSES = ("running", "completed", "failed")
+FETCH_QUEUE_STATUSES = ("pending", "running", "completed", "failed", "canceled")
+FETCH_HANDOFF_STATUSES = ("idle", "enriching", "confirming", "done", "failed")
+
 _TERMINAL_STAGES = frozenset({"in_library", "failed", "unresolved"})
+_ACTIVE_STAGES = tuple(stage for stage in FETCH_STAGES if stage not in _TERMINAL_STAGES)
+_TERMINAL_RUN_STATUSES = frozenset({"completed", "failed"})
 _SCAN_LOCK = threading.Lock()
 
 
@@ -58,6 +60,18 @@ def _safe_json(raw: Any, fallback: Any) -> Any:
         return parsed if isinstance(parsed, type(fallback)) else fallback
     except Exception:
         return fallback
+
+
+def _normalize_text(value: str) -> str:
+    text = unicodedata.normalize("NFKD", str(value or ""))
+    text = text.encode("ascii", "ignore").decode("ascii")
+    text = text.lower().strip()
+    text = text.replace("&", " and ")
+    text = re.sub(r"\((?:feat|ft|featuring)[^)]+\)", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*(?:feat|ft|featuring)\.?\s+.*$", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"[^\w\s]", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
 
 
 def _emit_progress(*, run_id: str, stage: str, processed: int, total: int, message: str) -> None:
@@ -124,6 +138,8 @@ def _build_fetch_candidates(build: dict[str, Any]) -> list[dict[str, Any]]:
                 "metadata": {
                     "deezer_album_id": item.get("deezer_album_id") or item.get("deezer_id"),
                     "itunes_album_id": item.get("itunes_album_id"),
+                    "spotify_album_id": item.get("spotify_album_id"),
+                    "musicbrainz_release_id": item.get("musicbrainz_release_id"),
                     "release_date": item.get("release_date"),
                     "thumb_url": item.get("thumb_url") or item.get("cover_url"),
                     "item_index": idx,
@@ -194,7 +210,7 @@ def _build_source_candidates(storage_path: str, downloader: Any) -> list[str]:
     ).strip().rstrip("/\\")
 
     if local_prefix and remote_prefix and storage_path.startswith(remote_prefix):
-        _add(local_prefix + storage_path[len(remote_prefix) :])
+        _add(local_prefix + storage_path[len(remote_prefix):])
 
     if local_prefix:
         for source in tuple(candidates):
@@ -222,6 +238,12 @@ def _task_from_row(row: dict[str, Any]) -> dict[str, Any]:
     return task
 
 
+def _queue_from_row(row: dict[str, Any]) -> dict[str, Any]:
+    item = dict(row)
+    item["payload"] = _safe_json(item.get("payload_json"), {})
+    return item
+
+
 def _set_task_fields(task_id: int, **fields: Any) -> None:
     if not fields:
         return
@@ -237,6 +259,43 @@ def _set_task_fields(task_id: int, **fields: Any) -> None:
     with rythmx_store._connect() as conn:
         conn.execute(
             f"UPDATE fetch_tasks SET {', '.join(updates)} WHERE id = ?",
+            tuple(params),
+        )
+
+
+def _set_run_fields(run_id: str, **fields: Any) -> None:
+    if not fields:
+        return
+    now = _utcnow()
+    updates = []
+    params: list[Any] = []
+    for key, value in fields.items():
+        updates.append(f"{key} = ?")
+        params.append(value)
+    updates.append("updated_at = ?")
+    params.extend([now, run_id])
+
+    with rythmx_store._connect() as conn:
+        conn.execute(
+            f"UPDATE fetch_runs SET {', '.join(updates)} WHERE id = ?",
+            tuple(params),
+        )
+
+
+def _set_queue_fields(queue_id: str, **fields: Any) -> None:
+    if not fields:
+        return
+    now = _utcnow()
+    updates = []
+    params: list[Any] = []
+    for key, value in fields.items():
+        updates.append(f"{key} = ?")
+        params.append(value)
+    updates.append("updated_at = ?")
+    params.extend([now, queue_id])
+    with rythmx_store._connect() as conn:
+        conn.execute(
+            f"UPDATE fetch_queue SET {', '.join(updates)} WHERE id = ?",
             tuple(params),
         )
 
@@ -349,73 +408,29 @@ def _run_summary(run_id: str) -> dict[str, Any]:
     run["failed"] = counts.get("failed", 0)
     run["unresolved"] = counts.get("unresolved", 0)
     run["config"] = _safe_json(run.get("config_json"), {})
+    run["terminal_emitted"] = bool(int(run.get("terminal_emitted") or 0))
+    run["cancel_requested"] = bool(int(run.get("cancel_requested") or 0))
     return run
 
 
-def _reconcile_run(run_id: str) -> dict[str, Any]:
-    summary = _run_summary(run_id)
-    if not summary:
-        return {}
-
-    total = int(summary.get("total_tasks", 0))
-    failed = int(summary.get("failed", 0))
-    unresolved = int(summary.get("unresolved", 0))
-    active = int(summary.get("active_tasks", 0))
-    in_library = int(summary.get("in_library", 0))
-
-    if total == 0:
-        next_status = "completed"
-    elif active > 0:
-        next_status = "running"
-    elif failed + unresolved >= total:
-        next_status = "failed"
-    else:
-        next_status = "completed"
-
-    now = _utcnow()
-    run_id_val = str(summary["id"])
-    status_changed = str(summary.get("status") or "") != next_status
-
+def _queue_summary(queue_id: str) -> dict[str, Any] | None:
     with rythmx_store._connect() as conn:
-        conn.execute(
+        row = conn.execute(
             """
-            UPDATE fetch_runs
-            SET status = ?, total_tasks = ?, updated_at = ?,
-                finished_at = CASE WHEN ? IN ('completed', 'failed') THEN COALESCE(finished_at, ?) ELSE NULL END,
-                last_error = CASE WHEN ? = 'failed' THEN COALESCE(last_error, 'Fetch run ended with unresolved failures') ELSE NULL END
-            WHERE id = ?
+            SELECT fq.*,
+                   fb.source AS build_source,
+                   fb.name AS build_name,
+                   fb.status AS build_status,
+                   fr.status AS run_status,
+                   fr.handoff_status AS run_handoff_status
+            FROM fetch_queue fq
+            LEFT JOIN forge_builds fb ON fb.id = fq.build_id
+            LEFT JOIN fetch_runs fr ON fr.id = fq.run_id
+            WHERE fq.id = ?
             """,
-            (next_status, total, now, next_status, now, next_status, run_id_val),
-        )
-
-    refreshed = _run_summary(run_id_val)
-
-    if status_changed and next_status == "completed":
-        _emit_complete(
-            run_id=run_id_val,
-            summary={
-                "status": next_status,
-                "in_library": in_library,
-                "failed": failed,
-                "unresolved": unresolved,
-                "total": total,
-            },
-        )
-    elif status_changed and next_status == "failed":
-        _emit_error(
-            run_id=run_id_val,
-            message=f"Fetch run failed ({failed} failed, {unresolved} unresolved).",
-        )
-    else:
-        _emit_progress(
-            run_id=run_id_val,
-            stage="running" if next_status == "running" else next_status,
-            processed=refreshed.get("processed_tasks", 0),
-            total=total,
-            message=f"{refreshed.get('in_library', 0)} in library, {failed} failed, {unresolved} unresolved",
-        )
-
-    return refreshed
+            (queue_id,),
+        ).fetchone()
+    return _queue_from_row(dict(row)) if row else None
 
 
 def _mark_build_item_in_library(build_id: str, artist_name: str, album_name: str) -> None:
@@ -456,55 +471,163 @@ def _mark_build_item_in_library(build_id: str, artist_name: str, album_name: str
     rythmx_store.update_forge_build(build_id, track_list=track_list, summary=summary)
 
 
-def _run_stage1_sync_once() -> bool:
-    """
-    Trigger stage-1 sync only (no full enrichment DAG).
-    Serialized to avoid overlapping sync runs from poll loop ticks.
-    """
-    acquired = _SCAN_LOCK.acquire(blocking=False)
-    if not acquired:
-        return False
-    try:
-        from app.services.enrichment.sync import sync_library
+def _check_library_ids(metadata: dict[str, Any]) -> bool:
+    deezer_album_id = str(metadata.get("deezer_album_id") or "").strip()
+    itunes_album_id = str(metadata.get("itunes_album_id") or "").strip()
+    spotify_album_id = str(metadata.get("spotify_album_id") or "").strip()
+    musicbrainz_release_id = str(metadata.get("musicbrainz_release_id") or "").strip()
 
-        result = sync_library()
-        logger.info(
-            "fetch_pipeline: stage-1 sync complete (artists=%s albums=%s tracks=%s)",
-            result.get("artist_count", 0),
-            result.get("album_count", 0),
-            result.get("track_count", 0),
-        )
-        return True
-    except Exception as exc:
-        logger.warning("fetch_pipeline: stage-1 sync failed: %s", exc)
+    clauses: list[str] = []
+    params: list[Any] = []
+    if deezer_album_id:
+        clauses.append("deezer_album_id = ?")
+        params.append(deezer_album_id)
+    if itunes_album_id:
+        clauses.append("itunes_album_id = ?")
+        params.append(itunes_album_id)
+    if spotify_album_id:
+        clauses.append("spotify_album_id = ?")
+        params.append(spotify_album_id)
+    if musicbrainz_release_id:
+        clauses.append("musicbrainz_release_group_id = ?")
+        params.append(musicbrainz_release_id)
+
+    if not clauses:
         return False
-    finally:
-        _SCAN_LOCK.release()
+
+    with rythmx_store._connect() as conn:
+        rel_row = conn.execute(
+            f"""
+            SELECT id
+            FROM lib_releases
+            WHERE is_owned = 1
+              AND ({' OR '.join(clauses)})
+            LIMIT 1
+            """,
+            tuple(params),
+        ).fetchone()
+        if rel_row:
+            return True
+
+        alb_row = conn.execute(
+            f"""
+            SELECT id
+            FROM lib_albums
+            WHERE removed_at IS NULL
+              AND ({' OR '.join(clauses)})
+            LIMIT 1
+            """,
+            tuple(params),
+        ).fetchone()
+        return bool(alb_row)
+
+
+def _check_library_exact(artist_name: str, album_name: str) -> bool:
+    with rythmx_store._connect() as conn:
+        row = conn.execute(
+            """
+            SELECT la.id
+            FROM lib_albums la
+            JOIN lib_artists ar ON ar.id = la.artist_id
+            WHERE ar.removed_at IS NULL
+              AND la.removed_at IS NULL
+              AND lower(ar.name) = lower(?)
+              AND lower(la.title) = lower(?)
+            LIMIT 1
+            """,
+            (artist_name, album_name),
+        ).fetchone()
+        return bool(row)
+
+
+def _check_library_normalized(artist_name: str, album_name: str) -> bool:
+    normalized_artist = _normalize_text(artist_name)
+    normalized_album = _normalize_text(album_name)
+    if not normalized_artist or not normalized_album:
+        return False
+    with rythmx_store._connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT ar.name AS artist_name, la.title AS album_title
+            FROM lib_albums la
+            JOIN lib_artists ar ON ar.id = la.artist_id
+            WHERE ar.removed_at IS NULL
+              AND la.removed_at IS NULL
+              AND lower(ar.name) = lower(?)
+            """,
+            (artist_name,),
+        ).fetchall()
+    for row in rows:
+        if _normalize_text(str(row["artist_name"] or "")) != normalized_artist:
+            continue
+        if _normalize_text(str(row["album_title"] or "")) == normalized_album:
+            return True
+    return False
 
 
 def _confirm_task_in_library(task: dict[str, Any]) -> bool:
-    reader = get_library_reader()
-    metadata = task.get("metadata") or {}
-    match = reader.check_album_owned(
-        task.get("artist_name") or "",
-        task.get("album_name") or "",
-        deezer_album_id=metadata.get("deezer_album_id"),
-        itunes_album_id=metadata.get("itunes_album_id"),
-    )
-    if not match:
+    metadata = dict(task.get("metadata") or {})
+    artist = str(task.get("artist_name") or "")
+    album = str(task.get("album_name") or "")
+    matched = False
+
+    try:
+        reader = get_library_reader()
+        matched = bool(
+            reader.check_album_owned(
+                artist,
+                album,
+                deezer_album_id=metadata.get("deezer_album_id"),
+                itunes_album_id=metadata.get("itunes_album_id"),
+                spotify_album_id=metadata.get("spotify_album_id"),
+                musicbrainz_release_id=metadata.get("musicbrainz_release_id"),
+            )
+        )
+    except Exception:
+        matched = False
+
+    if not matched:
+        matched = _check_library_ids(metadata)
+    if not matched:
+        matched = _check_library_exact(artist, album)
+    if not matched:
+        matched = _check_library_normalized(artist, album)
+    if not matched:
         return False
 
     _set_task_stage(int(task["id"]), "in_library")
     _mark_build_item_in_library(
         str(task.get("build_id") or ""),
-        str(task.get("artist_name") or ""),
-        str(task.get("album_name") or ""),
+        artist,
+        album,
     )
     return True
 
 
 def _submit_queued_tasks(*, run_id: str | None = None, limit: int = 100) -> dict[str, Any]:
-    tasks = _list_tasks(run_id=run_id, stages=("queued",), limit=limit)
+    params: list[Any] = []
+    where = [
+        "ft.stage = 'queued'",
+        "fr.status = 'running'",
+        "fr.cancel_requested = 0",
+    ]
+    if run_id:
+        where.append("ft.run_id = ?")
+        params.append(run_id)
+
+    with rythmx_store._connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT ft.*
+            FROM fetch_tasks ft
+            JOIN fetch_runs fr ON fr.id = ft.run_id
+            WHERE {' AND '.join(where)}
+            ORDER BY ft.created_at ASC
+            LIMIT ?
+            """,
+            tuple(params + [limit]),
+        ).fetchall()
+    tasks = [_task_from_row(dict(r)) for r in rows]
     if not tasks:
         return {"submitted": 0, "unresolved": 0, "failed": 0, "jobs": []}
 
@@ -567,7 +690,21 @@ def _submit_queued_tasks(*, run_id: str | None = None, limit: int = 100) -> dict
 
 
 def _poll_provider_updates(limit: int = 500) -> dict[str, int]:
-    tasks = _list_tasks(stages=("submitted", "downloading"), limit=limit)
+    with rythmx_store._connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT ft.*
+            FROM fetch_tasks ft
+            JOIN fetch_runs fr ON fr.id = ft.run_id
+            WHERE ft.stage IN ('submitted', 'downloading')
+              AND fr.status = 'running'
+              AND fr.cancel_requested = 0
+            ORDER BY ft.created_at ASC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    tasks = [_task_from_row(dict(r)) for r in rows]
     if not tasks:
         return {"downloaded": 0, "downloading": 0, "failed": 0}
 
@@ -624,7 +761,21 @@ def _poll_provider_updates(limit: int = 500) -> dict[str, int]:
 
 
 def _process_downloaded_tasks(limit: int = 200) -> dict[str, int]:
-    tasks = _list_tasks(stages=("downloaded", "tagged"), limit=limit)
+    with rythmx_store._connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT ft.*
+            FROM fetch_tasks ft
+            JOIN fetch_runs fr ON fr.id = ft.run_id
+            WHERE ft.stage IN ('downloaded', 'tagged')
+              AND fr.status = 'running'
+              AND fr.cancel_requested = 0
+            ORDER BY ft.created_at ASC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    tasks = [_task_from_row(dict(r)) for r in rows]
     if not tasks:
         return {"tagged": 0, "moved": 0, "failed": 0}
 
@@ -727,56 +878,313 @@ def _process_downloaded_tasks(limit: int = 200) -> dict[str, int]:
     return result
 
 
-def _process_scan_requests(limit: int = 200) -> dict[str, int]:
+def _advance_moved_to_scan_requested(limit: int = 500) -> dict[str, int]:
     moved = _list_tasks(stages=("moved",), limit=limit)
-    if moved:
-        timeout_s = _fetch_wait_timeout_s()
-        for task in moved:
-            task_id = int(task["id"])
-            timeout_at = (datetime.utcnow() + timedelta(seconds=timeout_s)).strftime("%Y-%m-%dT%H:%M:%S")
-            _set_task_stage(task_id, "scan_requested", scan_deadline_at=timeout_at)
+    if not moved:
+        return {"scan_requested": 0}
+    timeout_s = _fetch_wait_timeout_s()
+    moved_count = 0
+    for task in moved:
+        task_id = int(task["id"])
+        timeout_at = (datetime.utcnow() + timedelta(seconds=timeout_s)).strftime("%Y-%m-%dT%H:%M:%S")
+        _set_task_stage(task_id, "scan_requested", scan_deadline_at=timeout_at)
+        moved_count += 1
+    return {"scan_requested": moved_count}
 
-    tasks = _list_tasks(stages=("scan_requested",), limit=limit)
-    if not tasks:
+
+def _process_run_cancel_requests(run_id: str) -> dict[str, int]:
+    summary = _run_summary(run_id)
+    if not summary or not bool(summary.get("cancel_requested")):
+        return {"canceled_tasks": 0}
+
+    tasks = _list_tasks(run_id=run_id, limit=10000)
+    canceled = 0
+    for task in tasks:
+        stage = str(task.get("stage") or "")
+        if stage in _TERMINAL_STAGES:
+            continue
+        _set_task_stage(
+            int(task["id"]),
+            "failed",
+            error_type="recoverable",
+            error_code="run_canceled",
+            error_message="Canceled by user",
+        )
+        provider_job_id = str(task.get("provider_job_id") or "").strip()
+        if provider_job_id:
+            rythmx_store.update_download_job_status(provider_job_id, "failed")
+        canceled += 1
+
+    if canceled > 0:
+        _set_run_fields(
+            run_id,
+            handoff_status="failed",
+            handoff_error="Canceled by user",
+            handoff_finished_at=_utcnow(),
+        )
+    return {"canceled_tasks": canceled}
+
+
+def _process_run_handoff(run_id: str) -> dict[str, int]:
+    summary = _run_summary(run_id)
+    if not summary or str(summary.get("status") or "") != "running":
+        return {"in_library": 0, "timed_out": 0, "waiting": 0}
+    if bool(summary.get("cancel_requested")):
         return {"in_library": 0, "timed_out": 0, "waiting": 0}
 
-    _run_stage1_sync_once()
-    in_library = 0
-    timed_out = 0
-    waiting = 0
+    handoff_status = str(summary.get("handoff_status") or "idle")
+    scan_tasks = _list_tasks(run_id=run_id, stages=("scan_requested",), limit=5000)
+    if not scan_tasks:
+        if handoff_status in {"enriching", "confirming"}:
+            _set_run_fields(
+                run_id,
+                handoff_status="done",
+                handoff_finished_at=_utcnow(),
+                handoff_error=None,
+            )
+        return {"in_library": 0, "timed_out": 0, "waiting": 0}
 
-    now_dt = datetime.utcnow()
-    for task in tasks:
-        if _confirm_task_in_library(task):
-            in_library += 1
-            continue
+    try:
+        orchestrator = EnrichmentOrchestrator.get()
+        if handoff_status == "idle":
+            with _SCAN_LOCK:
+                orchestrator.run_full(batch_size=10_000)
+            _set_run_fields(
+                run_id,
+                handoff_status="enriching",
+                handoff_started_at=summary.get("handoff_started_at") or _utcnow(),
+                handoff_error=None,
+            )
+            return {"in_library": 0, "timed_out": 0, "waiting": len(scan_tasks)}
 
-        deadline_raw = str(task.get("scan_deadline_at") or "").strip()
-        if deadline_raw:
-            try:
-                if now_dt >= datetime.fromisoformat(deadline_raw):
-                    _set_task_stage(
-                        int(task["id"]),
-                        "failed",
-                        error_type="recoverable",
-                        error_code="scan_timeout",
-                        error_message="Timed out waiting for library registration after move.",
-                    )
-                    timed_out += 1
-                    continue
-            except ValueError:
-                pass
-        waiting += 1
+        if handoff_status == "enriching":
+            if orchestrator.is_running():
+                return {"in_library": 0, "timed_out": 0, "waiting": len(scan_tasks)}
+            _set_run_fields(run_id, handoff_status="confirming")
 
-    return {"in_library": in_library, "timed_out": timed_out, "waiting": waiting}
+        in_library = 0
+        timed_out = 0
+        waiting = 0
+        now_dt = datetime.utcnow()
+        for task in scan_tasks:
+            if _confirm_task_in_library(task):
+                in_library += 1
+                continue
+
+            deadline_raw = str(task.get("scan_deadline_at") or "").strip()
+            if deadline_raw:
+                try:
+                    if now_dt >= datetime.fromisoformat(deadline_raw):
+                        _set_task_stage(
+                            int(task["id"]),
+                            "failed",
+                            error_type="recoverable",
+                            error_code="scan_timeout",
+                            error_message="Timed out waiting for library registration after move.",
+                        )
+                        timed_out += 1
+                        continue
+                except ValueError:
+                    pass
+            waiting += 1
+
+        if waiting == 0:
+            _set_run_fields(
+                run_id,
+                handoff_status="done",
+                handoff_finished_at=_utcnow(),
+                handoff_error=None,
+            )
+        else:
+            _set_run_fields(run_id, handoff_status="confirming")
+
+        return {"in_library": in_library, "timed_out": timed_out, "waiting": waiting}
+    except Exception as exc:
+        _set_run_fields(
+            run_id,
+            handoff_status="failed",
+            handoff_error=str(exc),
+            handoff_finished_at=_utcnow(),
+        )
+        logger.warning("fetch_pipeline: handoff processing failed for run %s: %s", run_id, exc)
+        return {"in_library": 0, "timed_out": 0, "waiting": len(scan_tasks)}
 
 
-def start_fetch_run(build_id: str, *, triggered_by: str = "manual") -> dict[str, Any]:
+def _reconcile_run(run_id: str) -> dict[str, Any]:
+    summary = _run_summary(run_id)
+    if not summary:
+        return {}
+
+    total = int(summary.get("total_tasks", 0))
+    failed = int(summary.get("failed", 0))
+    unresolved = int(summary.get("unresolved", 0))
+    active = int(summary.get("active_tasks", 0))
+    in_library = int(summary.get("in_library", 0))
+    cancel_requested = bool(summary.get("cancel_requested"))
+    terminal_emitted = bool(summary.get("terminal_emitted"))
+
+    if total == 0:
+        next_status = "completed"
+    elif active > 0:
+        next_status = "running"
+    elif failed + unresolved > 0:
+        next_status = "failed"
+    else:
+        next_status = "completed"
+
+    now = _utcnow()
+    next_last_error = None
+    if next_status == "failed":
+        if cancel_requested:
+            next_last_error = "Fetch run canceled by user"
+        else:
+            next_last_error = str(summary.get("last_error") or "").strip() or "Fetch run ended with unresolved failures"
+
+    _set_run_fields(
+        run_id,
+        status=next_status,
+        total_tasks=total,
+        finished_at=(now if next_status in _TERMINAL_RUN_STATUSES else None),
+        last_error=next_last_error,
+        handoff_status=(
+            "failed"
+            if next_status == "failed" and str(summary.get("handoff_status") or "") != "done"
+            else summary.get("handoff_status")
+        ),
+    )
+
+    if next_status in _TERMINAL_RUN_STATUSES and not terminal_emitted:
+        if next_status == "completed":
+            _emit_complete(
+                run_id=run_id,
+                summary={
+                    "status": next_status,
+                    "in_library": in_library,
+                    "failed": failed,
+                    "unresolved": unresolved,
+                    "total": total,
+                },
+            )
+        else:
+            _emit_error(
+                run_id=run_id,
+                message=f"Fetch run failed ({failed} failed, {unresolved} unresolved).",
+            )
+        _set_run_fields(run_id, terminal_emitted=1)
+    elif next_status == "running":
+        _emit_progress(
+            run_id=run_id,
+            stage="running",
+            processed=summary.get("processed_tasks", 0),
+            total=total,
+            message=f"{in_library} in library, {failed} failed, {unresolved} unresolved",
+        )
+
+    return _run_summary(run_id)
+
+
+def _sync_queue_for_terminal_run(run: dict[str, Any]) -> None:
+    queue_id = str(run.get("queue_id") or "").strip()
+    if not queue_id:
+        return
+    queue = _queue_summary(queue_id)
+    if not queue:
+        return
+    if str(queue.get("status") or "") in {"completed", "failed", "canceled"}:
+        return
+
+    run_status = str(run.get("status") or "")
+    if run_status == "completed":
+        queue_status = "completed"
+        queue_error = None
+    elif bool(run.get("cancel_requested")):
+        queue_status = "canceled"
+        queue_error = str(run.get("last_error") or "Canceled by user")
+    else:
+        queue_status = "failed"
+        queue_error = str(run.get("last_error") or "Fetch run failed")
+    _set_queue_fields(
+        queue_id,
+        status=queue_status,
+        finished_at=_utcnow(),
+        last_error=queue_error,
+    )
+
+
+def _has_running_fetch_run() -> bool:
+    with rythmx_store._connect() as conn:
+        row = conn.execute(
+            """
+            SELECT id
+            FROM fetch_runs
+            WHERE status = 'running'
+            ORDER BY datetime(created_at) DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    return bool(row)
+
+
+def _start_next_pending_queue_item() -> dict[str, Any] | None:
+    if _has_running_fetch_run():
+        return None
+
+    with rythmx_store._connect() as conn:
+        row = conn.execute(
+            """
+            SELECT *
+            FROM fetch_queue
+            WHERE status = 'pending'
+            ORDER BY queue_position ASC, datetime(created_at) ASC
+            LIMIT 1
+            """
+        ).fetchone()
+        if not row:
+            return None
+        item = _queue_from_row(dict(row))
+        now = _utcnow()
+        conn.execute(
+            """
+            UPDATE fetch_queue
+            SET status = 'running',
+                started_at = COALESCE(started_at, ?),
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (now, now, item["id"]),
+        )
+
+    try:
+        run = start_fetch_run(
+            str(item["build_id"]),
+            triggered_by=str(item.get("requested_by") or "manual"),
+            queue_id=str(item["id"]),
+        )
+    except Exception as exc:
+        logger.warning("fetch_pipeline: queue item %s failed to start: %s", item["id"], exc)
+        _set_queue_fields(
+            str(item["id"]),
+            status="failed",
+            finished_at=_utcnow(),
+            last_error=str(exc),
+        )
+        return None
+
+    if run.get("status") in _TERMINAL_RUN_STATUSES:
+        _sync_queue_for_terminal_run(run)
+    return run
+
+
+def start_fetch_run(
+    build_id: str,
+    *,
+    triggered_by: str = "manual",
+    queue_id: str | None = None,
+) -> dict[str, Any]:
     build = rythmx_store.get_forge_build(build_id)
     if not build:
         raise ValueError("Build not found")
 
-    # Idempotency guard: do not create overlapping runs for the same build.
     with rythmx_store._connect() as conn:
         existing = conn.execute(
             """
@@ -790,6 +1198,16 @@ def start_fetch_run(build_id: str, *, triggered_by: str = "manual") -> dict[str,
         ).fetchone()
     if existing:
         summary = _reconcile_run(str(existing["id"]))
+        if queue_id:
+            _set_run_fields(str(existing["id"]), queue_id=queue_id)
+            _set_queue_fields(
+                queue_id,
+                status="running",
+                run_id=str(existing["id"]),
+                started_at=_utcnow(),
+                last_error=None,
+            )
+            summary = _run_summary(str(existing["id"]))
         summary["existing_run"] = True
         return summary
 
@@ -798,21 +1216,24 @@ def start_fetch_run(build_id: str, *, triggered_by: str = "manual") -> dict[str,
     run_id = str(uuid.uuid4())
     now = _utcnow()
     candidates = _build_fetch_candidates(build)
+    timeout_cfg = {"fetch_wait_timeout_s": _fetch_wait_timeout_s()}
 
     with rythmx_store._connect() as conn:
         conn.execute(
             """
             INSERT INTO fetch_runs
-                (id, build_id, provider, status, triggered_by, total_tasks, config_json, started_at, created_at, updated_at)
-            VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?)
+                (id, build_id, queue_id, provider, status, triggered_by, total_tasks, config_json,
+                 started_at, created_at, updated_at, handoff_status, terminal_emitted, cancel_requested)
+            VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, 'idle', 0, 0)
             """,
             (
                 run_id,
                 build_id,
+                queue_id,
                 provider,
                 triggered_by,
                 len(candidates),
-                json.dumps({"fetch_wait_timeout_s": _fetch_wait_timeout_s()}),
+                json.dumps(timeout_cfg),
                 now,
                 now,
                 now,
@@ -842,10 +1263,189 @@ def start_fetch_run(build_id: str, *, triggered_by: str = "manual") -> dict[str,
                 ),
             )
 
+    if queue_id:
+        _set_queue_fields(
+            queue_id,
+            status="running",
+            run_id=run_id,
+            started_at=now,
+            last_error=None,
+        )
+
     submit_result = _submit_queued_tasks(run_id=run_id, limit=200)
     summary = _reconcile_run(run_id)
     summary["submission"] = submit_result
     return summary
+
+
+def enqueue_fetch_build(
+    build_id: str,
+    *,
+    requested_by: str = "manual",
+    source: str = "build_fetch",
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    build = rythmx_store.get_forge_build(build_id)
+    if not build:
+        raise ValueError("Build not found")
+
+    now = _utcnow()
+    payload_json = json.dumps(payload or {"build_id": build_id})
+    with rythmx_store._connect() as conn:
+        existing = conn.execute(
+            """
+            SELECT id
+            FROM fetch_queue
+            WHERE build_id = ?
+              AND status IN ('pending', 'running')
+            ORDER BY datetime(created_at) DESC
+            LIMIT 1
+            """,
+            (build_id,),
+        ).fetchone()
+        if existing:
+            queue = _queue_summary(str(existing["id"]))
+            started = _start_next_pending_queue_item()
+            return {
+                "queue": queue,
+                "existing": True,
+                "started_run": started,
+            }
+
+        row = conn.execute("SELECT COALESCE(MAX(queue_position), 0) + 1 AS next_pos FROM fetch_queue").fetchone()
+        next_pos = int((row["next_pos"] if row else 1) or 1)
+        queue_id = str(uuid.uuid4())
+        conn.execute(
+            """
+            INSERT INTO fetch_queue
+                (id, build_id, source, payload_json, status, queue_position,
+                 requested_by, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+            """,
+            (queue_id, build_id, source, payload_json, next_pos, requested_by, now, now),
+        )
+
+    started = _start_next_pending_queue_item()
+    queue = _queue_summary(queue_id)
+    return {
+        "queue": queue,
+        "existing": False,
+        "started_run": started,
+    }
+
+
+def list_fetch_queue(
+    *,
+    status: str | None = None,
+    build_source: str | None = None,
+    include_canceled: bool = False,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    where: list[str] = []
+    params: list[Any] = []
+    if status:
+        where.append("fq.status = ?")
+        params.append(status)
+    elif not include_canceled:
+        where.append("fq.status != 'canceled'")
+    if build_source:
+        where.append("fb.source = ?")
+        params.append(build_source)
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+
+    with rythmx_store._connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT fq.*,
+                   fb.source AS build_source,
+                   fb.name AS build_name,
+                   fb.status AS build_status,
+                   fr.status AS run_status,
+                   fr.handoff_status AS run_handoff_status
+            FROM fetch_queue fq
+            LEFT JOIN forge_builds fb ON fb.id = fq.build_id
+            LEFT JOIN fetch_runs fr ON fr.id = fq.run_id
+            {where_sql}
+            ORDER BY fq.queue_position ASC, datetime(fq.created_at) ASC
+            LIMIT ?
+            """,
+            tuple(params + [max(1, min(limit, 2000))]),
+        ).fetchall()
+    return [_queue_from_row(dict(r)) for r in rows]
+
+
+def cancel_fetch_queue_item(queue_id: str, *, auto_advance: bool = True) -> dict[str, Any]:
+    queue = _queue_summary(queue_id)
+    if not queue:
+        raise ValueError("Queue item not found")
+    current_status = str(queue.get("status") or "")
+    if current_status in {"completed", "failed", "canceled"}:
+        return {"queue": queue, "canceled": False}
+
+    now = _utcnow()
+    _set_queue_fields(
+        queue_id,
+        status="canceled",
+        finished_at=now,
+        last_error="Canceled by user",
+    )
+
+    run_id = str(queue.get("run_id") or "").strip()
+    if run_id:
+        _set_run_fields(
+            run_id,
+            cancel_requested=1,
+            last_error="Fetch run cancel requested",
+        )
+
+    if auto_advance:
+        _start_next_pending_queue_item()
+    return {"queue": _queue_summary(queue_id), "canceled": True}
+
+
+def cancel_fetch_queue_batch(
+    *,
+    queue_ids: list[str] | None = None,
+    status: str | None = None,
+    build_source: str | None = None,
+) -> dict[str, Any]:
+    where = ["fq.status IN ('pending', 'running')"]
+    params: list[Any] = []
+
+    ids = [str(v).strip() for v in (queue_ids or []) if str(v).strip()]
+    if ids:
+        where.append("fq.id IN (" + ",".join(["?"] * len(ids)) + ")")
+        params.extend(ids)
+    if status:
+        where.append("fq.status = ?")
+        params.append(status)
+    if build_source:
+        where.append("fb.source = ?")
+        params.append(build_source)
+
+    with rythmx_store._connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT fq.id
+            FROM fetch_queue fq
+            LEFT JOIN forge_builds fb ON fb.id = fq.build_id
+            WHERE {' AND '.join(where)}
+            """,
+            tuple(params),
+        ).fetchall()
+    targets = [str(r["id"]) for r in rows]
+    if not targets:
+        return {"canceled": 0, "queue_ids": []}
+
+    canceled_ids: list[str] = []
+    for qid in targets:
+        result = cancel_fetch_queue_item(qid, auto_advance=False)
+        if result.get("canceled"):
+            canceled_ids.append(qid)
+
+    _start_next_pending_queue_item()
+
+    return {"canceled": len(canceled_ids), "queue_ids": canceled_ids}
 
 
 def get_build_fetch_status(build_id: str) -> dict[str, Any]:
@@ -892,8 +1492,9 @@ def get_build_fetch_status(build_id: str) -> dict[str, Any]:
             "waiting": int(stage_counts.get("scan_requested", 0)),
             "confirmed": int(stage_counts.get("in_library", 0)),
             "timed_out": int((scan_timeout["cnt"] if scan_timeout else 0) or 0),
+            "handoff_status": str(summary.get("handoff_status") or "idle"),
+            "handoff_error": summary.get("handoff_error"),
         },
-        # Compatibility fields for clients that still read download_jobs aggregates.
         "total": len(jobs),
         "pending": sum(1 for j in jobs if str(j.get("status") or "") == "pending"),
         "completed": sum(1 for j in jobs if str(j.get("status") or "") == "completed"),
@@ -1027,11 +1628,31 @@ def retry_fetch_run(run_id: str, *, task_ids: list[int] | None = None) -> dict[s
                 SET status = 'running',
                     finished_at = NULL,
                     last_error = NULL,
+                    handoff_status = 'idle',
+                    handoff_started_at = NULL,
+                    handoff_finished_at = NULL,
+                    handoff_error = NULL,
+                    terminal_emitted = 0,
+                    cancel_requested = 0,
                     updated_at = ?
                 WHERE id = ?
                 """,
                 (now, run_id),
             )
+
+            queue_id = str(summary.get("queue_id") or "").strip()
+            if queue_id:
+                conn.execute(
+                    """
+                    UPDATE fetch_queue
+                    SET status = 'running',
+                        finished_at = NULL,
+                        last_error = NULL,
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (now, queue_id),
+                )
 
     submission = _submit_queued_tasks(run_id=run_id, limit=500)
     refreshed = _reconcile_run(run_id)
@@ -1043,14 +1664,28 @@ def retry_fetch_run(run_id: str, *, task_ids: list[int] | None = None) -> dict[s
 
 
 def poll_once() -> dict[str, Any]:
-    """
-    Generic fetch worker tick.
-    Replaces provider-specific poll ownership loops.
-    """
+    started = _start_next_pending_queue_item()
+
+    with rythmx_store._connect() as conn:
+        run_rows = conn.execute(
+            """
+            SELECT id
+            FROM fetch_runs
+            WHERE status = 'running'
+            ORDER BY datetime(created_at) ASC
+            LIMIT 500
+            """
+        ).fetchall()
+    running_run_ids = [str(row["id"]) for row in run_rows]
+
+    canceled = 0
+    for run_id in running_run_ids:
+        canceled += _process_run_cancel_requests(run_id).get("canceled_tasks", 0)
+
     submitted = _submit_queued_tasks(limit=500)
     provider = _poll_provider_updates(limit=1000)
     downloaded = _process_downloaded_tasks(limit=500)
-    scan = _process_scan_requests(limit=500)
+    scan_requested = _advance_moved_to_scan_requested(limit=500)
 
     with rythmx_store._connect() as conn:
         run_rows = conn.execute(
@@ -1064,14 +1699,30 @@ def poll_once() -> dict[str, Any]:
         ).fetchall()
 
     reconciled: list[dict[str, Any]] = []
+    handoff = {"in_library": 0, "timed_out": 0, "waiting": 0}
     for row in run_rows:
-        reconciled.append(_reconcile_run(str(row["id"])))
+        run_id = str(row["id"])
+        handoff_result = _process_run_handoff(run_id)
+        handoff["in_library"] += int(handoff_result.get("in_library", 0))
+        handoff["timed_out"] += int(handoff_result.get("timed_out", 0))
+        handoff["waiting"] += int(handoff_result.get("waiting", 0))
+        run = _reconcile_run(run_id)
+        if run:
+            reconciled.append(run)
+            if str(run.get("status") or "") in _TERMINAL_RUN_STATUSES:
+                _sync_queue_for_terminal_run(run)
+
+    next_started = _start_next_pending_queue_item()
 
     return {
         "checked": len(run_rows),
+        "started": bool(started),
+        "next_started": bool(next_started),
+        "canceled": canceled,
         "submitted": submitted,
         "provider": provider,
         "downloaded": downloaded,
-        "scan": scan,
+        "scan_requested": scan_requested,
+        "scan": handoff,
         "runs": reconciled,
     }
