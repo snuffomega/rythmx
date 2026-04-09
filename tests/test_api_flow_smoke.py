@@ -853,22 +853,33 @@ def test_forge_build_fetch_contract(monkeypatch):
         lambda: type("Downloader", (), {"name": "tidarr"})(),
     )
     monkeypatch.setattr(
-        "app.services.fetch_pipeline.start_fetch_run",
-        lambda build_id, triggered_by="manual": {
-            "id": "run-1",
-            "build_id": build_id,
-            "total_tasks": 2,
-            "submission": {
-                "submitted": 1,
-                "unresolved": 1,
-                "failed": 0,
-                "jobs": [{"task_id": "10", "job_id": "tidarr_nzo_1"}],
+        "app.services.fetch_pipeline.enqueue_fetch_build",
+        lambda build_id, requested_by="manual", source="build_fetch", payload=None: {
+            "queue": {
+                "id": "queue-1",
+                "build_id": build_id,
+                "status": "running",
+                "run_id": "run-1",
+            },
+            "existing": False,
+            "started_run": {
+                "id": "run-1",
+                "build_id": build_id,
+                "total_tasks": 2,
+                "submission": {
+                    "submitted": 1,
+                    "unresolved": 1,
+                    "failed": 0,
+                    "jobs": [{"task_id": "10", "job_id": "tidarr_nzo_1"}],
+                },
             },
         },
     )
 
     result = forge.forge_builds_fetch("build-1")
     assert result["status"] == "ok"
+    assert result["queue_id"] == "queue-1"
+    assert result["queue_status"] == "running"
     assert result["run_id"] == "run-1"
     assert result["submitted"] == 1
     assert result["skipped"] == 1
@@ -1001,6 +1012,66 @@ def test_forge_fetch_run_endpoints_contract(monkeypatch):
     retry_result = forge.forge_fetch_run_retry("run-1", {"task_ids": [10]})
     assert retry_result["status"] == "ok"
     assert retry_result["retried"] == 1
+
+
+def test_forge_fetch_queue_endpoints_contract(monkeypatch):
+    fake_build = {
+        "id": "build-1",
+        "name": "Build 1",
+        "source": "manual",
+        "status": "ready",
+        "run_mode": "build",
+        "track_list": [],
+        "summary": {},
+        "item_count": 0,
+        "created_at": "2026-04-02T20:00:00",
+        "updated_at": "2026-04-02T20:00:00",
+    }
+    queue_item = {
+        "id": "queue-1",
+        "build_id": "build-1",
+        "status": "pending",
+        "queue_position": 1,
+        "run_id": None,
+        "created_at": "2026-04-02T20:00:00",
+        "updated_at": "2026-04-02T20:00:00",
+    }
+    monkeypatch.setattr(forge.rythmx_store, "get_forge_build", lambda build_id: fake_build if build_id == "build-1" else None)
+    monkeypatch.setattr(forge.rythmx_store, "get_setting", lambda key, default=None: "true")
+    monkeypatch.setattr("app.plugins.get_downloader", lambda: type("Downloader", (), {"name": "tidarr"})())
+    monkeypatch.setattr("app.services.fetch_pipeline.list_fetch_queue", lambda **kwargs: [queue_item])
+    monkeypatch.setattr(
+        "app.services.fetch_pipeline.enqueue_fetch_build",
+        lambda build_id, requested_by="manual", source="build_fetch", payload=None: {
+            "queue": queue_item,
+            "existing": False,
+            "started_run": None,
+        },
+    )
+    monkeypatch.setattr(
+        "app.services.fetch_pipeline.cancel_fetch_queue_item",
+        lambda queue_id: {"queue": {**queue_item, "id": queue_id, "status": "canceled"}, "canceled": True},
+    )
+    monkeypatch.setattr(
+        "app.services.fetch_pipeline.cancel_fetch_queue_batch",
+        lambda queue_ids=None, status=None, build_source=None: {"canceled": 1, "queue_ids": ["queue-1"]},
+    )
+
+    listed = forge.forge_fetch_queue_list(status=None, build_source=None, include_canceled=False, limit=200)
+    assert listed["status"] == "ok"
+    assert len(listed["queue"]) == 1
+
+    enqueued = forge.forge_fetch_queue_enqueue({"build_id": "build-1"})
+    assert enqueued["status"] == "ok"
+    assert enqueued["queue"]["id"] == "queue-1"
+
+    canceled = forge.forge_fetch_queue_cancel_item("queue-1")
+    assert canceled["status"] == "ok"
+    assert canceled["canceled"] is True
+
+    batch = forge.forge_fetch_queue_cancel_batch({"queue_ids": ["queue-1"]})
+    assert batch["status"] == "ok"
+    assert batch["canceled"] == 1
 
 def test_forge_build_resync_contract(monkeypatch):
     fake_build = {

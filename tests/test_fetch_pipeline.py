@@ -29,6 +29,16 @@ class _NoopFileHandler:
         return artifact
 
 
+class _IdleOrchestrator:
+    @staticmethod
+    def run_full(batch_size: int = 10_000):  # noqa: ARG004
+        return None
+
+    @staticmethod
+    def is_running() -> bool:
+        return False
+
+
 def _build_with_missing_album(name: str, *, artist: str = "Artist A", album: str = "Album A") -> dict:
     return rythmx_store.create_forge_build(
         name=name,
@@ -97,13 +107,11 @@ def test_poll_once_flows_to_in_library(tmp_db, monkeypatch, tmp_path):  # noqa: 
     monkeypatch.setattr("app.plugins.get_tagger", lambda: _NoopTagger())
     monkeypatch.setattr("app.plugins.get_file_handler", lambda: _NoopFileHandler())
     monkeypatch.setattr("app.services.fetch_pipeline.get_library_reader", lambda: _ReaderOwned())
-    monkeypatch.setattr(
-        "app.services.enrichment.sync.sync_library",
-        lambda: {"artist_count": 1, "album_count": 1, "track_count": 1},
-    )
+    monkeypatch.setattr("app.services.fetch_pipeline.EnrichmentOrchestrator.get", lambda: _IdleOrchestrator())
 
     build = _build_with_missing_album("Fetch Build E2E")
     run = fetch_pipeline.start_fetch_run(build["id"])
+    tick = fetch_pipeline.poll_once()
     tick = fetch_pipeline.poll_once()
 
     assert tick["checked"] >= 1
@@ -151,13 +159,11 @@ def test_poll_once_resolves_local_prefix_candidate_when_storage_path_is_provider
     monkeypatch.setattr("app.plugins.get_tagger", lambda: _NoopTagger())
     monkeypatch.setattr("app.plugins.get_file_handler", lambda: _NoopFileHandler())
     monkeypatch.setattr("app.services.fetch_pipeline.get_library_reader", lambda: _ReaderOwned())
-    monkeypatch.setattr(
-        "app.services.enrichment.sync.sync_library",
-        lambda: {"artist_count": 1, "album_count": 1, "track_count": 1},
-    )
+    monkeypatch.setattr("app.services.fetch_pipeline.EnrichmentOrchestrator.get", lambda: _IdleOrchestrator())
 
     build = _build_with_missing_album("Fetch Path Fallback")
     run = fetch_pipeline.start_fetch_run(build["id"])
+    fetch_pipeline.poll_once()
     fetch_pipeline.poll_once()
 
     latest = fetch_pipeline.get_fetch_run(run["id"])
@@ -239,3 +245,86 @@ def test_retry_fetch_run_requeues_failed_tasks(tmp_db, monkeypatch):  # noqa: AR
     tasks = fetch_pipeline.list_fetch_tasks_for_run(run["id"])
     assert tasks[0]["stage"] == "submitted"
     assert tasks[0]["retry_count"] == 1
+
+
+def test_fetch_queue_running_cancel_advances_next_pending(tmp_db, monkeypatch):  # noqa: ARG001
+    class _Downloader:
+        name = "tidarr"
+
+        @staticmethod
+        def submit(_artist: str, album: str, _metadata: dict) -> str:
+            return f"tidarr_{album.replace(' ', '_')}"
+
+        @staticmethod
+        def poll_history(limit: int = 400):  # noqa: ARG004
+            return []
+
+        @staticmethod
+        def poll_queue():
+            return []
+
+    monkeypatch.setattr("app.plugins.get_downloader", lambda: _Downloader())
+    monkeypatch.setattr("app.plugins.get_tagger", lambda: _NoopTagger())
+    monkeypatch.setattr("app.plugins.get_file_handler", lambda: _NoopFileHandler())
+
+    build_a = _build_with_missing_album("Queue Build A", artist="Artist A", album="Album A")
+    build_b = _build_with_missing_album("Queue Build B", artist="Artist B", album="Album B")
+
+    queued_a = fetch_pipeline.enqueue_fetch_build(build_a["id"])
+    queued_b = fetch_pipeline.enqueue_fetch_build(build_b["id"])
+
+    queue_a_id = str((queued_a.get("queue") or {}).get("id"))
+    queue_b_id = str((queued_b.get("queue") or {}).get("id"))
+    assert str((queued_a.get("queue") or {}).get("status")) == "running"
+    assert str((queued_b.get("queue") or {}).get("status")) == "pending"
+
+    canceled = fetch_pipeline.cancel_fetch_queue_item(queue_a_id)
+    assert canceled["canceled"] is True
+
+    fetch_pipeline.poll_once()
+
+    queue_rows = {
+        row["id"]: row for row in fetch_pipeline.list_fetch_queue(include_canceled=True, limit=20)
+    }
+    assert str(queue_rows[queue_a_id]["status"]) == "canceled"
+    assert str(queue_rows[queue_b_id]["status"]) == "running"
+
+
+def test_fetch_queue_batch_cancel_soft_delete(tmp_db, monkeypatch):  # noqa: ARG001
+    class _Downloader:
+        name = "tidarr"
+
+        @staticmethod
+        def submit(_artist: str, album: str, _metadata: dict) -> str:
+            return f"tidarr_{album.replace(' ', '_')}"
+
+        @staticmethod
+        def poll_history(limit: int = 400):  # noqa: ARG004
+            return []
+
+        @staticmethod
+        def poll_queue():
+            return []
+
+    monkeypatch.setattr("app.plugins.get_downloader", lambda: _Downloader())
+
+    build_a = _build_with_missing_album("Queue Batch A", artist="Artist A", album="Album A")
+    build_b = _build_with_missing_album("Queue Batch B", artist="Artist B", album="Album B")
+    build_c = _build_with_missing_album("Queue Batch C", artist="Artist C", album="Album C")
+
+    queued_a = fetch_pipeline.enqueue_fetch_build(build_a["id"])
+    queued_b = fetch_pipeline.enqueue_fetch_build(build_b["id"])
+    queued_c = fetch_pipeline.enqueue_fetch_build(build_c["id"])
+
+    queue_b_id = str((queued_b.get("queue") or {}).get("id"))
+    queue_c_id = str((queued_c.get("queue") or {}).get("id"))
+    result = fetch_pipeline.cancel_fetch_queue_batch(queue_ids=[queue_b_id, queue_c_id])
+    assert result["canceled"] == 2
+
+    queue_rows = {
+        row["id"]: row for row in fetch_pipeline.list_fetch_queue(include_canceled=True, limit=20)
+    }
+    assert str(queue_rows[queue_b_id]["status"]) == "canceled"
+    assert str(queue_rows[queue_c_id]["status"]) == "canceled"
+    # First item stays active/running until it reaches terminal state.
+    assert str((queued_a.get("queue") or {}).get("status")) in {"running", "pending"}

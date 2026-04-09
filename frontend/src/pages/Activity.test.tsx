@@ -5,13 +5,19 @@ import { useForgePipelineStore } from '../stores/useForgePipelineStore'
 
 const {
   listRunsMock,
+  listQueueMock,
   getRunTasksMock,
   retryRunMock,
+  cancelQueueItemMock,
+  cancelQueueBatchMock,
   navigateMock,
 } = vi.hoisted(() => ({
   listRunsMock: vi.fn(),
+  listQueueMock: vi.fn(),
   getRunTasksMock: vi.fn(),
   retryRunMock: vi.fn(),
+  cancelQueueItemMock: vi.fn(),
+  cancelQueueBatchMock: vi.fn(),
   navigateMock: vi.fn(),
 }))
 
@@ -30,8 +36,11 @@ vi.mock('../services/api', async (importOriginal) => {
     forgeFetchApi: {
       ...actual.forgeFetchApi,
       listRuns: (...args: unknown[]) => listRunsMock(...args),
+      listQueue: (...args: unknown[]) => listQueueMock(...args),
       getRunTasks: (...args: unknown[]) => getRunTasksMock(...args),
       retryRun: (...args: unknown[]) => retryRunMock(...args),
+      cancelQueueItem: (...args: unknown[]) => cancelQueueItemMock(...args),
+      cancelQueueBatch: (...args: unknown[]) => cancelQueueBatchMock(...args),
     },
   }
 })
@@ -41,12 +50,18 @@ describe('ActivityPage', () => {
 
   beforeEach(() => {
     listRunsMock.mockReset()
+    listQueueMock.mockReset()
     getRunTasksMock.mockReset()
     retryRunMock.mockReset()
+    cancelQueueItemMock.mockReset()
+    cancelQueueBatchMock.mockReset()
     toast.success.mockReset()
     toast.error.mockReset()
     navigateMock.mockReset()
     useForgePipelineStore.getState().resetPipeline('fetch')
+    listQueueMock.mockResolvedValue([])
+    cancelQueueItemMock.mockResolvedValue({ status: 'ok', canceled: true })
+    cancelQueueBatchMock.mockResolvedValue({ status: 'ok', canceled: 0, queue_ids: [] })
   })
 
   afterEach(() => {
@@ -109,6 +124,57 @@ describe('ActivityPage', () => {
 
     fireEvent.click(screen.getByText('Retry Task'))
     await waitFor(() => expect(retryRunMock).toHaveBeenCalledWith('run-1', [10]))
+    await waitFor(() => expect(toast.success).toHaveBeenCalled())
+  })
+
+  it('supports queue batch cancel from Fetch Activity', async () => {
+    listRunsMock.mockResolvedValue([
+      {
+        id: 'run-queue',
+        build_id: 'build-queue',
+        build_name: 'Queue Build',
+        build_source: 'new_music',
+        provider: 'tidarr',
+        status: 'failed',
+        total_tasks: 1,
+        processed_tasks: 1,
+        active_tasks: 0,
+        in_library: 0,
+        failed: 1,
+        unresolved: 0,
+        stage_counts: { failed: 1 },
+        config: {},
+        started_at: '2026-04-01T00:00:00',
+        finished_at: '2026-04-01T00:01:00',
+        created_at: '2026-04-01T00:00:00',
+        updated_at: '2026-04-01T00:01:00',
+      },
+    ])
+    listQueueMock.mockResolvedValue([
+      {
+        id: 'queue-1',
+        build_id: 'build-queue',
+        source: 'build_fetch',
+        payload: {},
+        status: 'pending',
+        queue_position: 1,
+        run_id: null,
+        requested_by: 'manual',
+        created_at: '2026-04-01T00:00:00',
+        updated_at: '2026-04-01T00:00:00',
+      },
+    ])
+    getRunTasksMock.mockResolvedValue([])
+    cancelQueueBatchMock.mockResolvedValue({ status: 'ok', canceled: 1, queue_ids: ['queue-1'] })
+
+    render(<ActivityPage toast={toast} />)
+
+    await waitFor(() => expect(screen.getByText('Queue Build')).toBeInTheDocument())
+    const checkboxes = screen.getAllByRole('checkbox')
+    fireEvent.click(checkboxes[0])
+    fireEvent.click(screen.getByText('Cancel Selected'))
+
+    await waitFor(() => expect(cancelQueueBatchMock).toHaveBeenCalledWith({ queue_ids: ['queue-1'] }))
     await waitFor(() => expect(toast.success).toHaveBeenCalled())
   })
 
