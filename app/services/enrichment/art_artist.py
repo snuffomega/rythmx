@@ -4,7 +4,8 @@ art_artist.py - Artist photo enrichment worker.
 Resolution order:
   1. Fanart.tv (primary upgrade path)
   2. Last.fm artist photo (fallback, when LASTFM_API_KEY is configured)
-  3. Deezer artist photo (final fallback)
+  3. Discogs artist photo (fallback, optional DISCOGS_TOKEN)
+  4. Deezer artist photo (final fallback)
 
 Stores local artwork in image_cache (content_hash/local_path/artwork_source)
 and keeps per-source URL columns on lib_artists for compatibility.
@@ -36,6 +37,7 @@ _CANDIDATE_SQL = """
       AND (
           ic.content_hash IS NULL
           OR ic.artwork_source = 'deezer'
+          OR ic.artwork_source = 'discogs'
           OR (? = 1 AND ic.artwork_source = 'lastfm' AND COALESCE(a.musicbrainz_id, a.lastfm_mbid) IS NOT NULL)
       )
 """
@@ -50,6 +52,7 @@ _REMAINING_SQL = """
       AND (
           ic.content_hash IS NULL
           OR ic.artwork_source = 'deezer'
+          OR ic.artwork_source = 'discogs'
           OR (? = 1 AND ic.artwork_source = 'lastfm' AND COALESCE(a.musicbrainz_id, a.lastfm_mbid) IS NOT NULL)
       )
 """
@@ -96,7 +99,11 @@ def _upsert_artist_cache(
 
 def _process_item(conn, row):
     from app.clients.last_fm_client import get_artist_image_lastfm
-    from app.services.image_service import deezer_get_artist_photo, fanart_get_artist
+    from app.services.image_service import (
+        deezer_get_artist_photo,
+        discogs_get_artist_photo_by_name,
+        fanart_get_artist,
+    )
 
     artist_id = str(row["id"])
     artist_name = row["name"]
@@ -157,11 +164,29 @@ def _process_item(conn, row):
                 return "found"
 
     # Keep existing local hashes when no higher-priority source is available.
-    if current_hash and current_source in ("lastfm", "deezer"):
+    # Note: existing Deezer rows still flow to Discogs fallback for possible upgrade.
+    if current_hash and current_source in ("lastfm", "discogs"):
         write_enrichment_meta(conn, "artist_art", "artist", artist_id, "not_found")
         return "not_found"
 
-    # Fallback 2: Deezer photo (first-fill only; never downgrades fanart/lastfm).
+    # Fallback 2: Discogs artist photo.
+    discogs_url = discogs_get_artist_photo_by_name(str(artist_name or ""))
+    if discogs_url:
+        payload = _download_image_bytes(discogs_url)
+        if payload:
+            content_hash = ingest(payload)
+            _upsert_artist_cache(
+                conn,
+                artist_id=artist_id,
+                image_url=discogs_url,
+                content_hash=content_hash,
+                artwork_source="discogs",
+            )
+            write_enrichment_meta(conn, "artist_art", "artist", artist_id, "found")
+            logger.debug("enrich_artist_art: '%s' -> discogs", artist_name)
+            return "found"
+
+    # Fallback 3: Deezer photo (first-fill only; never downgrades fanart/lastfm/discogs).
     if deezer_id:
         deezer_url = deezer_get_artist_photo(str(deezer_id))
         if deezer_url:

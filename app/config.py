@@ -175,6 +175,11 @@ ARTWORK_DIR = os.path.abspath(_optional("ARTWORK_DIR", "./data/artwork/"))
 # When not set, artist images fall back to iTunes album art.
 FANART_API_KEY = _optional("FANART_API_KEY")
 
+# --- Discogs (optional) ---
+# Optional personal token for higher/stabler API throughput.
+# Public search and artist image endpoints work without a token.
+DISCOGS_TOKEN = _optional("DISCOGS_TOKEN")
+
 
 # Genre normalization whitelist for Last.fm tags (Stage 3 S3-4 normalization).
 # Maps raw Last.fm tag strings (lowercase) to canonical genre labels stored in lib_* tables.
@@ -332,6 +337,7 @@ def log_config_summary():
         ("LASTFM_API_KEY", LASTFM_API_KEY),
         ("SPOTIFY_CLIENT_ID", SPOTIFY_CLIENT_ID),
         ("FANART_API_KEY", FANART_API_KEY),
+        ("DISCOGS_TOKEN", DISCOGS_TOKEN),
         ("MUSIC_DIR", MUSIC_DIR or "NOT SET (file-aware features disabled)"),
         ("ARTWORK_DIR", ARTWORK_DIR),
         ("CATALOG_PRIMARY", CATALOG_PRIMARY),

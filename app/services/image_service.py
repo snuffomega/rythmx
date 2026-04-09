@@ -3,6 +3,7 @@ image_service.py — Non-blocking image URL resolution.
 
 Artist images:  Fanart.tv (real band photos, requires FANART_API_KEY) →
                 Last.fm artist.getInfo image (requires LASTFM_API_KEY) →
+                Discogs artist image (public API, optional token) →
                 Deezer /artist/{id} (actual artist photo, free, no auth) →
                 iTunes album art last resort (always available, no auth)
 Album images:   iTunes search (artworkUrl100, upscaled to 600px)
@@ -56,6 +57,12 @@ _FANART_BASE = "https://webservice.fanart.tv/v3/music"
 # ---------------------------------------------------------------------------
 
 _DEEZER_BASE = "https://api.deezer.com"
+
+# ---------------------------------------------------------------------------
+# Discogs (artist image lookup — public API, optional token)
+# ---------------------------------------------------------------------------
+
+_DISCOGS_BASE = "https://api.discogs.com"
 
 # ---------------------------------------------------------------------------
 # Navidrome (coverArt — served by the Navidrome server with Subsonic auth)
@@ -380,6 +387,88 @@ def _deezer_search_artist_id(name: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# Discogs helpers
+# ---------------------------------------------------------------------------
+
+def _discogs_headers() -> dict[str, str]:
+    headers = {"User-Agent": "Rythmx/1.0 (https://github.com/snuffomega/rythmx)"}
+    token = (config.DISCOGS_TOKEN or "").strip()
+    if token:
+        headers["Authorization"] = f"Discogs token={token}"
+    return headers
+
+
+def _discogs_get(path: str, params: dict | None = None) -> dict | None:
+    rate_limiter.acquire("discogs")
+    try:
+        resp = _session.get(
+            f"{_DISCOGS_BASE}{path}",
+            params=params or {},
+            headers=_discogs_headers(),
+            timeout=10,
+        )
+        if resp.status_code == 429:
+            rate_limiter.record_429("discogs")
+            return None
+        resp.raise_for_status()
+        rate_limiter.record_success("discogs")
+        return resp.json()
+    except requests.RequestException as e:
+        logger.debug("Discogs request failed for '%s': %s", path, e)
+        return None
+
+
+def _discogs_search_artist_id(name: str) -> str | None:
+    """Search Discogs for artist ID by name."""
+    data = _discogs_get(
+        "/database/search",
+        params={"q": name, "type": "artist", "per_page": 5},
+    )
+    if not data:
+        return None
+
+    items = data.get("results", [])
+    if not items:
+        return None
+
+    target = _norm_text(name)
+    for item in items:
+        title = re.sub(r"\s+\(\d+\)$", "", str(item.get("title", ""))).strip()
+        if _norm_text(title) == target:
+            return str(item.get("id", "")) or None
+
+    return str(items[0].get("id", "")) or None
+
+
+def discogs_get_artist_photo(artist_id: str) -> str:
+    """Fetch primary artist image URL from Discogs /artists/{id}."""
+    if not artist_id:
+        return ""
+
+    data = _discogs_get(f"/artists/{artist_id}")
+    if not data:
+        return ""
+
+    images = data.get("images") or []
+    if not isinstance(images, list) or not images:
+        return ""
+
+    primary = next((img for img in images if img.get("type") == "primary"), None)
+    candidate = primary or images[0]
+    if not isinstance(candidate, dict):
+        return ""
+    return str(candidate.get("uri") or candidate.get("uri150") or "").strip()
+
+
+def discogs_get_artist_photo_by_name(name: str) -> str:
+    """Search Discogs by artist name, then fetch the artist's primary image."""
+    artist_id = _discogs_search_artist_id(name)
+    if not artist_id:
+        return ""
+    return discogs_get_artist_photo(artist_id)
+
+
+# ---------------------------------------------------------------------------
 # Core background worker
 # ---------------------------------------------------------------------------
 
@@ -502,7 +591,11 @@ def _fetch_and_cache(
                 except Exception as exc:
                     logger.debug("Last.fm artist image lookup failed for '%s': %s", name, exc)
 
-            # --- Tertiary: Deezer artist photo ---
+            # --- Tertiary: Discogs artist photo ---
+            if not url:
+                url = discogs_get_artist_photo_by_name(name)
+
+            # --- Quaternary: Deezer artist photo ---
             if not url:
                 cached_artist = rythmx_store.get_cached_artist(name)
                 deezer_id = (cached_artist or {}).get("deezer_artist_id")

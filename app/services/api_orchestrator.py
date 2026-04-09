@@ -16,6 +16,7 @@ Two-layer design:
 Domain limits (requests per minute):
   itunes:        20/min  (Apple free tier — enforced; no auth required)
   deezer:       300/min  (Deezer allows 50 req/5s; 300/min is conservative)
+  discogs:       60/min  (public API; conservative unauth baseline)
   lastfm:       200/min  (generous free tier)
   spotify:      100/min  (varies by endpoint; conservative baseline)
   fanart:       120/min  (2/sec — within limits for personal projects)
@@ -56,6 +57,7 @@ logger = logging.getLogger(__name__)
 _DOMAIN_CONFIGS: dict[str, dict] = {
     "itunes":       {"rate": 20 / 60,   "capacity": 3},
     "deezer":       {"rate": 300 / 60,  "capacity": 10},   # Deezer allows 50 req/5s; 300/min is conservative
+    "discogs":      {"rate": 60 / 60,   "capacity": 3},    # Public API baseline is conservative
     "lastfm":       {"rate": 200 / 60,  "capacity": 10},
     "spotify":      {"rate": 100 / 60,  "capacity": 5},
     "fanart":       {"rate": 120 / 60,  "capacity": 5},
