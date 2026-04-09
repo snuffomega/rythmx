@@ -362,7 +362,11 @@ def load_plugins(
             # Apply DB config overrides to os.environ before instantiation
             if plugin_settings:
                 for key, val in (plugin_settings.get(plugin_name) or {}).items():
-                    os.environ[key] = val
+                    # Empty DB values should fall back to compose/.env defaults
+                    # rather than clobbering them with blank strings.
+                    if val is None or str(val) == "":
+                        continue
+                    os.environ[key] = str(val)
 
             # Instantiate each slot, respecting DB enable/disable config
             active_slots: list[str] = []

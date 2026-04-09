@@ -192,4 +192,38 @@ describe('ActivityPage', () => {
     const pollIntervals = setIntervalSpy.mock.calls.map(call => call[1])
     expect(pollIntervals).not.toContain(10000)
   })
+
+  it('uses slower polling for scan-waiting runs', async () => {
+    listRunsMock.mockResolvedValue([
+      {
+        id: 'run-3',
+        build_id: 'build-3',
+        build_name: 'Build Three',
+        build_source: 'new_music',
+        provider: 'tidarr',
+        status: 'running',
+        total_tasks: 1,
+        processed_tasks: 0,
+        active_tasks: 1,
+        in_library: 0,
+        failed: 0,
+        unresolved: 0,
+        stage_counts: { scan_requested: 1 },
+        config: {},
+        started_at: '2026-04-01T00:00:00',
+        finished_at: null,
+        created_at: '2026-04-01T00:00:00',
+        updated_at: '2026-04-01T00:00:00',
+      },
+    ])
+    getRunTasksMock.mockResolvedValue([])
+    const setIntervalSpy = vi.spyOn(window, 'setInterval')
+
+    render(<ActivityPage toast={toast} />)
+
+    await waitFor(() => expect(screen.getByText('Build Three')).toBeInTheDocument())
+    const pollIntervals = setIntervalSpy.mock.calls.map(call => call[1])
+    expect(pollIntervals).toContain(30000)
+    expect(pollIntervals).not.toContain(10000)
+  })
 })

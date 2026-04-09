@@ -40,6 +40,8 @@ const SOURCE_FILTERS = [
   { value: 'manual', label: 'Manual' },
 ];
 
+const HOT_STAGES = ['queued', 'submitted', 'downloading', 'downloaded', 'tagged', 'moved'];
+
 function stageClass(stage: string): string {
   switch (stage) {
     case 'in_library':
@@ -139,7 +141,18 @@ export function ActivityPage({ toast }: ActivityPageProps) {
     [runs]
   );
 
+  const hasHotRuns = useMemo(
+    () => (runs || []).some(run => HOT_STAGES.some(stage => (run.stage_counts?.[stage] || 0) > 0)),
+    [runs]
+  );
+
+  const selectedRunIsHot = useMemo(
+    () => !!selectedRun && HOT_STAGES.some(stage => (selectedRun.stage_counts?.[stage] || 0) > 0),
+    [selectedRun]
+  );
+
   const shouldPoll = wsFetch.running || hasActiveRuns || (selectedRun?.status === 'running');
+  const pollIntervalMs = hasHotRuns ? 10000 : 30000;
 
   const refreshRunsAndTasks = useCallback((includeTasks = true) => {
     refetchRuns();
@@ -151,10 +164,10 @@ export function ActivityPage({ toast }: ActivityPageProps) {
   useEffect(() => {
     if (!shouldPoll) return undefined;
     const id = window.setInterval(() => {
-      refreshRunsAndTasks();
-    }, 10000);
+      refreshRunsAndTasks(selectedRunIsHot);
+    }, pollIntervalMs);
     return () => window.clearInterval(id);
-  }, [shouldPoll, refreshRunsAndTasks]);
+  }, [shouldPoll, selectedRunIsHot, pollIntervalMs, refreshRunsAndTasks]);
 
   const lastWsRefreshAt = useRef(0);
   useEffect(() => {
