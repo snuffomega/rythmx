@@ -17,7 +17,7 @@ const NAV_ITEMS = [
   { to: '/dashboard', label: 'Dashboard', icon: Compass },
   { to: '/library', label: 'Library', icon: Library },
   { to: '/forge', label: 'The Forge', icon: Zap },
-  { to: '/activity', label: 'Activity', icon: Activity },
+  { to: '/activity', label: 'Fetch Activity', icon: Activity },
   { to: '/stats', label: 'Stats', icon: BarChart2 },
   { to: '/settings', label: 'Settings', icon: Settings },
 ] as const;

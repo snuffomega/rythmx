@@ -3,11 +3,11 @@ import { Music2, Users, ChevronLeft, ChevronRight, Disc3, Sparkles, Radio } from
 import { useNavigate } from '@tanstack/react-router';
 import { useApi } from '../hooks/useApi';
 import { useImage } from '../hooks/useImage';
-import { statsApi, forgeNewMusicApi, acquisitionApi } from '../services/api';
+import { statsApi, forgeNewMusicApi, forgeFetchApi } from '../services/api';
 import { getForgeReleaseTarget, openExternalReleaseUrl } from '../utils/forgeReleaseLinks';
 import { getImageUrl } from '../utils/imageUrl';
 import { ApiErrorBanner } from '../components/common';
-import type { Artist, Track, QueueItem, DiscoveredRelease } from '../types';
+import type { Artist, Track, DiscoveredRelease, FetchRun } from '../types';
 
 function placeholderGradient(seed: string) {
   const hues = [200, 160, 220, 180, 30, 270, 340];
@@ -279,7 +279,7 @@ export function Dashboard() {
   const topArtists = useApi(() => statsApi.getTopArtists('1month', 12));
   const lovedArtists = useApi(() => statsApi.getLovedArtists());
   const topTracks = useApi(() => statsApi.getTopTracks('7day', 20));
-  const recentQueue = useApi(() => acquisitionApi.getQueue('pending'));
+  const recentFetchRuns = useApi(() => forgeFetchApi.listRuns({ limit: 8 }));
   const forgeReleases = useApi(() => forgeNewMusicApi.getResults());
 
   const newReleases = forgeReleases.data?.length ? forgeReleases.data.slice(0, 14) : null;
@@ -401,30 +401,35 @@ export function Dashboard() {
         )}
       </section>
 
-      {recentQueue.data && recentQueue.data.length > 0 && (
+      {recentFetchRuns.data && recentFetchRuns.data.length > 0 && (
         <section>
           <SectionHeader
             icon={<Music2 size={15} />}
-            title="Queued for Acquisition"
-            sub="Albums being tracked"
-            cta="View activity"
+            title="Recent Fetch Runs"
+            sub="Latest fetch execution state"
+            cta="Open Fetch Activity"
             onCta={() => navigate({ to: '/activity' })}
           />
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-            {recentQueue.data.slice(0, 8).map((item: QueueItem, i) => (
+            {recentFetchRuns.data.slice(0, 8).map((run: FetchRun, i) => (
               <div
-                key={i}
+                key={run.id || i}
                 className="flex items-center gap-3 p-3 bg-base border border-border-subtle hover:border-border transition-colors cursor-pointer group"
+                onClick={() => navigate({ to: '/activity' })}
               >
                 <div
                   className="w-10 h-10 flex-shrink-0"
-                  style={{ background: placeholderGradient(item.artist) }}
+                  style={{ background: placeholderGradient(run.build_name || run.build_id || 'fetch') }}
                 />
                 <div className="flex-1 min-w-0">
-                  <p className="text-text-primary text-xs font-semibold truncate">{item.album}</p>
-                  <p className="text-text-dim text-xs truncate">{item.artist}</p>
+                  <p className="text-text-primary text-xs font-semibold truncate">
+                    {run.build_name || run.build_id}
+                  </p>
+                  <p className="text-text-dim text-xs truncate">
+                    {run.provider} • {run.in_library}/{run.total_tasks} in library
+                  </p>
                 </div>
-                <span className="badge-muted flex-shrink-0 text-[10px]">{item.status}</span>
+                <span className="badge-muted flex-shrink-0 text-[10px]">{run.status}</span>
               </div>
             ))}
           </div>

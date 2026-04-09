@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-type ForgePipelineName = 'new_music' | 'custom_discovery';
+type ForgePipelineName = 'new_music' | 'custom_discovery' | 'fetch';
 
 export interface ForgePipelineState {
   running: boolean;
@@ -33,7 +33,7 @@ const DEFAULT_PIPELINE_STATE: ForgePipelineState = {
 };
 
 function parsePipeline(raw: unknown): ForgePipelineName | null {
-  return raw === 'new_music' || raw === 'custom_discovery' ? raw : null;
+  return raw === 'new_music' || raw === 'custom_discovery' || raw === 'fetch' ? raw : null;
 }
 
 function toNumber(value: unknown, fallback: number): number {
@@ -45,6 +45,7 @@ export const useForgePipelineStore = create<ForgePipelineStore>((set) => ({
   pipelines: {
     new_music: { ...DEFAULT_PIPELINE_STATE },
     custom_discovery: { ...DEFAULT_PIPELINE_STATE },
+    fetch: { ...DEFAULT_PIPELINE_STATE },
   },
 
   handleProgress: (payload) => {
@@ -117,4 +118,3 @@ export const useForgePipelineStore = create<ForgePipelineStore>((set) => ({
     }));
   },
 }));
-

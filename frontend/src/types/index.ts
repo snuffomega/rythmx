@@ -528,7 +528,7 @@ export interface WsEnrichmentSubstep {
 
 // New Music pipeline events (scheduler)
 export interface WsPipelineProgress {
-  pipeline?: 'new_music' | 'custom_discovery' | string;
+  pipeline?: 'new_music' | 'custom_discovery' | 'fetch' | string;
   run_id?: string;
   stage: string;
   processed: number;
@@ -537,13 +537,13 @@ export interface WsPipelineProgress {
 }
 
 export interface WsPipelineComplete {
-  pipeline?: 'new_music' | 'custom_discovery' | string;
+  pipeline?: 'new_music' | 'custom_discovery' | 'fetch' | string;
   run_id?: string;
   summary?: Record<string, unknown>;
 }
 
 export interface WsPipelineError {
-  pipeline?: 'new_music' | 'custom_discovery' | string;
+  pipeline?: 'new_music' | 'custom_discovery' | 'fetch' | string;
   run_id?: string;
   message: string;
 }
@@ -653,6 +653,85 @@ export interface PipelineRun {
   summary_json: string | null;
   error_message: string | null;
   triggered_by: 'manual' | 'schedule';
+}
+
+export type FetchTaskStage =
+  | 'queued'
+  | 'submitted'
+  | 'downloading'
+  | 'downloaded'
+  | 'tagged'
+  | 'moved'
+  | 'scan_requested'
+  | 'in_library'
+  | 'failed'
+  | 'unresolved';
+
+export type FetchRunStatus = 'running' | 'completed' | 'failed';
+
+export interface FetchRun {
+  id: string;
+  build_id: string;
+  provider: string;
+  status: FetchRunStatus | string;
+  triggered_by: string;
+  total_tasks: number;
+  processed_tasks: number;
+  active_tasks: number;
+  in_library: number;
+  failed: number;
+  unresolved: number;
+  stage_counts: Record<string, number>;
+  config: Record<string, unknown>;
+  started_at: string;
+  finished_at: string | null;
+  created_at: string;
+  updated_at: string;
+  build_source?: string | null;
+  build_name?: string | null;
+  build_status?: string | null;
+}
+
+export interface FetchTask {
+  id: number;
+  run_id: string;
+  build_id: string;
+  provider: string;
+  artist_name: string;
+  album_name: string;
+  stage: FetchTaskStage | string;
+  provider_job_id?: string | null;
+  metadata: Record<string, unknown>;
+  storage_path?: string | null;
+  source_dir?: string | null;
+  dest_dir?: string | null;
+  error_type?: 'recoverable' | 'permanent' | 'config' | string | null;
+  error_code?: string | null;
+  error_message?: string | null;
+  retry_count: number;
+  scan_deadline_at?: string | null;
+  completed_at?: string | null;
+  created_at: string;
+  updated_at: string;
+  last_transition_at: string;
+}
+
+export interface FetchBuildStatus {
+  build_id: string;
+  run: FetchRun | null;
+  stage_counts: Record<string, number>;
+  tasks?: FetchTask[];
+  confirmation?: {
+    timeout_s: number;
+    waiting: number;
+    confirmed: number;
+    timed_out: number;
+  };
+  total: number;
+  pending: number;
+  completed: number;
+  failed: number;
+  jobs: Array<Record<string, unknown>>;
 }
 
 // ---------------------------------------------------------------------------
