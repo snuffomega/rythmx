@@ -40,6 +40,7 @@ import type {
   FetchRun,
   FetchTask,
   FetchBuildStatus,
+  FetchQueueItem,
   LibPlaylist,
   LibPlaylistTrack,
   MobilePairing,
@@ -466,12 +467,16 @@ export const forgeBuildsApi = {
     request<{
       status: string;
       build_id: string;
+      queue_id?: string;
+      queue_status?: string;
       run_id: string;
       message: string;
       submitted: number;
       skipped: number;
       jobs: Array<Record<string, unknown>>;
-      run: FetchRun;
+      run: FetchRun | null;
+      queue?: FetchQueueItem;
+      existing?: boolean;
     }>(`/forge/builds/${encodeURIComponent(id)}/fetch`, {
       method: 'POST',
     }),
@@ -525,6 +530,46 @@ export const forgeFetchApi = {
       {
         method: 'POST',
         body: JSON.stringify(taskIds && taskIds.length ? { task_ids: taskIds } : {}),
+      }
+    ),
+  listQueue: (params: {
+    status?: string;
+    build_source?: string;
+    include_canceled?: boolean;
+    limit?: number;
+  } = {}) => {
+    const qs = new URLSearchParams(
+      Object.entries(params).filter(([, v]) => v != null && v !== '') as [string, string][]
+    ).toString();
+    return request<{ status: string; queue: FetchQueueItem[] }>(
+      `/forge/fetch/queue${qs ? `?${qs}` : ''}`
+    ).then(r => r.queue);
+  },
+  enqueue: (buildId: string, data: { requested_by?: string; source?: string } = {}) =>
+    request<{
+      status: string;
+      queue: FetchQueueItem;
+      existing: boolean;
+      started_run?: FetchRun | null;
+    }>('/forge/fetch/queue', {
+      method: 'POST',
+      body: JSON.stringify({ build_id: buildId, ...data }),
+    }),
+  cancelQueueItem: (queueId: string) =>
+    request<{ status: string; queue_id: string; queue: FetchQueueItem; canceled: boolean }>(
+      `/forge/fetch/queue/${encodeURIComponent(queueId)}/cancel`,
+      { method: 'POST' }
+    ),
+  cancelQueueBatch: (data: {
+    queue_ids?: string[];
+    status?: string;
+    build_source?: string;
+  }) =>
+    request<{ status: string; canceled: number; queue_ids: string[] }>(
+      '/forge/fetch/queue/cancel',
+      {
+        method: 'POST',
+        body: JSON.stringify(data ?? {}),
       }
     ),
 };

@@ -668,10 +668,13 @@ export type FetchTaskStage =
   | 'unresolved';
 
 export type FetchRunStatus = 'running' | 'completed' | 'failed';
+export type FetchHandoffStatus = 'idle' | 'enriching' | 'confirming' | 'done' | 'failed';
+export type FetchQueueStatus = 'pending' | 'running' | 'completed' | 'failed' | 'canceled';
 
 export interface FetchRun {
   id: string;
   build_id: string;
+  queue_id?: string | null;
   provider: string;
   status: FetchRunStatus | string;
   triggered_by: string;
@@ -690,6 +693,11 @@ export interface FetchRun {
   build_source?: string | null;
   build_name?: string | null;
   build_status?: string | null;
+  handoff_status?: FetchHandoffStatus | string;
+  handoff_started_at?: string | null;
+  handoff_finished_at?: string | null;
+  handoff_error?: string | null;
+  cancel_requested?: boolean;
 }
 
 export interface FetchTask {
@@ -732,6 +740,27 @@ export interface FetchBuildStatus {
   completed: number;
   failed: number;
   jobs: Array<Record<string, unknown>>;
+}
+
+export interface FetchQueueItem {
+  id: string;
+  build_id: string;
+  source: string;
+  payload: Record<string, unknown>;
+  status: FetchQueueStatus | string;
+  queue_position: number;
+  run_id?: string | null;
+  requested_by: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  last_error?: string | null;
+  created_at: string;
+  updated_at: string;
+  build_source?: string | null;
+  build_name?: string | null;
+  build_status?: string | null;
+  run_status?: string | null;
+  run_handoff_status?: string | null;
 }
 
 // ---------------------------------------------------------------------------
