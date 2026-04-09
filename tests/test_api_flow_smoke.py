@@ -222,17 +222,17 @@ def test_library_enrich_status_smoke(monkeypatch):
         "app.services.api_orchestrator.EnrichmentOrchestrator.get",
         staticmethod(lambda: FakeOrch()),
     )
-    monkeypatch.setattr("app.db.rythmx_store.get_setting", lambda _k: "stage2")
+    monkeypatch.setattr("app.db.rythmx_store.get_setting", lambda _k, _default=None: "stage2")
 
-    def fake_execute(_sql, _params=()):
-        rows = [
-            {"source": "itunes", "status": "found", "cnt": 3},
-            {"source": "itunes", "status": "not_found", "cnt": 1},
-            {"source": "deezer", "status": "error", "cnt": 2},
-        ]
-        return _FakeCursor(many=rows)
-
-    monkeypatch.setattr("app.db.rythmx_store._connect", lambda: _FakeConn(fake_execute))
+    monkeypatch.setattr(
+        "app.services.enrichment.runner.PipelineRunner.read_worker_snapshot",
+        staticmethod(
+            lambda: {
+                "itunes": {"found": 3, "not_found": 1, "errors": 0, "pending": 0, "running": False},
+                "deezer": {"found": 0, "not_found": 0, "errors": 2, "pending": 0, "running": False},
+            }
+        ),
+    )
 
     result = library_enrich.enrich_status()
     assert result["status"] == "ok"
@@ -848,12 +848,32 @@ def test_forge_build_fetch_contract(monkeypatch):
 
     monkeypatch.setattr(forge.rythmx_store, "get_forge_build", lambda build_id: fake_build if build_id == "build-1" else None)
     monkeypatch.setattr(forge.rythmx_store, "get_setting", lambda key, default=None: "true")
+    monkeypatch.setattr(
+        "app.plugins.get_downloader",
+        lambda: type("Downloader", (), {"name": "tidarr"})(),
+    )
+    monkeypatch.setattr(
+        "app.services.fetch_pipeline.start_fetch_run",
+        lambda build_id, triggered_by="manual": {
+            "id": "run-1",
+            "build_id": build_id,
+            "total_tasks": 2,
+            "submission": {
+                "submitted": 1,
+                "unresolved": 1,
+                "failed": 0,
+                "jobs": [{"task_id": "10", "job_id": "tidarr_nzo_1"}],
+            },
+        },
+    )
 
     result = forge.forge_builds_fetch("build-1")
-    assert isinstance(result, JSONResponse)
-    assert result.status_code == 501
-    body = json.loads(result.body.decode("utf-8"))
-    assert body["code"] == "FORGE_FETCH_NOT_IMPLEMENTED"
+    assert result["status"] == "ok"
+    assert result["run_id"] == "run-1"
+    assert result["submitted"] == 1
+    assert result["skipped"] == 1
+    assert result["build_id"] == "build-1"
+    assert "Fetch run queued" in result["message"]
 
 
 def test_forge_build_fetch_disabled_and_missing(monkeypatch):
@@ -884,6 +904,103 @@ def test_forge_build_fetch_disabled_and_missing(monkeypatch):
     missing_body = json.loads(missing.body.decode("utf-8"))
     assert missing_body["code"] == "FORGE_BUILD_NOT_FOUND"
 
+
+def test_forge_build_fetch_status_contract(monkeypatch):
+    fake_build = {
+        "id": "build-1",
+        "name": "Build 1",
+        "source": "manual",
+        "status": "ready",
+        "run_mode": "build",
+        "track_list": [],
+        "summary": {},
+        "item_count": 0,
+        "created_at": "2026-04-02T20:00:00",
+        "updated_at": "2026-04-02T20:00:00",
+    }
+    monkeypatch.setattr(forge.rythmx_store, "get_forge_build", lambda build_id: fake_build if build_id == "build-1" else None)
+    monkeypatch.setattr(
+        "app.services.fetch_pipeline.get_build_fetch_status",
+        lambda build_id: {
+            "build_id": build_id,
+            "run": None,
+            "stage_counts": {},
+            "confirmation": {"timeout_s": 600, "waiting": 0, "confirmed": 0, "timed_out": 0},
+            "total": 0,
+            "pending": 0,
+            "completed": 0,
+            "failed": 0,
+            "jobs": [],
+        },
+    )
+
+    result = forge.forge_builds_fetch_status("build-1")
+    assert result["status"] == "ok"
+    assert result["build_id"] == "build-1"
+    assert result["confirmation"]["timeout_s"] == 600
+
+
+def test_forge_fetch_run_endpoints_contract(monkeypatch):
+    run = {
+        "id": "run-1",
+        "build_id": "build-1",
+        "provider": "tidarr",
+        "status": "running",
+        "total_tasks": 2,
+        "processed_tasks": 1,
+        "active_tasks": 1,
+        "in_library": 1,
+        "failed": 0,
+        "unresolved": 0,
+        "stage_counts": {"in_library": 1, "submitted": 1},
+        "config": {},
+        "started_at": "2026-04-02T20:00:00",
+        "finished_at": None,
+        "created_at": "2026-04-02T20:00:00",
+        "updated_at": "2026-04-02T20:00:00",
+    }
+    tasks = [
+        {
+            "id": 10,
+            "run_id": "run-1",
+            "build_id": "build-1",
+            "provider": "tidarr",
+            "artist_name": "Artist",
+            "album_name": "Album",
+            "stage": "submitted",
+            "metadata": {},
+            "retry_count": 0,
+            "created_at": "2026-04-02T20:00:00",
+            "updated_at": "2026-04-02T20:00:00",
+            "last_transition_at": "2026-04-02T20:00:00",
+        }
+    ]
+
+    monkeypatch.setattr("app.services.fetch_pipeline.list_fetch_runs", lambda **kwargs: [run])
+    monkeypatch.setattr("app.services.fetch_pipeline.get_fetch_run", lambda run_id: run if run_id == "run-1" else None)
+    monkeypatch.setattr("app.services.fetch_pipeline.list_fetch_tasks_for_run", lambda run_id, **kwargs: tasks)
+    monkeypatch.setattr(
+        "app.services.fetch_pipeline.retry_fetch_run",
+        lambda run_id, task_ids=None: {"run": run, "retried": 1, "submission": {"submitted": 1}},
+    )
+
+    listed = forge.forge_fetch_runs_list(status=None, provider=None, build_source=None, limit=50)
+    assert listed["status"] == "ok"
+    assert len(listed["runs"]) == 1
+    assert listed["runs"][0]["id"] == "run-1"
+
+    fetched = forge.forge_fetch_run_get("run-1")
+    assert fetched["status"] == "ok"
+    assert fetched["run"]["provider"] == "tidarr"
+
+    task_result = forge.forge_fetch_run_tasks("run-1", stage=None, provider=None, limit=100)
+    assert task_result["status"] == "ok"
+    assert len(task_result["tasks"]) == 1
+    assert task_result["tasks"][0]["id"] == 10
+
+    retry_result = forge.forge_fetch_run_retry("run-1", {"task_ids": [10]})
+    assert retry_result["status"] == "ok"
+    assert retry_result["retried"] == 1
 
 def test_forge_build_resync_contract(monkeypatch):
     fake_build = {
