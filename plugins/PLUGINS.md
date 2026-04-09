@@ -245,3 +245,28 @@ def _submit_item(artist_name: str, album_title: str, metadata: dict) -> str:
 ```
 
 That's the only core file that changes.
+
+---
+
+## Fetch Capabilities Contract (v1)
+
+Fetch-capable slots (`downloader`, `tagger`, `file_handler`) must declare a `CAPABILITIES` manifest.
+
+```python
+CAPABILITIES = {
+    "fetch_contract_version": 1,
+    "roles": ["downloader"],  # include every fetch slot the plugin fills
+    "error_taxonomy": ["recoverable", "permanent", "config"],
+}
+```
+
+Loader governance rules:
+- Missing `CAPABILITIES` on a fetch-capable plugin -> plugin is skipped
+- Unsupported `fetch_contract_version` -> plugin is skipped
+- Missing required role coverage -> plugin is skipped
+- Missing standard error taxonomy values -> plugin is skipped
+
+Standard error taxonomy:
+- `recoverable`: temporary failures likely resolved by retry
+- `permanent`: non-retriable failures
+- `config`: invalid or missing plugin configuration
