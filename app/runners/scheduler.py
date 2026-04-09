@@ -7,7 +7,7 @@ Active responsibilities:
   - Forge scheduled runs: New Music (nm_schedule_*) and Custom Discovery (fd_schedule_*)
   - Acquisition worker tick
   - Image cache warming during idle hours
-  - Tidarr download completion poller (every 60 s)
+  - Fetch control-plane worker tick (every 60 s)
 """
 import threading
 import logging
@@ -55,12 +55,12 @@ def _poll_loop():
     """Short-interval loop — polls Tidarr download completion every 60 seconds."""
     while not _stop_event.is_set():
         try:
-            from app.services import tidarr_poller
-            result = tidarr_poller.poll_once()
-            if result.get("checked"):
-                logger.info("tidarr_poller: %s", result)
+            from app.services import fetch_pipeline
+            result = fetch_pipeline.poll_once()
+            if result.get("checked") or result.get("submitted", {}).get("submitted"):
+                logger.info("fetch_pipeline worker: %s", result)
         except Exception as exc:
-            logger.warning("tidarr_poller tick error: %s", exc)
+            logger.warning("fetch_pipeline worker tick error: %s", exc)
         _stop_event.wait(timeout=60)
 
 
@@ -72,9 +72,9 @@ def start():
     _stop_event.clear()
     _thread = threading.Thread(target=_loop, daemon=True, name="maintenance-scheduler")
     _thread.start()
-    _poll_thread = threading.Thread(target=_poll_loop, daemon=True, name="tidarr-poller")
+    _poll_thread = threading.Thread(target=_poll_loop, daemon=True, name="fetch-worker")
     _poll_thread.start()
-    logger.info("Background scheduler started (Forge schedules + acquisition/image warmer + Tidarr poller active)")
+    logger.info("Background scheduler started (Forge schedules + acquisition/image warmer + fetch worker active)")
 
 
 def stop():

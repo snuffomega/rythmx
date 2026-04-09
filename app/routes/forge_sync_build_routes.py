@@ -770,7 +770,7 @@ def forge_builds_resync(build_id: str, data: Optional[dict[str, Any]] = Body(def
 def forge_builds_fetch(build_id: str):
     from app.routes import forge as facade
     from app.plugins import get_downloader
-    from app.db import rythmx_store as _store
+    from app.services import fetch_pipeline
 
     build = facade.rythmx_store.get_forge_build(build_id)
     if not build:
@@ -788,11 +788,46 @@ def forge_builds_fetch(build_id: str):
     downloader = get_downloader()
     if getattr(downloader, "name", "stub") == "stub":
         return facade._error(
-            "No downloader plugin configured. Install a plugin and enable it in Settings → Integrations.",
+            "No downloader plugin configured. Install a plugin and enable it in Settings -> Integrations.",
             status_code=400,
             code="FORGE_NO_DOWNLOADER",
         )
+    try:
+        run = fetch_pipeline.start_fetch_run(build_id, triggered_by="manual")
+    except ValueError:
+        return facade._error("Build not found", status_code=404, code="FORGE_BUILD_NOT_FOUND")
+    except Exception as exc:
+        logger.error("forge/fetch start failed for build %s: %s", build_id, exc, exc_info=True)
+        return facade._error(str(exc), status_code=500, code="FORGE_FETCH_FAILED")
 
+    submission = run.get("submission", {}) if isinstance(run.get("submission"), dict) else {}
+    submitted = int(submission.get("submitted", 0) or 0)
+    unresolved = int(submission.get("unresolved", 0) or 0)
+    failed_submit = int(submission.get("failed", 0) or 0)
+    skipped = unresolved + failed_submit
+    total_tasks = int(run.get("total_tasks", 0) or 0)
+    run_id = str(run.get("id") or "")
+    message = (
+        "No missing albums to fetch."
+        if total_tasks == 0
+        else f"Fetch run queued ({submitted} submitted, {skipped} unresolved/failed)."
+    )
+
+    return {
+        "status": "ok",
+        "build_id": build_id,
+        "run_id": run_id,
+        "message": message,
+        # Compatibility fields for existing callers.
+        "submitted": submitted,
+        "skipped": skipped,
+        "jobs": submission.get("jobs", []),
+        # New control-plane payload.
+        "run": run,
+    }
+    if False:
+            pass
+            "No downloader plugin configured. Install a plugin and enable it in Settings → Integrations.",
     track_list = build.get("track_list") or []
 
     # Deduplicate by (artist_name, album_name) — one submission per unique missing album.
@@ -877,24 +912,89 @@ def forge_builds_fetch(build_id: str):
 @router.get("/forge/builds/{build_id}/fetch/status")
 def forge_builds_fetch_status(build_id: str):
     from app.routes import forge as facade
-    from app.db import rythmx_store as _store
+    from app.services import fetch_pipeline
 
     build = facade.rythmx_store.get_forge_build(build_id)
     if not build:
         return facade._error("Build not found", status_code=404, code="FORGE_BUILD_NOT_FOUND")
 
-    jobs = _store.get_download_jobs_for_build(build_id)
-    pending = sum(1 for j in jobs if j["status"] == "pending")
-    completed = sum(1 for j in jobs if j["status"] == "completed")
-    failed = sum(1 for j in jobs if j["status"] == "failed")
+    return {"status": "ok", **fetch_pipeline.get_build_fetch_status(build_id)}
 
-    return {
-        "status": "ok",
-        "build_id": build_id,
-        "total": len(jobs),
-        "pending": pending,
-        "completed": completed,
-        "failed": failed,
-        "jobs": jobs,
-    }
 
+@router.get("/forge/fetch/runs")
+def forge_fetch_runs_list(
+    status: str | None = Query(default=None),
+    provider: str | None = Query(default=None),
+    build_source: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+):
+    from app.services import fetch_pipeline
+
+    runs = fetch_pipeline.list_fetch_runs(
+        status=str(status).strip().lower() if status else None,
+        provider=str(provider).strip().lower() if provider else None,
+        build_source=str(build_source).strip().lower() if build_source else None,
+        limit=limit,
+    )
+    return {"status": "ok", "runs": runs}
+
+
+@router.get("/forge/fetch/runs/{run_id}")
+def forge_fetch_run_get(run_id: str):
+    from app.routes import forge as facade
+    from app.services import fetch_pipeline
+
+    run = fetch_pipeline.get_fetch_run(run_id)
+    if not run:
+        return facade._error("Fetch run not found", status_code=404, code="FORGE_FETCH_RUN_NOT_FOUND")
+    return {"status": "ok", "run": run}
+
+
+@router.get("/forge/fetch/runs/{run_id}/tasks")
+def forge_fetch_run_tasks(
+    run_id: str,
+    stage: str | None = Query(default=None),
+    provider: str | None = Query(default=None),
+    limit: int = Query(default=2000, ge=1, le=10000),
+):
+    from app.routes import forge as facade
+    from app.services import fetch_pipeline
+
+    run = fetch_pipeline.get_fetch_run(run_id)
+    if not run:
+        return facade._error("Fetch run not found", status_code=404, code="FORGE_FETCH_RUN_NOT_FOUND")
+    tasks = fetch_pipeline.list_fetch_tasks_for_run(
+        run_id,
+        stage=str(stage).strip().lower() if stage else None,
+        provider=str(provider).strip().lower() if provider else None,
+        limit=limit,
+    )
+    return {"status": "ok", "run_id": run_id, "tasks": tasks}
+
+
+@router.post("/forge/fetch/runs/{run_id}/retry")
+def forge_fetch_run_retry(run_id: str, data: Optional[dict[str, Any]] = Body(default=None)):
+    from app.routes import forge as facade
+    from app.services import fetch_pipeline
+
+    payload = data if isinstance(data, dict) else {}
+    raw_ids = payload.get("task_ids")
+    task_ids: list[int] | None = None
+    if isinstance(raw_ids, list):
+        parsed = []
+        for val in raw_ids:
+            try:
+                parsed.append(int(val))
+            except (TypeError, ValueError):
+                continue
+        task_ids = parsed if parsed else []
+
+    try:
+        result = fetch_pipeline.retry_fetch_run(run_id, task_ids=task_ids)
+    except ValueError:
+        return facade._error("Fetch run not found", status_code=404, code="FORGE_FETCH_RUN_NOT_FOUND")
+    except Exception as exc:
+        logger.error("forge/fetch retry failed run=%s: %s", run_id, exc, exc_info=True)
+        return facade._error(str(exc), status_code=500, code="FORGE_FETCH_RETRY_FAILED")
+
+    return {"status": "ok", "run_id": run_id, **result}

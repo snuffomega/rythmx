@@ -37,6 +37,9 @@ import type {
   ForgeBuild,
   ForgeBuildSource,
   ForgeBuildStatus,
+  FetchRun,
+  FetchTask,
+  FetchBuildStatus,
   LibPlaylist,
   LibPlaylistTrack,
   MobilePairing,
@@ -460,9 +463,20 @@ export const forgeBuildsApi = {
       body: JSON.stringify(name ? { name } : {}),
     }),
   fetch: (id: string) =>
-    request<{ status: string; message: string }>(`/forge/builds/${encodeURIComponent(id)}/fetch`, {
+    request<{
+      status: string;
+      build_id: string;
+      run_id: string;
+      message: string;
+      submitted: number;
+      skipped: number;
+      jobs: Array<Record<string, unknown>>;
+      run: FetchRun;
+    }>(`/forge/builds/${encodeURIComponent(id)}/fetch`, {
       method: 'POST',
     }),
+  fetchStatus: (id: string) =>
+    request<{ status: string } & FetchBuildStatus>(`/forge/builds/${encodeURIComponent(id)}/fetch/status`),
   resync: (id: string, resyncPolicy?: 'auto' | 'add_only' | 'replace') =>
     request<{
       status: string;
@@ -478,6 +492,41 @@ export const forgeBuildsApi = {
       method: 'POST',
       body: JSON.stringify(resyncPolicy ? { resync_policy: resyncPolicy } : {}),
     }),
+};
+
+export const forgeFetchApi = {
+  listRuns: (params: {
+    status?: string;
+    provider?: string;
+    build_source?: string;
+    limit?: number;
+  } = {}) => {
+    const qs = new URLSearchParams(
+      Object.entries(params).filter(([, v]) => v != null && v !== '') as [string, string][]
+    ).toString();
+    return request<{ status: string; runs: FetchRun[] }>(
+      `/forge/fetch/runs${qs ? `?${qs}` : ''}`
+    ).then(r => r.runs);
+  },
+  getRun: (runId: string) =>
+    request<{ status: string; run: FetchRun }>(`/forge/fetch/runs/${encodeURIComponent(runId)}`)
+      .then(r => r.run),
+  getRunTasks: (runId: string, params: { stage?: string; provider?: string; limit?: number } = {}) => {
+    const qs = new URLSearchParams(
+      Object.entries(params).filter(([, v]) => v != null && v !== '') as [string, string][]
+    ).toString();
+    return request<{ status: string; run_id: string; tasks: FetchTask[] }>(
+      `/forge/fetch/runs/${encodeURIComponent(runId)}/tasks${qs ? `?${qs}` : ''}`
+    ).then(r => r.tasks);
+  },
+  retryRun: (runId: string, taskIds?: number[]) =>
+    request<{ status: string; run_id: string; retried: number; submission: Record<string, unknown>; run: FetchRun }>(
+      `/forge/fetch/runs/${encodeURIComponent(runId)}/retry`,
+      {
+        method: 'POST',
+        body: JSON.stringify(taskIds && taskIds.length ? { task_ids: taskIds } : {}),
+      }
+    ),
 };
 
 export const forgeSyncApi = {
