@@ -24,12 +24,38 @@ PLUGINS_DIR = Path(__file__).parents[2] / "plugins"
 # ---------------------------------------------------------------------------
 # Plugin API versioning
 # ---------------------------------------------------------------------------
-# Plugins must declare PLUGIN_API_VERSION = 1 at module level.
+# Plugins must declare PLUGIN_API_VERSION = 2 at module level.
 # load_plugins() skips any plugin declaring an unsupported version.
 # When the contract changes incompatibly, increment PLUGIN_API_VERSION here
 # and document the migration in PLUGINS.md.
 PLUGIN_API_VERSION = 2
 SUPPORTED_PLUGIN_API_VERSIONS: frozenset[int] = frozenset({2})
+
+# Fetch plugin contract governance (downloader/tagger/file_handler)
+FETCH_PLUGIN_CONTRACT_VERSION = 1
+SUPPORTED_FETCH_PLUGIN_CONTRACT_VERSIONS: frozenset[int] = frozenset({1})
+_FETCH_ERROR_TAXONOMY = frozenset({"recoverable", "permanent", "config"})
+
+
+class FetchPluginError(RuntimeError):
+    """
+    Standardized plugin error envelope for fetch pipeline plugins.
+
+    The fetch worker maps this to task.error_type/error_code consistently.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_type: str = "permanent",
+        error_code: str = "plugin_error",
+    ) -> None:
+        super().__init__(message)
+        self.error_type = (
+            error_type if str(error_type).strip().lower() in _FETCH_ERROR_TAXONOMY else "permanent"
+        )
+        self.error_code = str(error_code or "plugin_error")
 
 
 class PluginMetadata(TypedDict, total=False):
@@ -221,6 +247,52 @@ def reload_plugins() -> None:
 # Loader — called once at app startup from main.py lifespan
 # ---------------------------------------------------------------------------
 
+def _validate_fetch_manifest(module: Any, slots_map: dict[str, type]) -> tuple[bool, str]:
+    fetch_slots = {slot for slot in slots_map.keys() if slot in {"downloader", "tagger", "file_handler"}}
+    if not fetch_slots:
+        return True, ""
+
+    capabilities = getattr(module, "CAPABILITIES", None)
+    if not isinstance(capabilities, dict):
+        return False, "missing CAPABILITIES dict for fetch-capable plugin"
+
+    contract_version = capabilities.get("fetch_contract_version", 0)
+    try:
+        contract_version_i = int(contract_version)
+    except (TypeError, ValueError):
+        contract_version_i = 0
+    if contract_version_i not in SUPPORTED_FETCH_PLUGIN_CONTRACT_VERSIONS:
+        return (
+            False,
+            f"unsupported fetch contract version '{contract_version}' "
+            f"(supported: {sorted(SUPPORTED_FETCH_PLUGIN_CONTRACT_VERSIONS)})",
+        )
+
+    roles_raw = capabilities.get("roles", [])
+    roles = {str(r).strip() for r in roles_raw} if isinstance(roles_raw, list) else set()
+    if not fetch_slots.issubset(roles):
+        return False, f"CAPABILITIES.roles must include slots {sorted(fetch_slots)}"
+
+    taxonomy_raw = capabilities.get("error_taxonomy", [])
+    taxonomy = (
+        {str(v).strip().lower() for v in taxonomy_raw}
+        if isinstance(taxonomy_raw, list)
+        else set()
+    )
+    if not _FETCH_ERROR_TAXONOMY.issubset(taxonomy):
+        return (
+            False,
+            f"CAPABILITIES.error_taxonomy must include {sorted(_FETCH_ERROR_TAXONOMY)}",
+        )
+
+    plugin_version = getattr(module, "PLUGIN_VERSION", None)
+    plugin_description = getattr(module, "PLUGIN_DESCRIPTION", None)
+    if not plugin_version or not plugin_description:
+        return False, "PLUGIN_VERSION and PLUGIN_DESCRIPTION are required for fetch-capable plugins"
+
+    return True, ""
+
+
 def load_plugins(
     slot_config: dict[tuple[str, str], bool] | None = None,
     plugin_settings: dict[str, dict[str, str]] | None = None,
@@ -282,6 +354,11 @@ def load_plugins(
                     continue
                 slots_map = {slot: cls}
 
+            manifest_ok, manifest_reason = _validate_fetch_manifest(module, slots_map)
+            if not manifest_ok:
+                logger.warning("Plugin %s: %s -- skipped", path.name, manifest_reason)
+                continue
+
             # Apply DB config overrides to os.environ before instantiation
             if plugin_settings:
                 for key, val in (plugin_settings.get(plugin_name) or {}).items():
@@ -321,6 +398,7 @@ def load_plugins(
                 "slots": list(slots_map.keys()),
                 "active_slots": active_slots,
                 "config_schema": list(getattr(module, "CONFIG_SCHEMA", None) or []),
+                "capabilities": dict(getattr(module, "CAPABILITIES", None) or {}),
                 "module_path": str(path),
             }
 

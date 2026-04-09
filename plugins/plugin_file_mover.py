@@ -111,6 +111,11 @@ def _safe_name(s: str) -> str:
 PLUGIN_API_VERSION = 2
 PLUGIN_VERSION = "1.0.0"
 PLUGIN_DESCRIPTION = "Copies downloaded audio files into your music library."
+CAPABILITIES = {
+    "fetch_contract_version": 1,
+    "roles": ["file_handler"],
+    "error_taxonomy": ["recoverable", "permanent", "config"],
+}
 
 PLUGIN_SLOTS = {
     "file_handler": UniversalFileMover,

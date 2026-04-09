@@ -494,6 +494,11 @@ class TidarrDownloader:
 PLUGIN_API_VERSION = 2
 PLUGIN_VERSION = "2.0.0"
 PLUGIN_DESCRIPTION = "Downloads albums via Tidarr (Tidal) and copies FLACs to your library."
+CAPABILITIES = {
+    "fetch_contract_version": 1,
+    "roles": ["downloader"],
+    "error_taxonomy": ["recoverable", "permanent", "config"],
+}
 PLUGIN_SLOTS = {
     "downloader": TidarrDownloader,
 }
