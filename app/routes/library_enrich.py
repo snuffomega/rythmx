@@ -237,8 +237,9 @@ def enrich_artist_art_retry(data: Optional[dict[str, Any]] = Body(default=None))
     Manual retry gate for artist artwork upgrades.
 
     Re-runs artist artwork enrichment for rows that are missing local hashes
-    or currently using deezer fallback. Worker upgrades to fanart when found
-    and never downgrades existing fanart.
+    or currently using fallback sources (deezer/discogs). Worker upgrades
+    by source priority (fanart -> lastfm -> discogs -> deezer) and never
+    downgrades existing fanart/lastfm artwork.
     """
     from app.services.enrichment.art_artist import enrich_artist_art
 
