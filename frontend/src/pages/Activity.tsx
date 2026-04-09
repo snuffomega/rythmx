@@ -5,7 +5,7 @@ import { useApi } from '../hooks/useApi';
 import { forgeFetchApi } from '../services/api';
 import { useForgePipelineStore } from '../stores/useForgePipelineStore';
 import { Spinner, EmptyState, ApiErrorBanner } from '../components/common';
-import type { FetchRun, FetchTask } from '../types';
+import type { FetchQueueItem, FetchRun, FetchTask } from '../types';
 
 interface ActivityPageProps {
   toast: { success: (m: string) => void; error: (m: string) => void };
@@ -40,6 +40,16 @@ const SOURCE_FILTERS = [
   { value: 'manual', label: 'Manual' },
 ];
 
+const QUEUE_STATUS_FILTERS = [
+  { value: 'active', label: 'Active Queue' },
+  { value: 'all', label: 'All Queue Items' },
+  { value: 'pending', label: 'Pending' },
+  { value: 'running', label: 'Running' },
+  { value: 'completed', label: 'Completed' },
+  { value: 'failed', label: 'Failed' },
+  { value: 'canceled', label: 'Canceled' },
+];
+
 const HOT_STAGES = ['queued', 'submitted', 'downloading', 'downloaded', 'tagged', 'moved'];
 
 function stageClass(stage: string): string {
@@ -70,6 +80,21 @@ function runStatusClass(status: string): string {
   }
 }
 
+function queueStatusClass(status: string): string {
+  switch (status) {
+    case 'completed':
+      return 'text-success border-success/40';
+    case 'failed':
+      return 'text-danger border-danger/40';
+    case 'canceled':
+      return 'text-warning border-warning/40';
+    case 'running':
+      return 'text-accent border-accent/40';
+    default:
+      return 'text-text-soft border-border-input';
+  }
+}
+
 export function ActivityPage({ toast }: ActivityPageProps) {
   const navigate = useNavigate();
   const wsFetch = useForgePipelineStore(s => s.pipelines.fetch);
@@ -78,9 +103,13 @@ export function ActivityPage({ toast }: ActivityPageProps) {
   const [taskStageFilter, setTaskStageFilter] = useState('all');
   const [providerFilter, setProviderFilter] = useState('all');
   const [sourceFilter, setSourceFilter] = useState('all');
+  const [queueStatusFilter, setQueueStatusFilter] = useState('active');
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [retryingRunId, setRetryingRunId] = useState<string | null>(null);
   const [retryingTaskId, setRetryingTaskId] = useState<number | null>(null);
+  const [cancelingQueueId, setCancelingQueueId] = useState<string | null>(null);
+  const [cancelingBatch, setCancelingBatch] = useState(false);
+  const [selectedQueueIds, setSelectedQueueIds] = useState<Set<string>>(new Set());
 
   const runQueryKey = `${runStatusFilter}|${providerFilter}|${sourceFilter}`;
   const {
@@ -100,6 +129,31 @@ export function ActivityPage({ toast }: ActivityPageProps) {
   );
 
   const runsReady = runs !== null;
+
+  const queueQueryKey = `${queueStatusFilter}|${sourceFilter}`;
+  const {
+    data: queueItems,
+    loading: queueLoading,
+    error: queueError,
+    refetch: refetchQueue,
+  } = useApi(
+    () =>
+      forgeFetchApi.listQueue({
+        status:
+          queueStatusFilter === 'pending' ||
+          queueStatusFilter === 'running' ||
+          queueStatusFilter === 'completed' ||
+          queueStatusFilter === 'failed' ||
+          queueStatusFilter === 'canceled'
+            ? queueStatusFilter
+            : undefined,
+        include_canceled: queueStatusFilter === 'all' || queueStatusFilter === 'canceled',
+        build_source: sourceFilter === 'all' ? undefined : sourceFilter,
+        limit: 2000,
+      }),
+    queueQueryKey
+  );
+  const queueReady = queueItems !== null;
 
   useEffect(() => {
     if (!runs || runs.length === 0) {
@@ -136,6 +190,34 @@ export function ActivityPage({ toast }: ActivityPageProps) {
     [runs, selectedRunId]
   );
 
+  const queueVisible = useMemo(() => {
+    const all = queueItems || [];
+    if (queueStatusFilter === 'all') return all;
+    if (queueStatusFilter === 'active') {
+      return all.filter(item => item.status === 'pending' || item.status === 'running');
+    }
+    return all.filter(item => item.status === queueStatusFilter);
+  }, [queueItems, queueStatusFilter]);
+
+  const queueCancelableIds = useMemo(
+    () =>
+      queueVisible
+        .filter(item => item.status === 'pending' || item.status === 'running')
+        .map(item => item.id),
+    [queueVisible]
+  );
+
+  useEffect(() => {
+    setSelectedQueueIds(prev => {
+      if (prev.size === 0) return prev;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (queueCancelableIds.includes(id)) next.add(id);
+      }
+      return next;
+    });
+  }, [queueCancelableIds]);
+
   const hasActiveRuns = useMemo(
     () => (runs || []).some(run => run.status === 'running' || run.active_tasks > 0),
     [runs]
@@ -151,23 +233,29 @@ export function ActivityPage({ toast }: ActivityPageProps) {
     [selectedRun]
   );
 
-  const shouldPoll = wsFetch.running || hasActiveRuns || (selectedRun?.status === 'running');
-  const pollIntervalMs = hasHotRuns ? 10000 : 30000;
+  const hasActiveQueue = useMemo(
+    () => (queueItems || []).some(item => item.status === 'pending' || item.status === 'running'),
+    [queueItems]
+  );
 
-  const refreshRunsAndTasks = useCallback((includeTasks = true) => {
+  const shouldPoll = hasActiveRuns || hasActiveQueue || (selectedRun?.status === 'running');
+  const pollIntervalMs = hasHotRuns || hasActiveQueue ? 10000 : 30000;
+
+  const refreshAll = useCallback((includeTasks = true) => {
     refetchRuns();
+    refetchQueue();
     if (includeTasks && selectedRunId) {
       refetchTasks();
     }
-  }, [selectedRunId, refetchRuns, refetchTasks]);
+  }, [selectedRunId, refetchRuns, refetchTasks, refetchQueue]);
 
   useEffect(() => {
     if (!shouldPoll) return undefined;
     const id = window.setInterval(() => {
-      refreshRunsAndTasks(selectedRunIsHot);
+      refreshAll(selectedRunIsHot);
     }, pollIntervalMs);
     return () => window.clearInterval(id);
-  }, [shouldPoll, selectedRunIsHot, pollIntervalMs, refreshRunsAndTasks]);
+  }, [shouldPoll, selectedRunIsHot, pollIntervalMs, refreshAll]);
 
   const lastWsRefreshAt = useRef(0);
   useEffect(() => {
@@ -176,10 +264,11 @@ export function ActivityPage({ toast }: ActivityPageProps) {
     if (now - lastWsRefreshAt.current < 750) return;
     lastWsRefreshAt.current = now;
     refetchRuns();
+    refetchQueue();
     if (selectedRunId && (!wsFetch.runId || wsFetch.runId === selectedRunId)) {
       refetchTasks();
     }
-  }, [wsFetch.stage, wsFetch.completedAt, wsFetch.error, wsFetch.runId, selectedRunId, refetchRuns, refetchTasks]);
+  }, [wsFetch.stage, wsFetch.completedAt, wsFetch.error, wsFetch.runId, selectedRunId, refetchRuns, refetchTasks, refetchQueue]);
 
   const providers = useMemo(() => {
     const set = new Set<string>();
@@ -190,7 +279,7 @@ export function ActivityPage({ toast }: ActivityPageProps) {
   }, [runs]);
 
   const handleRefresh = () => {
-    refreshRunsAndTasks();
+    refreshAll();
   };
 
   const handleRetryRun = async (run: FetchRun) => {
@@ -198,7 +287,7 @@ export function ActivityPage({ toast }: ActivityPageProps) {
     try {
       const result = await forgeFetchApi.retryRun(run.id);
       toast.success(`Retried ${result.retried} task(s)`);
-      refreshRunsAndTasks(selectedRunId === run.id);
+      refreshAll(selectedRunId === run.id);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to retry run');
     } finally {
@@ -216,11 +305,74 @@ export function ActivityPage({ toast }: ActivityPageProps) {
       } else {
         toast.error('Task was not eligible for retry');
       }
-      refreshRunsAndTasks(true);
+      refreshAll(true);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to retry task');
     } finally {
       setRetryingTaskId(null);
+    }
+  };
+
+  const toggleQueueSelect = (queueId: string) => {
+    setSelectedQueueIds(prev => {
+      const next = new Set(prev);
+      if (next.has(queueId)) {
+        next.delete(queueId);
+      } else {
+        next.add(queueId);
+      }
+      return next;
+    });
+  };
+
+  const handleQueueCancel = async (queueId: string) => {
+    setCancelingQueueId(queueId);
+    try {
+      await forgeFetchApi.cancelQueueItem(queueId);
+      toast.success('Queue item canceled');
+      refreshAll(true);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to cancel queue item');
+    } finally {
+      setCancelingQueueId(null);
+    }
+  };
+
+  const handleCancelSelected = async () => {
+    const ids = Array.from(selectedQueueIds).filter(id => queueCancelableIds.includes(id));
+    if (ids.length === 0) {
+      toast.error('No cancelable queue items selected');
+      return;
+    }
+    setCancelingBatch(true);
+    try {
+      const result = await forgeFetchApi.cancelQueueBatch({ queue_ids: ids });
+      toast.success(`Canceled ${result.canceled} queue item(s)`);
+      setSelectedQueueIds(new Set());
+      refreshAll(true);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to cancel selected queue items');
+    } finally {
+      setCancelingBatch(false);
+    }
+  };
+
+  const handleCancelFiltered = async () => {
+    const ids = [...queueCancelableIds];
+    if (ids.length === 0) {
+      toast.error('No cancelable queue items in this filter');
+      return;
+    }
+    setCancelingBatch(true);
+    try {
+      const result = await forgeFetchApi.cancelQueueBatch({ queue_ids: ids });
+      toast.success(`Canceled ${result.canceled} queue item(s)`);
+      setSelectedQueueIds(new Set());
+      refreshAll(true);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to cancel filtered queue items');
+    } finally {
+      setCancelingBatch(false);
     }
   };
 
@@ -239,7 +391,7 @@ export function ActivityPage({ toast }: ActivityPageProps) {
         </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-2">
         <select className="select text-xs" value={runStatusFilter} onChange={e => setRunStatusFilter(e.target.value)}>
           {RUN_STATUS_FILTERS.map(f => (
             <option key={f.value} value={f.value}>{f.label}</option>
@@ -258,6 +410,11 @@ export function ActivityPage({ toast }: ActivityPageProps) {
         </select>
         <select className="select text-xs" value={sourceFilter} onChange={e => setSourceFilter(e.target.value)}>
           {SOURCE_FILTERS.map(f => (
+            <option key={f.value} value={f.value}>{f.label}</option>
+          ))}
+        </select>
+        <select className="select text-xs" value={queueStatusFilter} onChange={e => setQueueStatusFilter(e.target.value)}>
+          {QUEUE_STATUS_FILTERS.map(f => (
             <option key={f.value} value={f.value}>{f.label}</option>
           ))}
         </select>
@@ -365,6 +522,95 @@ export function ActivityPage({ toast }: ActivityPageProps) {
                 </div>
               </div>
             ))}
+          </div>
+
+          <div className="border border-border-subtle bg-base overflow-hidden">
+            <div className="px-4 py-3 border-b border-border-subtle flex items-center justify-between gap-2">
+              <p className="text-text-primary text-sm font-semibold">Fetch Queue</p>
+              <div className="flex items-center gap-2">
+                <button
+                  className="btn-secondary text-[11px] px-2 py-1"
+                  onClick={handleCancelSelected}
+                  disabled={cancelingBatch || selectedQueueIds.size === 0}
+                >
+                  {cancelingBatch ? 'Canceling...' : 'Cancel Selected'}
+                </button>
+                <button
+                  className="btn-secondary text-[11px] px-2 py-1"
+                  onClick={handleCancelFiltered}
+                  disabled={cancelingBatch || queueCancelableIds.length === 0}
+                >
+                  {cancelingBatch ? 'Canceling...' : 'Cancel Filtered'}
+                </button>
+              </div>
+            </div>
+
+            {queueError ? (
+              <div className="p-4"><ApiErrorBanner error={queueError} onRetry={refetchQueue} /></div>
+            ) : queueLoading && !queueReady ? (
+              <div className="p-4 text-sm text-text-muted inline-flex items-center gap-2">
+                <Spinner size={14} />
+                Loading queue...
+              </div>
+            ) : queueVisible.length === 0 ? (
+              <div className="p-6 text-sm text-text-muted">No queue items for this filter.</div>
+            ) : (
+              <div className="overflow-auto">
+                <table className="min-w-full text-xs">
+                  <thead className="bg-surface text-text-muted uppercase tracking-wide">
+                    <tr>
+                      <th className="text-left px-3 py-2">Select</th>
+                      <th className="text-left px-3 py-2">Build</th>
+                      <th className="text-left px-3 py-2">Source</th>
+                      <th className="text-left px-3 py-2">Queue Status</th>
+                      <th className="text-left px-3 py-2">Run</th>
+                      <th className="text-left px-3 py-2">Updated</th>
+                      <th className="text-left px-3 py-2">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {queueVisible.map((item: FetchQueueItem) => {
+                      const selectable = item.status === 'pending' || item.status === 'running';
+                      return (
+                        <tr key={item.id} className="border-t border-border-subtle">
+                          <td className="px-3 py-2">
+                            <input
+                              type="checkbox"
+                              className="checkbox"
+                              checked={selectedQueueIds.has(item.id)}
+                              disabled={!selectable}
+                              onChange={() => toggleQueueSelect(item.id)}
+                            />
+                          </td>
+                          <td className="px-3 py-2 text-text-primary">{item.build_name || item.build_id}</td>
+                          <td className="px-3 py-2 text-text-soft">{item.build_source || item.source}</td>
+                          <td className="px-3 py-2">
+                            <span className={`text-[10px] border px-1.5 py-0.5 uppercase tracking-wide ${queueStatusClass(item.status)}`}>
+                              {item.status}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 text-text-soft">{item.run_id || '-'}</td>
+                          <td className="px-3 py-2 text-text-soft">{item.updated_at}</td>
+                          <td className="px-3 py-2">
+                            {selectable ? (
+                              <button
+                                className="btn-secondary text-[11px] px-2 py-1"
+                                onClick={() => handleQueueCancel(item.id)}
+                                disabled={cancelingQueueId === item.id || cancelingBatch}
+                              >
+                                {cancelingQueueId === item.id ? 'Canceling...' : 'Cancel'}
+                              </button>
+                            ) : (
+                              <span className="text-text-dim text-[11px]">-</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
 
           <div className="border border-border-subtle bg-base overflow-hidden">
