@@ -326,6 +326,7 @@ def settings_plugins_list():
             "slots_enabled": slots_enabled,
             "config_schema": config_schema,
             "config_values": config_values,
+            "capabilities": meta.get("capabilities") or {},
         })
 
     return {"status": "ok", "plugins": plugins}
