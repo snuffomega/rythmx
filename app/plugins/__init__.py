@@ -27,7 +27,7 @@ PLUGINS_DIR = Path(__file__).parents[2] / "plugins"
 # Plugins must declare PLUGIN_API_VERSION = 2 at module level.
 # load_plugins() skips any plugin declaring an unsupported version.
 # When the contract changes incompatibly, increment PLUGIN_API_VERSION here
-# and document the migration in PLUGINS.md.
+# and document the migration in docs/dev/plugin-contract.md.
 PLUGIN_API_VERSION = 2
 SUPPORTED_PLUGIN_API_VERSIONS: frozenset[int] = frozenset({2})
 
