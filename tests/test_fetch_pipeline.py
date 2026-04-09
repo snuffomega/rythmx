@@ -117,6 +117,99 @@ def test_poll_once_flows_to_in_library(tmp_db, monkeypatch, tmp_path):  # noqa: 
     assert os.path.isdir(tasks[0]["storage_path"])
 
 
+def test_poll_once_resolves_local_prefix_candidate_when_storage_path_is_provider_scoped(
+    tmp_db, monkeypatch, tmp_path
+):  # noqa: ARG001
+    visible_root = Path(tmp_path) / "downloads"
+    visible_storage = visible_root / "tidarr_nzo_3"
+    visible_storage.mkdir(parents=True, exist_ok=True)
+    (visible_storage / "01-track.flac").write_bytes(b"fLaC")
+    provider_storage = "/downloads/tidarr_nzo_3"
+
+    class _Downloader:
+        name = "tidarr"
+
+        @staticmethod
+        def submit(_artist: str, _album: str, _metadata: dict) -> str:
+            return "tidarr_nzo_3"
+
+        @staticmethod
+        def poll_history(limit: int = 400):  # noqa: ARG004
+            return [{"nzo_id": "tidarr_nzo_3", "status": "Completed", "storage": provider_storage}]
+
+        @staticmethod
+        def poll_queue():
+            return []
+
+        @staticmethod
+        def translate_path(path: str) -> str:
+            return path
+
+    monkeypatch.setenv("FILE_MOVER_LOCAL_PREFIX", str(visible_root))
+    monkeypatch.delenv("FILE_MOVER_TIDARR_PREFIX", raising=False)
+    monkeypatch.setattr("app.plugins.get_downloader", lambda: _Downloader())
+    monkeypatch.setattr("app.plugins.get_tagger", lambda: _NoopTagger())
+    monkeypatch.setattr("app.plugins.get_file_handler", lambda: _NoopFileHandler())
+    monkeypatch.setattr("app.services.fetch_pipeline.get_library_reader", lambda: _ReaderOwned())
+    monkeypatch.setattr(
+        "app.services.enrichment.sync.sync_library",
+        lambda: {"artist_count": 1, "album_count": 1, "track_count": 1},
+    )
+
+    build = _build_with_missing_album("Fetch Path Fallback")
+    run = fetch_pipeline.start_fetch_run(build["id"])
+    fetch_pipeline.poll_once()
+
+    latest = fetch_pipeline.get_fetch_run(run["id"])
+    assert latest is not None
+    assert latest["status"] == "completed"
+    tasks = fetch_pipeline.list_fetch_tasks_for_run(run["id"])
+    assert tasks[0]["stage"] == "in_library"
+    assert os.path.normpath(str(tasks[0]["source_dir"])) == os.path.normpath(str(visible_storage))
+
+
+def test_poll_once_missing_source_error_includes_attempted_paths(tmp_db, monkeypatch, tmp_path):  # noqa: ARG001
+    visible_root = Path(tmp_path) / "downloads"
+    visible_root.mkdir(parents=True, exist_ok=True)
+    provider_storage = "/downloads/tidarr_nzo_missing"
+
+    class _Downloader:
+        name = "tidarr"
+
+        @staticmethod
+        def submit(_artist: str, _album: str, _metadata: dict) -> str:
+            return "tidarr_nzo_missing"
+
+        @staticmethod
+        def poll_history(limit: int = 400):  # noqa: ARG004
+            return [{"nzo_id": "tidarr_nzo_missing", "status": "Completed", "storage": provider_storage}]
+
+        @staticmethod
+        def poll_queue():
+            return []
+
+        @staticmethod
+        def translate_path(path: str) -> str:
+            return path
+
+    monkeypatch.setenv("FILE_MOVER_LOCAL_PREFIX", str(visible_root))
+    monkeypatch.delenv("FILE_MOVER_TIDARR_PREFIX", raising=False)
+    monkeypatch.setattr("app.plugins.get_downloader", lambda: _Downloader())
+    monkeypatch.setattr("app.plugins.get_tagger", lambda: _NoopTagger())
+    monkeypatch.setattr("app.plugins.get_file_handler", lambda: _NoopFileHandler())
+
+    build = _build_with_missing_album("Fetch Path Missing")
+    run = fetch_pipeline.start_fetch_run(build["id"])
+    fetch_pipeline.poll_once()
+
+    tasks = fetch_pipeline.list_fetch_tasks_for_run(run["id"])
+    assert tasks[0]["stage"] == "failed"
+    message = str(tasks[0].get("error_message") or "")
+    assert "Source path not accessible" in message
+    assert "tried:" in message
+    assert os.path.normpath(str(visible_root / "tidarr_nzo_missing")) in message
+
+
 def test_retry_fetch_run_requeues_failed_tasks(tmp_db, monkeypatch):  # noqa: ARG001
     class _FailingDownloader:
         name = "tidarr"

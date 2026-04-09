@@ -112,8 +112,29 @@ describe('ActivityPage', () => {
     await waitFor(() => expect(toast.success).toHaveBeenCalled())
   })
 
-  it('polls periodically and shows websocket pipeline updates', async () => {
-    listRunsMock.mockResolvedValue([])
+  it('polls periodically for active fetch runs and shows websocket pipeline updates', async () => {
+    listRunsMock.mockResolvedValue([
+      {
+        id: 'run-1',
+        build_id: 'build-1',
+        build_name: 'Build One',
+        build_source: 'new_music',
+        provider: 'tidarr',
+        status: 'running',
+        total_tasks: 2,
+        processed_tasks: 1,
+        active_tasks: 1,
+        in_library: 0,
+        failed: 0,
+        unresolved: 0,
+        stage_counts: { downloading: 1 },
+        config: {},
+        started_at: '2026-04-01T00:00:00',
+        finished_at: null,
+        created_at: '2026-04-01T00:00:00',
+        updated_at: '2026-04-01T00:00:00',
+      },
+    ])
     getRunTasksMock.mockResolvedValue([])
     const setIntervalSpy = vi.spyOn(window, 'setInterval').mockImplementation((handler: TimerHandler) => {
       return 1 as unknown as number
@@ -123,7 +144,8 @@ describe('ActivityPage', () => {
     render(<ActivityPage toast={toast} />)
     await waitFor(() => expect(listRunsMock).toHaveBeenCalledTimes(1))
     expect(setIntervalSpy).toHaveBeenCalled()
-    expect(setIntervalSpy.mock.calls[0]?.[1]).toBe(10000)
+    const pollIntervals = setIntervalSpy.mock.calls.map(call => call[1])
+    expect(pollIntervals).toContain(10000)
 
     act(() => {
       useForgePipelineStore.getState().handleProgress({
@@ -136,5 +158,38 @@ describe('ActivityPage', () => {
       })
     })
     await waitFor(() => expect(useForgePipelineStore.getState().pipelines.fetch.running).toBe(true))
+  })
+
+  it('does not start interval polling when all runs are terminal', async () => {
+    listRunsMock.mockResolvedValue([
+      {
+        id: 'run-2',
+        build_id: 'build-2',
+        build_name: 'Build Two',
+        build_source: 'new_music',
+        provider: 'tidarr',
+        status: 'failed',
+        total_tasks: 1,
+        processed_tasks: 1,
+        active_tasks: 0,
+        in_library: 0,
+        failed: 1,
+        unresolved: 0,
+        stage_counts: { failed: 1 },
+        config: {},
+        started_at: '2026-04-01T00:00:00',
+        finished_at: '2026-04-01T00:01:00',
+        created_at: '2026-04-01T00:00:00',
+        updated_at: '2026-04-01T00:01:00',
+      },
+    ])
+    getRunTasksMock.mockResolvedValue([])
+    const setIntervalSpy = vi.spyOn(window, 'setInterval')
+
+    render(<ActivityPage toast={toast} />)
+
+    await waitFor(() => expect(screen.getByText('Build Two')).toBeInTheDocument())
+    const pollIntervals = setIntervalSpy.mock.calls.map(call => call[1])
+    expect(pollIntervals).not.toContain(10000)
   })
 })

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, RefreshCw } from 'lucide-react';
 import { useNavigate } from '@tanstack/react-router';
 import { useApi } from '../hooks/useApi';
@@ -97,6 +97,8 @@ export function ActivityPage({ toast }: ActivityPageProps) {
     runQueryKey
   );
 
+  const runsReady = runs !== null;
+
   useEffect(() => {
     if (!runs || runs.length === 0) {
       setSelectedRunId(null);
@@ -125,24 +127,46 @@ export function ActivityPage({ toast }: ActivityPageProps) {
     taskQueryKey
   );
 
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      refetchRuns();
-      if (selectedRunId) refetchTasks();
-    }, 10000);
-    return () => window.clearInterval(id);
-  }, [selectedRunId, refetchRuns, refetchTasks]);
-
-  useEffect(() => {
-    if (!wsFetch.stage && !wsFetch.completedAt && !wsFetch.error) return;
-    refetchRuns();
-    if (selectedRunId) refetchTasks();
-  }, [wsFetch.stage, wsFetch.completedAt, wsFetch.error, selectedRunId, refetchRuns, refetchTasks]);
+  const tasksReady = tasks !== null;
 
   const selectedRun = useMemo(
     () => (runs || []).find(r => r.id === selectedRunId) || null,
     [runs, selectedRunId]
   );
+
+  const hasActiveRuns = useMemo(
+    () => (runs || []).some(run => run.status === 'running' || run.active_tasks > 0),
+    [runs]
+  );
+
+  const shouldPoll = wsFetch.running || hasActiveRuns || (selectedRun?.status === 'running');
+
+  const refreshRunsAndTasks = useCallback((includeTasks = true) => {
+    refetchRuns();
+    if (includeTasks && selectedRunId) {
+      refetchTasks();
+    }
+  }, [selectedRunId, refetchRuns, refetchTasks]);
+
+  useEffect(() => {
+    if (!shouldPoll) return undefined;
+    const id = window.setInterval(() => {
+      refreshRunsAndTasks();
+    }, 10000);
+    return () => window.clearInterval(id);
+  }, [shouldPoll, refreshRunsAndTasks]);
+
+  const lastWsRefreshAt = useRef(0);
+  useEffect(() => {
+    if (!wsFetch.stage && !wsFetch.completedAt && !wsFetch.error) return;
+    const now = Date.now();
+    if (now - lastWsRefreshAt.current < 750) return;
+    lastWsRefreshAt.current = now;
+    refetchRuns();
+    if (selectedRunId && (!wsFetch.runId || wsFetch.runId === selectedRunId)) {
+      refetchTasks();
+    }
+  }, [wsFetch.stage, wsFetch.completedAt, wsFetch.error, wsFetch.runId, selectedRunId, refetchRuns, refetchTasks]);
 
   const providers = useMemo(() => {
     const set = new Set<string>();
@@ -153,8 +177,7 @@ export function ActivityPage({ toast }: ActivityPageProps) {
   }, [runs]);
 
   const handleRefresh = () => {
-    refetchRuns();
-    if (selectedRunId) refetchTasks();
+    refreshRunsAndTasks();
   };
 
   const handleRetryRun = async (run: FetchRun) => {
@@ -162,8 +185,7 @@ export function ActivityPage({ toast }: ActivityPageProps) {
     try {
       const result = await forgeFetchApi.retryRun(run.id);
       toast.success(`Retried ${result.retried} task(s)`);
-      refetchRuns();
-      if (selectedRunId === run.id) refetchTasks();
+      refreshRunsAndTasks(selectedRunId === run.id);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to retry run');
     } finally {
@@ -181,8 +203,7 @@ export function ActivityPage({ toast }: ActivityPageProps) {
       } else {
         toast.error('Task was not eligible for retry');
       }
-      refetchRuns();
-      refetchTasks();
+      refreshRunsAndTasks(true);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to retry task');
     } finally {
@@ -231,7 +252,7 @@ export function ActivityPage({ toast }: ActivityPageProps) {
 
       {runsError ? (
         <ApiErrorBanner error={runsError} onRetry={refetchRuns} />
-      ) : runsLoading ? (
+      ) : runsLoading && !runsReady ? (
         <div className="py-10 flex items-center gap-2 text-text-muted text-sm">
           <Spinner size={16} />
           Loading fetch runs...
@@ -345,7 +366,7 @@ export function ActivityPage({ toast }: ActivityPageProps) {
 
             {tasksError ? (
               <div className="p-4"><ApiErrorBanner error={tasksError} onRetry={refetchTasks} /></div>
-            ) : tasksLoading ? (
+            ) : tasksLoading && !tasksReady ? (
               <div className="p-4 text-sm text-text-muted inline-flex items-center gap-2">
                 <Spinner size={14} />
                 Loading tasks...

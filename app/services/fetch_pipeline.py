@@ -157,6 +157,65 @@ def _classify_error(exc: Exception) -> tuple[str, str, str]:
     return error_type, code, message
 
 
+def _split_path_parts(path: str) -> list[str]:
+    raw = str(path or "").strip().replace("\\", "/")
+    if not raw:
+        return []
+    return [part for part in raw.split("/") if part]
+
+
+def _build_source_candidates(storage_path: str, downloader: Any) -> list[str]:
+    candidates: list[str] = []
+
+    def _add(path: str | None) -> None:
+        if path is None:
+            return
+        raw = str(path).strip()
+        if not raw:
+            return
+        normalized = os.path.normpath(raw)
+        if normalized not in candidates:
+            candidates.append(normalized)
+
+    _add(storage_path)
+
+    translate = getattr(downloader, "translate_path", None)
+    if callable(translate):
+        try:
+            _add(translate(storage_path))
+        except Exception as exc:
+            logger.warning("fetch_pipeline: downloader.translate_path failed for '%s': %s", storage_path, exc)
+
+    local_prefix = str(
+        getattr(downloader, "_local_prefix", "") or os.environ.get("FILE_MOVER_LOCAL_PREFIX") or ""
+    ).strip().rstrip("/\\")
+    remote_prefix = str(
+        getattr(downloader, "_tidarr_prefix", "") or os.environ.get("FILE_MOVER_TIDARR_PREFIX") or ""
+    ).strip().rstrip("/\\")
+
+    if local_prefix and remote_prefix and storage_path.startswith(remote_prefix):
+        _add(local_prefix + storage_path[len(remote_prefix) :])
+
+    if local_prefix:
+        for source in tuple(candidates):
+            parts = _split_path_parts(source)
+            if len(parts) > 1 and not parts[0].endswith(":"):
+                _add(os.path.join(local_prefix, *parts[1:]))
+
+    if str(storage_path or "").startswith("/downloads/"):
+        _add(f"/app{storage_path}")
+
+    return candidates
+
+
+def _resolve_source_dir(storage_path: str, downloader: Any) -> tuple[str | None, list[str]]:
+    candidates = _build_source_candidates(storage_path, downloader)
+    for candidate in candidates:
+        if os.path.isdir(candidate):
+            return candidate, candidates
+    return None, candidates
+
+
 def _task_from_row(row: dict[str, Any]) -> dict[str, Any]:
     task = dict(row)
     task["metadata"] = _safe_json(task.get("metadata_json"), {})
@@ -577,17 +636,21 @@ def _process_downloaded_tasks(limit: int = 200) -> dict[str, int]:
     for task in tasks:
         task_id = int(task["id"])
         storage_path = str(task.get("storage_path") or "")
-        translate = getattr(downloader, "translate_path", lambda p: p)
-        local_path = str(translate(storage_path))
+        local_path, attempted = _resolve_source_dir(storage_path, downloader)
 
-        if not os.path.isdir(local_path):
+        if not local_path:
+            attempted_text = ", ".join(attempted[:4]) if attempted else storage_path
+            message = (
+                f"Source path not accessible: {storage_path} (tried: {attempted_text}). "
+                "Set FILE_MOVER_TIDARR_PREFIX and FILE_MOVER_LOCAL_PREFIX if provider/container paths differ."
+            )
             _set_task_stage(
                 task_id,
                 "failed",
                 error_type="recoverable",
                 error_code="source_not_accessible",
-                error_message=f"Source path not accessible: {local_path}",
-                source_dir=local_path,
+                error_message=message,
+                source_dir=attempted[0] if attempted else storage_path,
             )
             result["failed"] += 1
             continue
