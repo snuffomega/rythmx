@@ -12,12 +12,12 @@ services:
       # Plugin directory — bind-mounted so plugins can be added/updated without rebuild.
       - ./plugins:/app/plugins
       # Music library — writable; the file mover copies completed FLACs here.
-      # Must match FILE_MOVER_DEST in Settings → Integrations → Tidarr.
+      # Must match FILE_MOVER_DEST (from .env/.compose env or Settings → Integrations).
       # Uncomment and set to the path your media server (Plex/Navidrome) watches.
       # - /mnt/user/data/media/music:/music
       # Tidarr download output — read-only; Core reads FLACs after Tidarr completes.
       # Must be the same host directory Tidarr mounts as its download destination.
-      # Set FILE_MOVER_LOCAL_PREFIX=/app/downloads in Settings → Integrations → Tidarr.
+      # Set FILE_MOVER_LOCAL_PREFIX=/app/downloads in .env or Settings → Integrations → Tidarr.
       # - /mnt/user/downloads:/app/downloads:ro
     env_file:
       - .env
