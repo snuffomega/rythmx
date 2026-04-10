@@ -713,15 +713,18 @@ class TidarrDownloader:
     def pre_fetch_enrich(self, artist: str, album: str, metadata: dict) -> dict:
         """
         Resolve provider-specific Tidal IDs before fetch task submission.
-        Tries A → D → {} chain: MusicBrainz URL rels → Tidal API search → fallback.
+        Tries A → E → {} chain:
+        - A: MusicBrainz URL relationships
+        - E: Artist catalog search (artist ID → releases → match)
+        - Fallback: manual override required
         """
         # A: MusicBrainz URL relationships
         result = self._resolve_via_musicbrainz(metadata)
         if result:
             return result
 
-        # D: Tidal API search
-        result = self._resolve_via_tidal_api(artist, album, metadata)
+        # E: Artist catalog search
+        result = self._resolve_via_artist_catalog(artist, album, metadata)
         if result:
             return result
 
@@ -757,24 +760,39 @@ class TidarrDownloader:
 
         return None
 
-    def _resolve_via_tidal_api(self, artist: str, album: str, metadata: dict) -> dict | None:
+    def _resolve_via_artist_catalog(self, artist: str, album: str, metadata: dict) -> dict | None:
         """
-        Call Tidal API search using rich metadata (year, track_count).
-        Score results and return confident match or None.
+        Artist catalog search: resolve artist ID, query releases, match album.
+
+        Flow:
+        1. Search for artist by name
+        2. Match artist with confidence scoring
+        3. If confident, query artist's releases (EPSANDSINGLES filter)
+        4. Match album from catalog using existing scorer
+        5. Return album ID if confident match found
         """
         token = self._get_tidal_token()
         if not token:
-            logger.debug("tidarr: tidal token not available for pre-fetch")
+            logger.debug("tidarr: tidal token not available for artist catalog search")
             return None
 
         try:
-            # Tidal API search
-            results = self._tidal_search(token, artist, album)
-            if not results:
+            # Step 1: Search for and match artist
+            artist_id = self._search_and_match_artist(token, artist)
+            if not artist_id:
+                logger.debug("tidarr: no confident artist match for '%s'", artist)
                 return None
 
-            # Convert to candidates and score
-            candidates = [self._tidal_result_to_candidate(r) for r in results]
+            logger.info("tidarr: resolved artist_id %s for '%s'", artist_id, artist)
+
+            # Step 2: Get all releases by this artist (singles + EPs)
+            releases = self._get_artist_releases(token, artist_id, filter_type="EPSANDSINGLES")
+            if not releases:
+                logger.debug("tidarr: no releases found for artist_id %s", artist_id)
+                return None
+
+            # Step 3: Convert to candidates and score using existing matcher
+            candidates = [self._tidal_result_to_candidate(r) for r in releases]
             evaluated = evaluate_tidarr_candidates(
                 artist=artist,
                 album=album,
@@ -790,10 +808,24 @@ class TidarrDownloader:
                 if selected:
                     tidal_id = str(selected.get("tidal_id") or "").strip()
                     if tidal_id:
-                        logger.info("tidarr: resolved tidal_id via Tidal API: %s", tidal_id)
+                        logger.info(
+                            "tidarr: resolved tidal_id via artist catalog: %s "
+                            "(artist_id=%s confidence=%.2f)",
+                            tidal_id,
+                            artist_id,
+                            evaluated.get("match_confidence", 0.0),
+                        )
                         return {"tidal_album_id": tidal_id}
+            else:
+                logger.debug(
+                    "tidarr: artist catalog search found %d releases but no confident match "
+                    "(best_confidence=%.2f status=%s)",
+                    len(releases),
+                    evaluated.get("match_confidence", 0.0),
+                    evaluated.get("match_status"),
+                )
         except Exception as e:
-            logger.debug("tidarr: _resolve_via_tidal_api failed: %s", e)
+            logger.warning("tidarr: artist catalog resolution failed: %s", e)
 
         return None
 
@@ -828,6 +860,138 @@ class TidarrDownloader:
             return data.get("albums", {}).get("items", [])
         except Exception as e:
             logger.debug("tidarr: tidal search failed: %s", e)
+            return []
+
+    def _search_and_match_artist(self, token: str, artist_name: str) -> str | None:
+        """
+        Search for artist on Tidal and match by confidence.
+        Returns artist ID if best match confidence >= 0.85.
+        Uses popularity as tiebreaker for equal scores.
+        """
+        try:
+            resp = requests.get(
+                "https://api.tidal.com/v1/search",
+                params={
+                    "query": artist_name,
+                    "types": "ARTISTS",
+                    "limit": 25,
+                    "countryCode": "US",
+                },
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=15,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            results = data.get("artists", {}).get("items", [])
+
+            if not results:
+                logger.debug("tidarr: tidal artist search returned no results for '%s'", artist_name)
+                return None
+
+            # Score each artist result using match_album_title
+            scored = []
+            for result in results:
+                result_name = str(result.get("name") or "")
+                if not result_name:
+                    continue
+
+                # Reuse existing matcher for artist name scoring
+                confidence = match_album_title(
+                    expected=artist_name,
+                    actual=result_name,
+                    min_overlap=self._artist_min_overlap,
+                )
+
+                popularity = result.get("popularity", 0)
+                scored.append({
+                    "artist_id": result.get("id"),
+                    "name": result_name,
+                    "confidence": confidence,
+                    "popularity": popularity,
+                })
+
+            # Sort by confidence (desc), then by popularity (desc)
+            scored.sort(key=lambda x: (-x["confidence"], -x["popularity"]))
+            best = scored[0]
+
+            if best["confidence"] >= 0.85:
+                logger.debug(
+                    "tidarr: matched artist '%s' -> %s (confidence=%.2f popularity=%d)",
+                    artist_name,
+                    best["name"],
+                    best["confidence"],
+                    best["popularity"],
+                )
+                return str(best["artist_id"])
+            else:
+                logger.debug(
+                    "tidarr: artist '%s' best match confidence too low: %.2f (threshold=0.85)",
+                    artist_name,
+                    best["confidence"],
+                )
+                return None
+
+        except Exception as e:
+            logger.warning("tidarr: artist search failed for '%s': %s", artist_name, e)
+            return None
+
+    def _get_artist_releases(
+        self,
+        token: str,
+        artist_id: str,
+        filter_type: str = "EPSANDSINGLES",
+    ) -> list[dict]:
+        """
+        Query Tidal artist's complete release catalog with pagination.
+        Supports EPSANDSINGLES, COMPILATIONS, etc.
+        """
+        all_releases = []
+        offset = 0
+        limit = 100
+
+        try:
+            while True:
+                resp = requests.get(
+                    f"https://api.tidal.com/v1/artists/{artist_id}/albums",
+                    params={
+                        "filter": filter_type,
+                        "limit": limit,
+                        "offset": offset,
+                        "countryCode": "US",
+                    },
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+
+                items = data.get("items", [])
+                if not items:
+                    break
+
+                all_releases.extend(items)
+
+                # Check if we've retrieved all items
+                total = data.get("totalNumberOfItems", 0)
+                if offset + len(items) >= total:
+                    break
+
+                offset += limit
+
+            logger.debug(
+                "tidarr: fetched %d releases for artist_id %s (filter=%s)",
+                len(all_releases),
+                artist_id,
+                filter_type,
+            )
+            return all_releases
+
+        except Exception as e:
+            logger.warning(
+                "tidarr: failed to fetch artist releases for artist_id %s: %s",
+                artist_id,
+                e,
+            )
             return []
 
     def _tidal_result_to_candidate(self, tidal_item: dict) -> dict:

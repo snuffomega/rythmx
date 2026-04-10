@@ -220,11 +220,11 @@ class TestTidarrPreFetchEnrichMusicBrainzPath:
         assert result == {}
 
 
-class TestTidarrPreFetchEnrichTidalApiPath:
-    """Test Tidarr pre_fetch_enrich via Tidal API search (Path D)."""
+class TestTidarrPreFetchEnrichArtistCatalogPath:
+    """Test Tidarr pre_fetch_enrich via artist catalog search (Path E)."""
 
-    def test_resolves_tidal_id_from_api_search(self, monkeypatch):
-        """Resolve Tidal ID when API search finds confident match."""
+    def test_resolves_tidal_id_from_artist_catalog(self, monkeypatch):
+        """Resolve Tidal ID when artist catalog search finds confident match."""
         monkeypatch.setenv("TIDARR_URL", "http://tidarr")
         monkeypatch.setenv("TIDARR_API_KEY", "abc")
         downloader = TidarrDownloader()
@@ -236,8 +236,15 @@ class TestTidarrPreFetchEnrichTidalApiPath:
             lambda: "mock_tidal_token",
         )
 
-        # Mock Tidal API search
-        tidal_result = {
+        # Mock artist search and matching
+        monkeypatch.setattr(
+            downloader,
+            "_search_and_match_artist",
+            lambda token, artist: "taylor_swift_artist_id",
+        )
+
+        # Mock artist releases fetching
+        tidal_album = {
             "id": 37269992,
             "title": "1989",
             "artists": [{"name": "Taylor Swift"}],
@@ -247,8 +254,8 @@ class TestTidarrPreFetchEnrichTidalApiPath:
         }
         monkeypatch.setattr(
             downloader,
-            "_tidal_search",
-            lambda token, artist, album: [tidal_result],
+            "_get_artist_releases",
+            lambda token, artist_id, filter_type: [tidal_album],
         )
 
         # Mock evaluate_tidarr_candidates to return confident match
@@ -257,6 +264,7 @@ class TestTidarrPreFetchEnrichTidalApiPath:
             "app.services.fetch_matching.evaluate_tidarr_candidates",
             lambda **kwargs: {
                 "match_status": "confident",
+                "match_confidence": 0.95,
                 "selected": {
                     "tidal_id": "37269992",
                     "artist": "Taylor Swift",
@@ -284,14 +292,14 @@ class TestTidarrPreFetchEnrichTidalApiPath:
 
         assert result == {}
 
-    def test_returns_empty_when_no_confident_match(self, monkeypatch):
-        """Fallback to empty dict when API search doesn't find confident match."""
+    def test_returns_empty_when_no_confident_artist_match(self, monkeypatch):
+        """Fallback to empty dict when artist search doesn't find confident match."""
         monkeypatch.setenv("TIDARR_URL", "http://tidarr")
         monkeypatch.setenv("TIDARR_API_KEY", "abc")
         downloader = TidarrDownloader()
 
         monkeypatch.setattr(downloader, "_get_tidal_token", lambda: "mock_token")
-        monkeypatch.setattr(downloader, "_tidal_search", lambda token, artist, album: [])
+        monkeypatch.setattr(downloader, "_search_and_match_artist", lambda token, artist: None)
 
         metadata = {}
         result = downloader.pre_fetch_enrich("Taylor Swift", "1989", metadata)
@@ -339,8 +347,13 @@ class TestTokenNeverPersisted:
         monkeypatch.setattr(downloader, "_get_tidal_token", lambda: "real_tidal_token_xyz123")
         monkeypatch.setattr(
             downloader,
-            "_tidal_search",
-            lambda token, artist, album: [
+            "_search_and_match_artist",
+            lambda token, artist: "taylor_swift_artist_id",
+        )
+        monkeypatch.setattr(
+            downloader,
+            "_get_artist_releases",
+            lambda token, artist_id, filter_type: [
                 {
                     "id": 37269992,
                     "title": "1989",
@@ -355,6 +368,7 @@ class TestTokenNeverPersisted:
             "app.services.fetch_matching.evaluate_tidarr_candidates",
             lambda **kwargs: {
                 "match_status": "confident",
+                "match_confidence": 0.95,
                 "selected": {"tidal_id": "37269992"},
             },
         )
