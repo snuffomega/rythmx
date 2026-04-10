@@ -269,6 +269,8 @@ def evaluate_tidarr_candidates(
                 "track_count": cand.get("track_count"),
                 "source": str(cand.get("source") or "search"),
                 "score": float(cand.get("score") or 0.0),
+                # NOTE: enclosure_url is intentionally excluded from snapshots
+                # It may contain API keys and is never persisted to DB or exposed in API responses
             }
         )
 

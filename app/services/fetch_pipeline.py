@@ -731,6 +731,58 @@ def _confirm_task_in_library(task: dict[str, Any]) -> bool:
     return True
 
 
+def _validate_enrichment_result(result: dict[str, Any]) -> dict[str, Any]:
+    """
+    Validate pre-fetch enrichment result to ensure only safe primitives are returned.
+
+    Rejects:
+    - Unknown keys (not in SAFE_ENRICHMENT_KEYS allowlist)
+    - Non-primitive values (lists, dicts, objects)
+    - Suspicious values that look like tokens/URLs
+
+    Returns sanitized dict ready to merge into task metadata.
+    """
+    SAFE_ENRICHMENT_KEYS = {
+        "tidal_album_id",
+        "deezer_album_id",
+        "itunes_album_id",
+        "spotify_album_id",
+        "musicbrainz_release_id",
+        "release_date",
+        "thumb_url",
+        "track_count",
+    }
+    TOKEN_PATTERNS = [
+        r"^eyJ",  # JWT (starts with eyJ...)
+        r"^[a-f0-9]{64,}",  # API key (64+ hex chars)
+        r"https?://",  # URL
+    ]
+
+    if not isinstance(result, dict):
+        return {}
+
+    safe: dict[str, Any] = {}
+    for key, value in result.items():
+        # Only allow whitelisted keys
+        if key not in SAFE_ENRICHMENT_KEYS:
+            logger.debug("enrichment: rejecting unknown key '%s'", key)
+            continue
+
+        # Only allow safe primitives
+        if not isinstance(value, (str, int, float, bool, type(None))):
+            logger.debug("enrichment: rejecting non-primitive value for '%s' (type %s)", key, type(value).__name__)
+            continue
+
+        # Reject suspicious string values that look like tokens or URLs
+        if isinstance(value, str) and any(re.match(p, value) for p in TOKEN_PATTERNS):
+            logger.warning("enrichment: rejecting suspicious value for '%s' (looks like token/URL)", key)
+            continue
+
+        safe[key] = value
+
+    return safe
+
+
 def _submit_queued_tasks(*, run_id: str | None = None, limit: int = 100) -> dict[str, Any]:
     params: list[Any] = []
     where = [
@@ -776,6 +828,29 @@ def _submit_queued_tasks(*, run_id: str | None = None, limit: int = 100) -> dict
         match_reasons: list[str] = []
         match_candidates: list[dict[str, Any]] = []
         outcome_error = ""
+
+        # Pre-fetch enrichment (if plugin provides it)
+        if hasattr(downloader, "pre_fetch_enrich") and callable(downloader.pre_fetch_enrich):
+            try:
+                enrichment = downloader.pre_fetch_enrich(artist, album, metadata)
+                if isinstance(enrichment, dict):
+                    # Validate: only safe primitives
+                    validated_enrichment = _validate_enrichment_result(enrichment)
+                    if validated_enrichment:
+                        metadata = dict(metadata)  # Ensure dict, not read-only
+                        metadata.update(validated_enrichment)
+                        # Persist enriched metadata to DB
+                        metadata_json = json.dumps(metadata, ensure_ascii=True)
+                        _set_task_fields(task_id, metadata_json=metadata_json)
+                        logger.info(
+                            "fetch_pipeline: pre-fetch enrichment for %s - %s: added keys %s",
+                            artist,
+                            album,
+                            list(validated_enrichment.keys()),
+                        )
+            except Exception as e:
+                # Non-fatal: log and continue
+                logger.warning("fetch_pipeline: pre_fetch_enrich failed for %s - %s: %s", artist, album, e)
 
         try:
             submit_with_match = getattr(downloader, "submit_with_match", None)
