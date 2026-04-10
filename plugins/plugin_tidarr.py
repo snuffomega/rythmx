@@ -110,38 +110,94 @@ class TidarrDownloader:
             }
 
         metadata = dict(metadata or {})
-        manual_tidal_id = str(metadata.get("manual_tidal_album_id") or "").strip()
-        if manual_tidal_id.isdigit():
+
+        # Check for enrichment-provided tidal_album_id (from pre_fetch_enrich)
+        enriched_tidal_id = str(metadata.get("tidal_album_id") or "").strip()
+        if enriched_tidal_id.isdigit():
+            # Use enriched ID directly (from Tidal API resolution)
             preview = {
                 "status": "confident",
                 "match_status": "confident",
-                "match_strategy": "manual_id",
-                "match_confidence": 1.0,
-                "match_reasons": ["manual_override"],
+                "match_strategy": "enriched_id",
+                "match_confidence": 0.86,  # Passed confidence threshold in enrichment
+                "match_reasons": ["resolved_via_tidal_api"],
                 "candidates": [
                     {
-                        "tidal_id": manual_tidal_id,
+                        "tidal_id": enriched_tidal_id,
                         "artist": artist,
                         "album": album,
                         "quality": self._quality,
-                        "source": "manual_id",
-                        "score": 1.0,
+                        "source": "enriched_api",
+                        "score": 0.86,
                     }
                 ],
                 "selected": {
                     "artist": artist,
                     "album": album,
-                    "tidal_id": manual_tidal_id,
+                    "tidal_id": enriched_tidal_id,
                     "quality": self._quality,
-                    "source": "manual_id",
+                    "source": "enriched_api",
                     "enclosure_url": (
                         f"{self._url}/api/lidarr/download/"
-                        f"{manual_tidal_id}/{self._quality}?apikey={self._key}"
+                        f"{enriched_tidal_id}/{self._quality}?apikey={self._key}"
                     ),
                 },
             }
         else:
-            preview = self.preview_match(artist, album, metadata)
+            # Check for manual override
+            manual_tidal_id = str(metadata.get("manual_tidal_album_id") or "").strip()
+            if manual_tidal_id.isdigit():
+                # Use manual ID (user selected via Activity UI)
+                preview = {
+                    "status": "confident",
+                    "match_status": "confident",
+                    "match_strategy": "manual_id",
+                    "match_confidence": 1.0,
+                    "match_reasons": ["manual_override"],
+                    "candidates": [
+                        {
+                            "tidal_id": manual_tidal_id,
+                            "artist": artist,
+                            "album": album,
+                            "quality": self._quality,
+                            "source": "manual_id",
+                            "score": 1.0,
+                        }
+                    ],
+                    "selected": {
+                        "artist": artist,
+                        "album": album,
+                        "tidal_id": manual_tidal_id,
+                        "quality": self._quality,
+                        "source": "manual_id",
+                        "enclosure_url": (
+                            f"{self._url}/api/lidarr/download/"
+                            f"{manual_tidal_id}/{self._quality}?apikey={self._key}"
+                        ),
+                    },
+                }
+            else:
+                # STRICT GATE: No ID from enrichment or manual override → unresolved
+                # Do NOT fall back to preview_match (text search)
+                logger.warning(
+                    "tidarr: no tidal_album_id from enrichment for %s - %s (requires manual selection)",
+                    artist,
+                    album,
+                )
+                return {
+                    "status": "unresolved",
+                    "match_status": "unresolved",
+                    "match_strategy": "none",
+                    "match_confidence": 0.0,
+                    "match_reasons": [
+                        "no_enriched_id_no_manual_override",
+                        "user_intervention_required",
+                    ],
+                    "candidates": [],
+                    "selected": None,
+                    "error_message": "No tidal_album_id from enrichment. Manual selection required via Activity UI.",
+                    "job_id": "",
+                }
 
         match_status = str(preview.get("match_status") or "unresolved")
         selected = preview.get("selected")
@@ -783,7 +839,7 @@ class TidarrDownloader:
                 album=album,
                 metadata=metadata,
                 candidates=candidates,
-                min_confidence=0.88,
+                min_confidence=0.86,
                 ambiguous_margin=0.05,
                 snapshot_limit=5,
             )
@@ -871,7 +927,7 @@ class TidarrDownloader:
                 album=album,
                 metadata=metadata,
                 candidates=candidates,
-                min_confidence=0.88,
+                min_confidence=0.86,
                 ambiguous_margin=0.05,
                 snapshot_limit=5,
             )
@@ -981,7 +1037,7 @@ class TidarrDownloader:
                 album=album,
                 metadata=metadata,
                 candidates=candidates,
-                min_confidence=0.88,
+                min_confidence=0.86,
                 ambiguous_margin=0.05,
                 snapshot_limit=5,
             )
