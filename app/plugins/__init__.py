@@ -36,6 +36,9 @@ FETCH_PLUGIN_CONTRACT_VERSION = 1
 SUPPORTED_FETCH_PLUGIN_CONTRACT_VERSIONS: frozenset[int] = frozenset({1})
 _FETCH_ERROR_TAXONOMY = frozenset({"recoverable", "permanent", "config"})
 
+# Pre-fetch enrichment contract (optional downloader capability)
+SUPPORTED_PRE_FETCH_ENRICHMENT_VERSIONS: frozenset[int] = frozenset({1})
+
 
 class FetchPluginError(RuntimeError):
     """
@@ -290,6 +293,20 @@ def _validate_fetch_manifest(module: Any, slots_map: dict[str, type]) -> tuple[b
     if not plugin_version or not plugin_description:
         return False, "PLUGIN_VERSION and PLUGIN_DESCRIPTION are required for fetch-capable plugins"
 
+    # Validate pre_fetch_enrichment_version if declared (optional capability)
+    pre_fetch_enrich_version = capabilities.get("pre_fetch_enrichment_version")
+    if pre_fetch_enrich_version is not None:
+        try:
+            pre_fetch_enrich_version_i = int(pre_fetch_enrich_version)
+        except (TypeError, ValueError):
+            pre_fetch_enrich_version_i = 0
+        if pre_fetch_enrich_version_i not in SUPPORTED_PRE_FETCH_ENRICHMENT_VERSIONS:
+            return (
+                False,
+                f"unsupported pre_fetch_enrichment_version '{pre_fetch_enrich_version}' "
+                f"(supported: {sorted(SUPPORTED_PRE_FETCH_ENRICHMENT_VERSIONS)})",
+            )
+
     return True, ""
 
 
@@ -385,6 +402,15 @@ def load_plugins(
 
                 try:
                     instance = cls()
+
+                    # If pre_fetch_enrichment_version is declared, verify method exists
+                    capabilities = getattr(module, "CAPABILITIES", {}) or {}
+                    if slot_name == "downloader" and capabilities.get("pre_fetch_enrichment_version"):
+                        if not hasattr(instance, "pre_fetch_enrich") or not callable(getattr(instance, "pre_fetch_enrich")):
+                            raise ValueError(
+                                f"Plugin declares pre_fetch_enrichment_version but missing pre_fetch_enrich() method"
+                            )
+
                     _registry[slot_name] = instance
                     active_slots.append(slot_name)
                     logger.info("Plugin loaded: %s → slot '%s'", path.name, slot_name)
