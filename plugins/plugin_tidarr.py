@@ -1,54 +1,39 @@
 """
-plugin_tidarr.py — Rythmx downloader plugin for Tidarr.
+plugin_tidarr.py - Rythmx downloader plugin for Tidarr.
 
-Submits albums to a running Tidarr instance (https://github.com/cstaelen/tidarr)
-which downloads music via the Tidal streaming service.
-
-Resolution strategy (three-step):
-  1. Search Tidarr's Newznab/Lidarr endpoint:
-     GET /api/lidarr?t=search&q={artist} {album}&apikey={key}
-  2. Score the results: filter to configured quality, fuzzy-match artist+album,
-     pick the best result. Extract enclosure URL and Tidal album ID from <guid>
-     (format: "{album_id}-{quality}").
-  3. Download the NZB file bytes from the enclosure URL, then submit via:
-     POST /api/sabnzbd/api?mode=addfile  (multipart/form-data)
-     Returns a real nzo_id ("tidarr_nzo_{id}") used for Step 4b polling.
-     addurl is NOT used — it returns tidarr_nzo_unknown and cannot be tracked.
-
-Config — add to your .env:
-  TIDARR_URL      Base URL of your Tidarr instance, e.g. http://tidarr:8484
-  TIDARR_API_KEY  64-char API key. Retrieve via:
-                    docker exec tidarr cat /shared/.tidarr-api-key
-                  or via Tidarr Settings → Authentication → API Key.
-  TIDARR_QUALITY  Download quality: lossless (default) or hires_lossless.
-
-Constraints (enforced by the plugin system):
-  - Never imports from app/db/ — no SQLite access permitted.
-  - Never logs the raw TIDARR_API_KEY value.
-  - submit() never raises — unresolvable items return "unresolved:…" and log
-    a warning so the caller can record the miss without crashing.
+This plugin submits album downloads to Tidarr and polls completion via
+Tidarr's SABnzbd-compatible API.
 """
-import difflib
+from __future__ import annotations
+
 import logging
 import os
+import re
 import xml.etree.ElementTree as ET
-from typing import Optional
+from typing import Any, Optional
 
 import requests
 
+from app.services.fetch_matching import evaluate_tidarr_candidates
+
 logger = logging.getLogger(__name__)
 
-# Newznab namespace used by Tidarr's indexer for extended attributes.
-_NEWZNAB_NS = "http://www.newzbin.com/DTD/2003/nzb"
-_NZB_NS = {"newznab": "http://www.newznab.com/DTD:2010:feeds:attributes@"}
+
+def _env_float(name: str, *, default: float, minimum: float, maximum: float) -> float:
+    raw = str(os.environ.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning("tidarr: invalid %s='%s' - using default %.2f", name, raw, default)
+        return default
+    return max(minimum, min(value, maximum))
 
 
 class TidarrDownloader:
     """
     Downloader plugin slot implementation pointing at a Tidarr instance.
-
-    Instantiated once by load_plugins() at app startup and cached in _registry.
-    Config is read from the environment at instantiation time.
     """
 
     name = "tidarr"
@@ -58,9 +43,25 @@ class TidarrDownloader:
         self._key = os.environ.get("TIDARR_API_KEY") or ""
         quality_raw = (os.environ.get("TIDARR_QUALITY") or "lossless").lower()
         self._quality = quality_raw if quality_raw in ("lossless", "hires_lossless") else "lossless"
-        # Path translation: Tidarr-internal prefix → locally accessible prefix.
-        # Only needed when Tidarr's container path differs from Rythmx's mount point.
-        # If both containers mount the same host dir at the same container path, leave blank.
+        self._match_min_score = _env_float(
+            "TIDARR_MATCH_MIN_SCORE",
+            default=0.86,
+            minimum=0.50,
+            maximum=0.99,
+        )
+        self._artist_min_overlap = _env_float(
+            "TIDARR_ARTIST_MIN_OVERLAP",
+            default=0.60,
+            minimum=0.0,
+            maximum=1.0,
+        )
+        self._album_min_overlap = _env_float(
+            "TIDARR_ALBUM_MIN_OVERLAP",
+            default=0.50,
+            minimum=0.0,
+            maximum=1.0,
+        )
+        # Path translation: Tidarr-internal prefix -> locally accessible prefix.
         self._tidarr_prefix = (
             os.environ.get("FILE_MOVER_TIDARR_PREFIX") or ""
         ).rstrip("/")
@@ -77,48 +78,69 @@ class TidarrDownloader:
 
     def submit(self, artist: str, album: str, metadata: dict) -> str:
         """
-        Find the best Tidal match for artist+album, download its NZB, and submit
-        via mode=addfile (multipart POST) to get a real trackable nzo_id.
+        Backward-compatible submit surface.
+        """
+        result = self.submit_with_match(artist, album, metadata or {})
+        job_id = str(result.get("job_id") or "")
+        if job_id:
+            return job_id
+        return f"unresolved:{artist}:{album}"
 
-        Flow:
-          1. Search Newznab → score results by quality + fuzzy artist/album match
-          2. GET the enclosure URL to download raw NZB bytes
-          3. POST NZB bytes to /api/sabnzbd/api?mode=addfile — returns real nzo_id
-
-        NOTE: addurl is NOT used — it always returns "tidarr_nzo_unknown" when
-        passed a tidal.com URL, making polling impossible.
-
-        Returns:
-            nzo_id string ("tidarr_nzo_{id}")  — queued, trackable
-            "unresolved:{artist}:{album}"        — search/submit failed
+    def submit_with_match(self, artist: str, album: str, metadata: dict) -> dict[str, Any]:
+        """
+        Submit with structured match diagnostics for fetch task persistence.
         """
         if not self._url or not self._key:
-            logger.warning(
-                "tidarr: TIDARR_URL or TIDARR_API_KEY not configured — skipping %s — %s",
-                artist, album,
-            )
-            return f"unresolved:{artist}:{album}"
+            message = "TIDARR_URL or TIDARR_API_KEY not configured"
+            logger.warning("tidarr: %s - skipping %s - %s", message, artist, album)
+            return {
+                "status": "unresolved",
+                "match_status": "unresolved",
+                "match_strategy": "search_score",
+                "match_confidence": 0.0,
+                "match_reasons": [message],
+                "candidates": [],
+                "error_message": message,
+                "job_id": "",
+            }
 
-        result = self._find_best_result(artist, album)
-        if result is None:
-            logger.warning("tidarr: no matching result for %s — %s", artist, album)
-            return f"unresolved:{artist}:{album}"
+        preview = self.preview_match(artist, album, metadata or {})
+        selected = preview.get("selected")
+        enclosure_url = str((selected or {}).get("enclosure_url") or "").strip()
+        tidal_id = str((selected or {}).get("tidal_id") or "").strip()
+        if not selected or not enclosure_url or not tidal_id:
+            logger.warning("tidarr: no confident match for %s - %s", artist, album)
+            return {
+                "status": "unresolved",
+                "match_status": str(preview.get("match_status") or "unresolved"),
+                "match_strategy": str(preview.get("match_strategy") or "search_score"),
+                "match_confidence": float(preview.get("match_confidence") or 0.0),
+                "match_reasons": list(preview.get("match_reasons") or []),
+                "candidates": list(preview.get("candidates") or []),
+                "selected": selected,
+                "error_message": "No confident Tidarr match",
+                "job_id": "",
+            }
 
-        enclosure_url, tidal_id = result
-
-        # Step 2: download the NZB bytes
         try:
             nzb_resp = self._session.get(enclosure_url, timeout=15)
             nzb_resp.raise_for_status()
             nzb_bytes = nzb_resp.content
         except requests.RequestException as exc:
-            logger.warning(
-                "tidarr: NZB download failed for %s — %s: %s", artist, album, exc
-            )
-            return f"unresolved:{artist}:{album}"
+            message = f"NZB download failed: {exc}"
+            logger.warning("tidarr: %s for %s - %s", message, artist, album)
+            return {
+                "status": "unresolved",
+                "match_status": str(preview.get("match_status") or "unresolved"),
+                "match_strategy": str(preview.get("match_strategy") or "search_score"),
+                "match_confidence": float(preview.get("match_confidence") or 0.0),
+                "match_reasons": list(preview.get("match_reasons") or []) + [message],
+                "candidates": list(preview.get("candidates") or []),
+                "selected": selected,
+                "error_message": message,
+                "job_id": "",
+            }
 
-        # Step 3: submit via addfile (multipart POST — the only method that
-        # returns a real nzo_id rather than tidarr_nzo_unknown)
         try:
             resp = self._session.post(
                 f"{self._url}/api/sabnzbd/api",
@@ -129,51 +151,164 @@ class TidarrDownloader:
             resp.raise_for_status()
             data = resp.json()
         except requests.RequestException as exc:
-            logger.warning(
-                "tidarr: addfile request failed for %s — %s: %s", artist, album, exc
-            )
-            return f"unresolved:{artist}:{album}"
-        except Exception:
-            logger.warning("tidarr: addfile response not JSON for %s — %s", artist, album)
-            return f"unresolved:{artist}:{album}"
+            message = f"addfile request failed: {exc}"
+            logger.warning("tidarr: %s for %s - %s", message, artist, album)
+            return {
+                "status": "unresolved",
+                "match_status": str(preview.get("match_status") or "unresolved"),
+                "match_strategy": str(preview.get("match_strategy") or "search_score"),
+                "match_confidence": float(preview.get("match_confidence") or 0.0),
+                "match_reasons": list(preview.get("match_reasons") or []) + [message],
+                "candidates": list(preview.get("candidates") or []),
+                "selected": selected,
+                "error_message": message,
+                "job_id": "",
+            }
+        except Exception as exc:
+            message = f"addfile response not JSON: {exc}"
+            logger.warning("tidarr: %s for %s - %s", message, artist, album)
+            return {
+                "status": "unresolved",
+                "match_status": str(preview.get("match_status") or "unresolved"),
+                "match_strategy": str(preview.get("match_strategy") or "search_score"),
+                "match_confidence": float(preview.get("match_confidence") or 0.0),
+                "match_reasons": list(preview.get("match_reasons") or []) + [message],
+                "candidates": list(preview.get("candidates") or []),
+                "selected": selected,
+                "error_message": message,
+                "job_id": "",
+            }
 
         if not data.get("status"):
-            logger.warning(
-                "tidarr: addfile failed for %s — %s: %s",
-                artist, album, data.get("error", data),
-            )
-            return f"unresolved:{artist}:{album}"
+            message = f"addfile failed: {data.get('error', data)}"
+            logger.warning("tidarr: %s for %s - %s", message, artist, album)
+            return {
+                "status": "unresolved",
+                "match_status": str(preview.get("match_status") or "unresolved"),
+                "match_strategy": str(preview.get("match_strategy") or "search_score"),
+                "match_confidence": float(preview.get("match_confidence") or 0.0),
+                "match_reasons": list(preview.get("match_reasons") or []) + [message],
+                "candidates": list(preview.get("candidates") or []),
+                "selected": selected,
+                "error_message": message,
+                "job_id": "",
+            }
 
         nzo_ids = data.get("nzo_ids") or []
         if not nzo_ids:
-            logger.warning(
-                "tidarr: addfile returned no nzo_ids for %s — %s", artist, album
-            )
-            return f"unresolved:{artist}:{album}"
+            message = "addfile returned no nzo_ids"
+            logger.warning("tidarr: %s for %s - %s", message, artist, album)
+            return {
+                "status": "unresolved",
+                "match_status": str(preview.get("match_status") or "unresolved"),
+                "match_strategy": str(preview.get("match_strategy") or "search_score"),
+                "match_confidence": float(preview.get("match_confidence") or 0.0),
+                "match_reasons": list(preview.get("match_reasons") or []) + [message],
+                "candidates": list(preview.get("candidates") or []),
+                "selected": selected,
+                "error_message": message,
+                "job_id": "",
+            }
 
-        nzo_id = nzo_ids[0]
+        nzo_id = str(nzo_ids[0])
         logger.info(
-            "tidarr: queued %s \u2014 %s (tidal_id=%s nzo_id=%s quality=%s)",
-            artist, album, tidal_id, nzo_id, self._quality,
+            "tidarr: queued %s - %s (tidal_id=%s nzo_id=%s quality=%s)",
+            artist,
+            album,
+            tidal_id,
+            nzo_id,
+            self._quality,
         )
-        return nzo_id
+        return {
+            "status": "submitted",
+            "job_id": nzo_id,
+            "match_status": str(preview.get("match_status") or "confident"),
+            "match_strategy": str(preview.get("match_strategy") or "search_score"),
+            "match_confidence": float(preview.get("match_confidence") or 0.0),
+            "match_reasons": list(preview.get("match_reasons") or []),
+            "candidates": list(preview.get("candidates") or []),
+            "selected": selected,
+        }
+
+    def preview_match(self, artist: str, album: str, metadata: dict) -> dict[str, Any]:
+        """
+        Non-mutating match evaluation for dry-run proof tooling and fetch diagnostics.
+        """
+        metadata = dict(metadata or {})
+        if not self._url or not self._key:
+            return {
+                "status": "unresolved",
+                "match_status": "unresolved",
+                "match_strategy": "search_score",
+                "match_confidence": 0.0,
+                "match_reasons": ["TIDARR_URL or TIDARR_API_KEY not configured"],
+                "candidates": [],
+                "selected": None,
+            }
+
+        searched = self._search_candidates(artist, album)
+        evaluated = evaluate_tidarr_candidates(
+            artist=artist,
+            album=album,
+            metadata=metadata,
+            candidates=searched,
+            min_confidence=self._match_min_score,
+            ambiguous_margin=0.04,
+            snapshot_limit=10,
+        )
+
+        best_score = float(evaluated.get("best_score") or 0.0)
+        search_weak_or_empty = (not searched) or best_score < max(0.72, self._match_min_score - 0.10)
+
+        if str(evaluated.get("match_status") or "") != "confident" and search_weak_or_empty:
+            explicit = self._candidate_from_explicit_id(artist, album, metadata)
+            if explicit:
+                direct_eval = evaluate_tidarr_candidates(
+                    artist=artist,
+                    album=album,
+                    metadata=metadata,
+                    candidates=[explicit],
+                    min_confidence=0.80,
+                    ambiguous_margin=0.01,
+                    snapshot_limit=1,
+                )
+                direct_candidates = list(evaluated.get("candidates") or [])
+                direct_candidates.insert(
+                    0,
+                    {
+                        "tidal_id": explicit["tidal_id"],
+                        "artist": explicit["artist"],
+                        "album": explicit["album"],
+                        "quality": explicit["quality"],
+                        "year": explicit.get("year"),
+                        "track_count": explicit.get("track_count"),
+                        "source": explicit.get("source"),
+                        "score": float(direct_eval.get("best_score") or 0.0),
+                    },
+                )
+                reasons = list(direct_eval.get("match_reasons") or [])
+                reasons.append("search_weak_or_empty_with_explicit_id")
+                return {
+                    "status": "search_inconsistent",
+                    "match_status": "search_inconsistent",
+                    "match_strategy": str((direct_eval.get("selected") or {}).get("match_strategy") or "id_signature"),
+                    "match_confidence": float(direct_eval.get("best_score") or 0.0),
+                    "match_reasons": reasons,
+                    "candidates": direct_candidates[:10],
+                    "selected": direct_eval.get("selected"),
+                }
+
+        return {
+            "status": str(evaluated.get("status") or "unresolved"),
+            "match_status": str(evaluated.get("match_status") or "unresolved"),
+            "match_strategy": str(evaluated.get("match_strategy") or "search_score"),
+            "match_confidence": float(evaluated.get("match_confidence") or 0.0),
+            "match_reasons": list(evaluated.get("match_reasons") or []),
+            "candidates": list(evaluated.get("candidates") or []),
+            "selected": evaluated.get("selected"),
+        }
 
     def translate_path(self, storage_path: str) -> str:
-        """
-        Translate a Tidarr-internal storage path to the Rythmx-accessible path.
-
-        Tidarr reports storage paths using its own container root (e.g.
-        /shared/nzb_downloads/tidarr_nzo_123/Artist/Album). If Rythmx mounts
-        the same host directory at a different container path (e.g. /app/downloads),
-        this method swaps the prefix so Core can locate the files.
-
-        When FILE_MOVER_TIDARR_PREFIX and FILE_MOVER_LOCAL_PREFIX are both set:
-          /shared/nzb_downloads/... → /app/downloads/...
-
-        When not configured (default): returns path unchanged (identity).
-        Volume tip: mount the same host dir at the same path in both containers
-        and leave these settings empty — no translation needed.
-        """
         if (
             self._tidarr_prefix
             and self._local_prefix
@@ -182,28 +317,13 @@ class TidarrDownloader:
             return self._local_prefix + storage_path[len(self._tidarr_prefix):]
         return storage_path
 
-
     def test_connection(self) -> dict:
-        """
-        Verify connectivity and auth against two Tidarr API surfaces:
-          1. GET /api/settings         — main Tidarr API (validates auth)
-          2. GET /api/sabnzbd/api?mode=version — Tidarr's built-in SABnzbd compatibility
-             layer (NOT a separate service — Tidarr emulates SABnzbd protocol here
-             for job tracking via addurl/queue/history).
-
-        Used by the Settings → Integrations “Test connection” button.
-
-        Returns:
-            {"status": "ok", "message": "…"}    — reachable and authenticated
-            {"status": "error", "message": "…"} — not reachable or bad key
-        """
         if not self._url or not self._key:
             return {
                 "status": "error",
                 "message": "TIDARR_URL or TIDARR_API_KEY not configured in .env",
             }
 
-        # Primary: settings endpoint (validates auth)
         try:
             resp = self._session.get(f"{self._url}/api/settings", timeout=8)
         except requests.exceptions.ConnectionError:
@@ -217,7 +337,7 @@ class TidarrDownloader:
         if resp.status_code == 403:
             return {
                 "status": "error",
-                "message": "Invalid API key — check TIDARR_API_KEY (HTTP 403)",
+                "message": "Invalid API key - check TIDARR_API_KEY (HTTP 403)",
             }
         if resp.status_code != 200:
             return {
@@ -225,9 +345,6 @@ class TidarrDownloader:
                 "message": f"Unexpected response from Tidarr: HTTP {resp.status_code}",
             }
 
-        # Secondary: SABnzbd compatibility layer probe.
-        # Tidarr emulates the SABnzbd protocol at /api/sabnzbd/api — NOT a separate
-        # SABnzbd instance. Required for addurl/queue/history job tracking.
         try:
             sabnzbd_resp = self._session.get(
                 f"{self._url}/api/sabnzbd/api",
@@ -242,92 +359,39 @@ class TidarrDownloader:
             return {
                 "status": "ok",
                 "message": (
-                    f"Tidarr reachable at {self._url} — "
+                    f"Tidarr reachable at {self._url} - "
                     "warning: job tracking API (/api/sabnzbd/api) not responding"
                 ),
             }
 
-        return {"status": "ok", "message": f"Tidarr reachable at {self._url} — all OK"}
+        return {"status": "ok", "message": f"Tidarr reachable at {self._url} - all OK"}
 
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
 
     def _find_best_result(
-        self, artist: str, album: str
+        self,
+        artist: str,
+        album: str,
+        metadata: dict,
     ) -> Optional[tuple[str, str]]:
-        """
-        Search Tidarr's Newznab indexer and return (enclosure_url, tidal_album_id)
-        for the highest-confidence match at the configured quality.
-
-        Strategy:
-          1. Fetch Newznab XML via t=search&q={artist} {album}
-          2. Filter items to those whose <guid> ends with the configured quality
-             (format: "{album_id}-{quality}")
-          3. Score remaining items using fuzzy match against <newznab:attr>
-             artist and album values; fall back to title string matching
-          4. Return the enclosure URL + album_id of the best-scoring item
-        """
-        xml_text = self._newznab_search_raw(artist, album)
-        if xml_text is None:
-            xml_text = self._newznab_search_raw(artist, album, structured=True)
-        if xml_text is None:
+        evaluated = self.preview_match(artist, album, metadata or {})
+        selected = evaluated.get("selected") if isinstance(evaluated, dict) else None
+        if not isinstance(selected, dict):
             return None
-
-        try:
-            root = ET.fromstring(xml_text)
-        except ET.ParseError as exc:
-            logger.warning("tidarr: XML parse error for %s — %s: %s", artist, album, exc)
+        enclosure = str(selected.get("enclosure_url") or "").strip()
+        tidal_id = str(selected.get("tidal_id") or "").strip()
+        if not enclosure or not tidal_id:
             return None
-
-        items = root.findall(".//item")
-        if not items:
-            logger.debug("tidarr: no Newznab results for %s — %s", artist, album)
-            return None
-
-        # Filter to configured quality using <guid> = "{album_id}-{quality}"
-        quality_items = [
-            item for item in items
-            if self._item_quality(item) == self._quality
-        ]
-        if not quality_items:
-            logger.debug(
-                "tidarr: no %s results for %s — %s, using any quality",
-                self._quality, artist, album,
-            )
-            quality_items = items
-
-        best_item = self._pick_best_item(quality_items, artist, album)
-        if best_item is None:
-            return None
-
-        enclosure = best_item.find("enclosure")
-        if enclosure is None:
-            logger.warning("tidarr: best result has no enclosure for %s — %s", artist, album)
-            return None
-        enclosure_url = enclosure.get("url", "")
-        if not enclosure_url:
-            return None
-
-        # guid format: "{album_id}-{quality}"  e.g. "33816889-lossless"
-        guid_el = best_item.find("guid")
-        guid_text = (guid_el.text or "") if guid_el is not None else ""
-        tidal_id = guid_text.split("-")[0] if "-" in guid_text else guid_text
-        if not tidal_id.isdigit():
-            import re as _re
-            m = _re.search(r"/download/([0-9]+)/", enclosure_url)
-            tidal_id = m.group(1) if m else "unknown"
-
-        logger.debug(
-            "tidarr: selected tidal_id=%s quality=%s for %s — %s",
-            tidal_id, self._quality, artist, album,
-        )
-        return enclosure_url, tidal_id
+        return enclosure, tidal_id
 
     def _newznab_search_raw(
-        self, artist: str, album: str, structured: bool = False
+        self,
+        artist: str,
+        album: str,
+        structured: bool = False,
     ) -> Optional[str]:
-        """Execute one Newznab search and return raw XML text, or None on failure."""
         if structured:
             params: dict = {"t": "music", "artist": artist, "album": album, "apikey": self._key}
         else:
@@ -340,19 +404,24 @@ class TidarrDownloader:
             )
         except requests.RequestException as exc:
             logger.warning(
-                "tidarr: Newznab search failed for %s — %s: %s", artist, album, exc
+                "tidarr: Newznab search failed for %s - %s: %s",
+                artist,
+                album,
+                exc,
             )
             return None
         if resp.status_code != 200:
             logger.warning(
-                "tidarr: Newznab search HTTP %d for %s — %s", resp.status_code, artist, album
+                "tidarr: Newznab search HTTP %d for %s - %s",
+                resp.status_code,
+                artist,
+                album,
             )
             return None
         return resp.text
 
     @staticmethod
     def _item_quality(item: ET.Element) -> str:
-        """Extract quality from <guid> text (format: '{album_id}-{quality}')."""
         guid_el = item.find("guid")
         if guid_el is None or not guid_el.text:
             return ""
@@ -361,90 +430,157 @@ class TidarrDownloader:
 
     @staticmethod
     def _item_attrs(item: ET.Element) -> dict[str, str]:
-        """
-        Extract <newznab:attr name=... value=...> elements into a flat dict.
-        Tidarr emits: artist, album, year, tracks, type, size.
-        The namespace tag is matched by local name to avoid hardcoding the URI.
-        """
         attrs: dict[str, str] = {}
         for el in item:
             tag = el.tag
             local = tag.split("}")[-1] if "}" in tag else tag
-            if local == "attr":
-                name = el.get("name", "")
-                value = el.get("value", "")
-                if name:
-                    attrs[name] = value
+            if local != "attr":
+                continue
+            name = str(el.get("name", "")).strip()
+            value = str(el.get("value", "")).strip()
+            if name:
+                attrs[name] = value
         return attrs
 
-    def _pick_best_item(
-        self, items: list[ET.Element], artist: str, album: str
-    ) -> Optional[ET.Element]:
-        """
-        Score each item by fuzzy matching artist+album against Newznab attrs,
-        return the highest-scoring item.
+    @staticmethod
+    def _item_artist_album(item: ET.Element, attrs: dict[str, str]) -> tuple[str, str]:
+        item_artist = str(attrs.get("artist") or "").strip()
+        item_album = str(attrs.get("album") or "").strip()
+        if item_artist and item_album:
+            return item_artist, item_album
 
-        Score = average of artist_ratio and album_ratio (0.0–1.0).
-        Items with score < 0.3 are discarded (likely garbage results).
-        """
-        artist_lower = artist.lower()
-        album_lower = album.lower()
-        best_score = -1.0
-        best_item: Optional[ET.Element] = None
+        title_el = item.find("title")
+        title = str((title_el.text or "") if title_el is not None else "").strip()
+        if " - " in title:
+            left, right = title.split(" - ", 1)
+            if not item_artist:
+                item_artist = left.strip()
+            if not item_album:
+                item_album = right.strip()
+        elif not item_album:
+            item_album = title
+        return item_artist, item_album
 
-        for item in items:
-            attrs = self._item_attrs(item)
-            item_artist = (attrs.get("artist") or "").lower()
-            item_album = (attrs.get("album") or "").lower()
-
-            if item_artist and item_album:
-                artist_score = difflib.SequenceMatcher(
-                    None, artist_lower, item_artist
-                ).ratio()
-                album_score = difflib.SequenceMatcher(
-                    None, album_lower, item_album
-                ).ratio()
-                score = (artist_score + album_score) / 2
-            else:
-                # No attrs — fall back to fuzzy match against <title>
-                title_el = item.find("title")
-                title = (title_el.text or "").lower() if title_el is not None else ""
-                combined = f"{artist_lower} {album_lower}"
-                score = difflib.SequenceMatcher(None, combined, title).ratio()
-
-            if score > best_score:
-                best_score = score
-                best_item = item
-
-        if best_score < 0.3:
-            logger.warning(
-                "tidarr: best match score %.2f too low for %s — %s (no confident result)",
-                best_score, artist, album,
-            )
+    def _item_to_candidate(self, item: ET.Element, *, source: str) -> dict[str, Any] | None:
+        attrs = self._item_attrs(item)
+        item_artist, item_album = self._item_artist_album(item, attrs)
+        enclosure = item.find("enclosure")
+        enclosure_url = str((enclosure.get("url", "") if enclosure is not None else "")).strip()
+        if not item_artist or not item_album or not enclosure_url:
             return None
 
-        logger.debug("tidarr: best match score=%.2f for %s — %s", best_score, artist, album)
-        return best_item
+        guid_el = item.find("guid")
+        guid_text = str((guid_el.text or "") if guid_el is not None else "").strip()
+        tidal_id = guid_text.split("-", 1)[0] if "-" in guid_text else guid_text
+        quality = guid_text.split("-", 1)[1] if "-" in guid_text else ""
+        if not tidal_id.isdigit():
+            match = re.search(r"/download/([0-9]+)/", enclosure_url)
+            tidal_id = match.group(1) if match else ""
+        if not quality:
+            quality = self._item_quality(item)
+        if not tidal_id:
+            return None
+
+        year = attrs.get("year")
+        track_count = attrs.get("tracks") or attrs.get("track_count")
+        return {
+            "artist": item_artist,
+            "album": item_album,
+            "year": year,
+            "track_count": track_count,
+            "tidal_id": tidal_id,
+            "quality": quality or self._quality,
+            "enclosure_url": enclosure_url,
+            "source": source,
+            "__item": item,
+        }
+
+    def _search_candidates(self, artist: str, album: str) -> list[dict[str, Any]]:
+        candidates: list[dict[str, Any]] = []
+        for structured, source in ((True, "music"), (False, "search")):
+            xml_text = self._newznab_search_raw(artist, album, structured=structured)
+            if not xml_text:
+                continue
+            try:
+                root = ET.fromstring(xml_text)
+            except ET.ParseError as exc:
+                logger.warning("tidarr: XML parse error for %s - %s: %s", artist, album, exc)
+                continue
+            for item in root.findall(".//item"):
+                candidate = self._item_to_candidate(item, source=source)
+                if candidate:
+                    candidates.append(candidate)
+
+        # Deduplicate by release identity across both endpoints.
+        deduped: list[dict[str, Any]] = []
+        seen: set[tuple[str, str]] = set()
+        for candidate in candidates:
+            key = (str(candidate.get("tidal_id") or ""), str(candidate.get("quality") or ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(candidate)
+
+        preferred = [c for c in deduped if str(c.get("quality") or "") == self._quality]
+        return preferred if preferred else deduped
+
+    def _candidate_from_explicit_id(self, artist: str, album: str, metadata: dict[str, Any]) -> dict[str, Any] | None:
+        raw = ""
+        source = "id_signature"
+        for key in ("manual_tidal_album_id", "tidal_album_id", "tidal_id"):
+            value = str((metadata or {}).get(key) or "").strip()
+            if value.isdigit():
+                raw = value
+                source = "manual_id" if key == "manual_tidal_album_id" else "id_signature"
+                break
+        if not raw:
+            return None
+        enclosure_url = f"{self._url}/api/lidarr/download/{raw}/{self._quality}?apikey={self._key}"
+        return {
+            "artist": artist,
+            "album": album,
+            "year": str((metadata or {}).get("release_date") or "")[:4],
+            "track_count": (metadata or {}).get("track_count"),
+            "tidal_id": raw,
+            "quality": self._quality,
+            "enclosure_url": enclosure_url,
+            "source": source,
+        }
+
+    def _pick_best_item(
+        self,
+        items: list[ET.Element],
+        artist: str,
+        album: str,
+        metadata: dict,
+    ) -> Optional[ET.Element]:
+        candidates: list[dict[str, Any]] = []
+        for item in items:
+            candidate = self._item_to_candidate(item, source="search")
+            if candidate:
+                candidates.append(candidate)
+        evaluated = evaluate_tidarr_candidates(
+            artist=artist,
+            album=album,
+            metadata=metadata or {},
+            candidates=candidates,
+            min_confidence=self._match_min_score,
+            ambiguous_margin=0.04,
+            snapshot_limit=5,
+        )
+        if str(evaluated.get("match_status") or "") != "confident":
+            return None
+        selected = evaluated.get("selected")
+        if not isinstance(selected, dict):
+            return None
+        raw_item = selected.get("__item")
+        return raw_item if isinstance(raw_item, ET.Element) else None
 
     # ------------------------------------------------------------------
-    # Step 4b: polling helpers called by app/services/tidarr_poller.py
+    # Provider polling helpers
     # ------------------------------------------------------------------
 
     def poll_history(self, limit: int = 200) -> list[dict]:
-        """
-        Fetch completed/failed job slots from Tidarr's SABnzbd history endpoint.
-
-        GET /api/sabnzbd/api?mode=history&limit={n}
-
-        Returns a list of slot dicts with keys:
-            nzo_id   — matches the ID stored in download_jobs.job_id
-            name     — "Artist - Album" label
-            status   — "Completed" | "Failed"
-            storage  — absolute path on Tidarr host (only present on Completed)
-
-        Returns [] on any network or parse error — callers should treat empty
-        as "nothing resolved yet".
-        """
         if not self._url or not self._key:
             return []
         try:
@@ -460,18 +596,6 @@ class TidarrDownloader:
             return []
 
     def poll_queue(self) -> list[dict]:
-        """
-        Fetch in-progress job slots from Tidarr's SABnzbd queue endpoint.
-
-        GET /api/sabnzbd/api?mode=queue
-
-        Returns a list of slot dicts with keys:
-            nzo_id    — matches download_jobs.job_id
-            filename  — display name
-            status    — "Downloading" | "Queued" | "Paused"
-
-        Primarily used for UI progress display. Returns [] on error.
-        """
         if not self._url or not self._key:
             return []
         try:
@@ -487,13 +611,9 @@ class TidarrDownloader:
             return []
 
 
-# ---------------------------------------------------------------------------
-# Plugin registration — must appear after class definitions
-# ---------------------------------------------------------------------------
-
 PLUGIN_API_VERSION = 2
-PLUGIN_VERSION = "2.0.0"
-PLUGIN_DESCRIPTION = "Downloads albums via Tidarr (Tidal) and copies FLACs to your library."
+PLUGIN_VERSION = "2.2.0"
+PLUGIN_DESCRIPTION = "Downloads albums via Tidarr (Tidal) with strict release matching."
 CAPABILITIES = {
     "fetch_contract_version": 1,
     "roles": ["downloader"],
@@ -516,7 +636,7 @@ CONFIG_SCHEMA = [
         "label": "API Key",
         "type": "password",
         "required": True,
-        "placeholder": "64-character key from Tidarr Settings → Authentication",
+        "placeholder": "64-character key from Tidarr Settings -> Authentication",
     },
     {
         "key": "TIDARR_QUALITY",
@@ -526,21 +646,43 @@ CONFIG_SCHEMA = [
         "default": "lossless",
         "options": ["lossless", "hires_lossless"],
     },
-    # --- Path translation (used by TidarrDownloader.translate_path) ---
-    # Only needed when Tidarr's container path differs from Rythmx's mount point.
-    # Leave blank if both containers mount the shared download dir at the same path.
+    {
+        "key": "TIDARR_MATCH_MIN_SCORE",
+        "label": "Minimum match score",
+        "type": "text",
+        "required": False,
+        "default": "0.86",
+        "placeholder": "0.86",
+    },
+    {
+        "key": "TIDARR_ARTIST_MIN_OVERLAP",
+        "label": "Minimum artist token overlap",
+        "type": "text",
+        "required": False,
+        "default": "0.60",
+        "placeholder": "0.60",
+    },
+    {
+        "key": "TIDARR_ALBUM_MIN_OVERLAP",
+        "label": "Minimum album token overlap",
+        "type": "text",
+        "required": False,
+        "default": "0.50",
+        "placeholder": "0.50",
+    },
     {
         "key": "FILE_MOVER_TIDARR_PREFIX",
-        "label": "Tidarr download path (container-internal prefix)",
+        "label": "Tidarr download path (container prefix)",
         "type": "text",
         "required": False,
         "placeholder": "/shared/nzb_downloads",
     },
     {
         "key": "FILE_MOVER_LOCAL_PREFIX",
-        "label": "Download path (Rythmx mount point — same host dir)",
+        "label": "Download path (Rythmx mount point)",
         "type": "text",
         "required": False,
         "placeholder": "/app/downloads",
     },
 ]
+
