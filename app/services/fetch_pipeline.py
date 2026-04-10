@@ -149,8 +149,6 @@ def _build_fetch_candidates(build: dict[str, Any]) -> list[dict[str, Any]]:
     for idx, item in enumerate(track_list):
         if not isinstance(item, dict):
             continue
-        if bool(item.get("is_owned", False)) or bool(item.get("in_library", 0)):
-            continue
 
         artist = str(item.get("artist_name") or "").strip()
         album = str(item.get("album_name") or item.get("title") or "").strip()
@@ -211,6 +209,13 @@ def _build_fetch_candidates(build: dict[str, Any]) -> list[dict[str, Any]]:
 
     out: list[dict[str, Any]] = []
     for entry in grouped.values():
+        metadata = dict(entry.get("metadata") or {})
+        if _is_library_owned_for_fetch_candidate(
+            str(entry.get("artist_name") or ""),
+            str(entry.get("album_name") or ""),
+            metadata,
+        ):
+            continue
         track_titles = sorted(str(v) for v in entry.pop("track_titles_set", set()) if str(v).strip())
         if track_titles:
             entry["metadata"]["track_titles"] = track_titles[:100]
@@ -533,10 +538,30 @@ def _queue_summary(queue_id: str) -> dict[str, Any] | None:
     return _queue_from_row(dict(row)) if row else None
 
 
-def _mark_build_item_in_library(build_id: str, artist_name: str, album_name: str) -> None:
+def _mark_build_item_in_library(
+    build_id: str,
+    artist_name: str,
+    album_name: str,
+    metadata: dict[str, Any] | None = None,
+) -> None:
     build = rythmx_store.get_forge_build(build_id)
     if not build:
         return
+
+    metadata = dict(metadata or {})
+    expected_ids: set[str] = set()
+    for key in ("manual_tidal_album_id", "tidal_album_id", "tidal_id"):
+        raw = str(metadata.get(key) or "").strip()
+        if raw.isdigit():
+            expected_ids.add(raw)
+
+    def _item_tidal_ids(item: dict[str, Any]) -> set[str]:
+        out: set[str] = set()
+        for key in ("manual_tidal_album_id", "tidal_album_id", "tidal_id"):
+            raw = str(item.get(key) or "").strip()
+            if raw.isdigit():
+                out.add(raw)
+        return out
 
     track_list = list(build.get("track_list") or [])
     changed = False
@@ -545,7 +570,12 @@ def _mark_build_item_in_library(build_id: str, artist_name: str, album_name: str
             continue
         artist = str(item.get("artist_name") or "").strip().lower()
         album = str(item.get("album_name") or item.get("title") or "").strip().lower()
-        if artist == artist_name.lower() and album == album_name.lower():
+        matches = False
+        if expected_ids:
+            matches = bool(_item_tidal_ids(item) & expected_ids)
+        if not expected_ids:
+            matches = artist == artist_name.lower() and album == album_name.lower()
+        if matches:
             if not bool(item.get("is_owned", False)):
                 item["is_owned"] = True
                 changed = True
@@ -569,6 +599,13 @@ def _mark_build_item_in_library(build_id: str, artist_name: str, album_name: str
         summary["in_library_count"] = in_lib
 
     rythmx_store.update_forge_build(build_id, track_list=track_list, summary=summary)
+
+
+def _has_library_ids(metadata: dict[str, Any]) -> bool:
+    return any(
+        str(metadata.get(key) or "").strip()
+        for key in ("deezer_album_id", "itunes_album_id", "spotify_album_id", "musicbrainz_release_id")
+    )
 
 
 def _check_library_ids(metadata: dict[str, Any]) -> bool:
@@ -606,20 +643,18 @@ def _check_library_ids(metadata: dict[str, Any]) -> bool:
             """,
             tuple(params),
         ).fetchone()
-        if rel_row:
-            return True
+        return bool(rel_row)
 
-        alb_row = conn.execute(
-            f"""
-            SELECT id
-            FROM lib_albums
-            WHERE removed_at IS NULL
-              AND ({' OR '.join(clauses)})
-            LIMIT 1
-            """,
-            tuple(params),
-        ).fetchone()
-        return bool(alb_row)
+
+def _is_library_owned_for_fetch_candidate(artist_name: str, album_name: str, metadata: dict[str, Any]) -> bool:
+    metadata = dict(metadata or {})
+    if _has_library_ids(metadata):
+        return _check_library_ids(metadata)
+    if _check_library_exact(artist_name, album_name):
+        return True
+    if _check_library_normalized(artist_name, album_name):
+        return True
+    return False
 
 
 def _check_library_exact(artist_name: str, album_name: str) -> bool:
@@ -671,27 +706,18 @@ def _confirm_task_in_library(task: dict[str, Any]) -> bool:
     album = str(task.get("album_name") or "")
     matched = False
 
-    try:
-        reader = get_library_reader()
-        matched = bool(
-            reader.check_album_owned(
-                artist,
-                album,
-                deezer_album_id=metadata.get("deezer_album_id"),
-                itunes_album_id=metadata.get("itunes_album_id"),
-                spotify_album_id=metadata.get("spotify_album_id"),
-                musicbrainz_release_id=metadata.get("musicbrainz_release_id"),
-            )
-        )
-    except Exception:
-        matched = False
-
-    if not matched:
+    if _has_library_ids(metadata):
         matched = _check_library_ids(metadata)
-    if not matched:
-        matched = _check_library_exact(artist, album)
-    if not matched:
-        matched = _check_library_normalized(artist, album)
+    else:
+        try:
+            reader = get_library_reader()
+            matched = bool(reader.check_album_owned(artist, album))
+        except Exception:
+            matched = False
+        if not matched:
+            matched = _check_library_exact(artist, album)
+        if not matched:
+            matched = _check_library_normalized(artist, album)
     if not matched:
         return False
 
@@ -700,6 +726,7 @@ def _confirm_task_in_library(task: dict[str, Any]) -> bool:
         str(task.get("build_id") or ""),
         artist,
         album,
+        metadata,
     )
     return True
 

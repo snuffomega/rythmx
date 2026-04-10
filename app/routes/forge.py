@@ -251,7 +251,7 @@ def _is_truthy(value: Any) -> bool:
 def _get_discovered_releases() -> list[dict]:
     """
     Query forge_discovered_releases JOIN forge_discovered_artists.
-    in_library is release-level: true only when this specific release exists in lib_releases.
+    in_library is release-level: true only when this specific release is owned in lib_releases.
     Returns list of release dicts.
     """
     with rythmx_store._connect() as conn:
@@ -273,6 +273,7 @@ def _get_discovered_releases() -> list[dict]:
             LEFT JOIN lib_releases lr
                 ON lr.artist_id = la.id
                 AND lower(trim(lr.title)) = lower(trim(r.title))
+                AND lr.is_owned = 1
             ORDER BY r.release_date DESC, da.name ASC
             LIMIT 500
             """
