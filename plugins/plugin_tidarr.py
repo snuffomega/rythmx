@@ -785,11 +785,23 @@ class TidarrDownloader:
 
             logger.info("tidarr: resolved artist_id %s for '%s'", artist_id, artist)
 
-            # Step 2: Get all releases by this artist (singles + EPs)
-            releases = self._get_artist_releases(token, artist_id, filter_type="EPSANDSINGLES")
-            if not releases:
+            # Step 2: Get all releases by this artist (albums + singles + EPs)
+            # Query both ALBUMS and EPSANDSINGLES to get complete catalog, dedupe by ID
+            seen_ids = set()
+            all_releases = []
+            for filter_type in ("ALBUMS", "EPSANDSINGLES"):
+                releases = self._get_artist_releases(token, artist_id, filter_type=filter_type)
+                for r in releases:
+                    album_id = r.get("id")
+                    if album_id and album_id not in seen_ids:
+                        all_releases.append(r)
+                        seen_ids.add(album_id)
+
+            if not all_releases:
                 logger.debug("tidarr: no releases found for artist_id %s", artist_id)
                 return None
+
+            releases = all_releases
 
             # Step 3: Convert to candidates and score using existing matcher
             candidates = [self._tidal_result_to_candidate(r) for r in releases]
