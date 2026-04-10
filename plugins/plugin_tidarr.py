@@ -6,6 +6,7 @@ Tidarr's SABnzbd-compatible API.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -16,6 +17,7 @@ from typing import Any, Optional
 import requests
 
 from app.clients import musicbrainz_client
+from app.db import rythmx_store
 from app.services.enrichment._helpers import match_album_title, strip_title_suffixes
 from app.services.fetch_matching import evaluate_tidarr_candidates
 
@@ -713,23 +715,192 @@ class TidarrDownloader:
     def pre_fetch_enrich(self, artist: str, album: str, metadata: dict) -> dict:
         """
         Resolve provider-specific Tidal IDs before fetch task submission.
-        Tries A → E → {} chain:
-        - A: MusicBrainz URL relationships
-        - E: Artist catalog search (artist ID → releases → match)
+        Phase 2: Cache-first artist resolution
+
+        Tries A → B → {} chain:
+        - A: Cached lookup (tidal_artist_id from lib_artists)
+        - B: Fresh search (Tidal API → store in lib_artists → catalog match)
         - Fallback: manual override required
         """
-        # A: MusicBrainz URL relationships
-        result = self._resolve_via_musicbrainz(metadata)
+        # A: Check cache first
+        result = self._resolve_via_cached_artist(artist, album, metadata)
         if result:
             return result
 
-        # E: Artist catalog search
-        result = self._resolve_via_artist_catalog(artist, album, metadata)
+        # B: Fresh search (with caching)
+        result = self._resolve_via_fresh_artist_search(artist, album, metadata)
         if result:
             return result
 
         # Fallback: manual override required
         return {}
+
+    def _resolve_via_cached_artist(self, artist: str, album: str, metadata: dict) -> dict | None:
+        """
+        Path A (cached): Look up tidal_artist_id from lib_artists.
+        If found, use it to query artist catalog and match album.
+        """
+        try:
+            # Normalize artist name for lookup
+            normalized_artist = self._normalize_text(artist)
+
+            with rythmx_store._connect() as conn:
+                row = conn.execute(
+                    "SELECT id, tidal_artist_id FROM lib_artists WHERE lower(replace(name, ' ', '')) = lower(?)",
+                    (normalized_artist.replace(" ", ""),),
+                ).fetchone()
+
+            if not row or not row[1]:  # No cached tidal_artist_id
+                return None
+
+            artist_id = str(row[1])
+            logger.debug("tidarr: found cached tidal_artist_id %s for '%s'", artist_id, artist)
+
+            # Query catalog with cached artist ID
+            token = self._get_tidal_token()
+            if not token:
+                return None
+
+            # Query both ALBUMS and EPSANDSINGLES
+            all_releases = []
+            seen_ids = set()
+            for filter_type in ("ALBUMS", "EPSANDSINGLES"):
+                releases = self._get_artist_releases(token, artist_id, filter_type=filter_type)
+                for r in releases:
+                    album_id = r.get("id")
+                    if album_id and album_id not in seen_ids:
+                        all_releases.append(r)
+                        seen_ids.add(album_id)
+
+            if not all_releases:
+                logger.debug("tidarr: no releases found for cached artist_id %s", artist_id)
+                return None
+
+            # Score albums
+            candidates = [self._tidal_result_to_candidate(r) for r in all_releases]
+            evaluated = evaluate_tidarr_candidates(
+                artist=artist,
+                album=album,
+                metadata=metadata,
+                candidates=candidates,
+                min_confidence=0.88,
+                ambiguous_margin=0.05,
+                snapshot_limit=5,
+            )
+
+            if evaluated.get("match_status") == "confident":
+                selected = evaluated.get("selected")
+                if selected:
+                    tidal_id = str(selected.get("tidal_id") or "").strip()
+                    if tidal_id:
+                        logger.info(
+                            "tidarr: resolved tidal_id via cached artist: %s "
+                            "(cached_artist_id=%s confidence=%.2f)",
+                            tidal_id,
+                            artist_id,
+                            evaluated.get("match_confidence", 0.0),
+                        )
+                        return {"tidal_album_id": tidal_id}
+
+            logger.debug(
+                "tidarr: cached artist catalog found %d releases but no confident match "
+                "(best_confidence=%.2f status=%s)",
+                len(all_releases),
+                evaluated.get("match_confidence", 0.0),
+                evaluated.get("match_status"),
+            )
+        except Exception as e:
+            logger.warning("tidarr: cached artist resolution failed: %s", e)
+
+        return None
+
+    def _resolve_via_fresh_artist_search(self, artist: str, album: str, metadata: dict) -> dict | None:
+        """
+        Path B (fresh): Search for artist on Tidal, store tidal_artist_id in DB,
+        then query catalog and match album.
+        """
+        token = self._get_tidal_token()
+        if not token:
+            logger.debug("tidarr: tidal token not available for fresh artist search")
+            return None
+
+        try:
+            # Step 1: Search and match artist
+            artist_id = self._search_and_match_artist(token, artist)
+            if not artist_id:
+                logger.debug("tidarr: no confident artist match for '%s'", artist)
+                return None
+
+            logger.info("tidarr: resolved artist_id %s for '%s'", artist_id, artist)
+
+            # Step 2: Store in DB (cache for future use)
+            try:
+                normalized_artist = self._normalize_text(artist)
+                with rythmx_store._connect() as conn:
+                    conn.execute(
+                        """
+                        UPDATE lib_artists
+                        SET tidal_artist_id = ?
+                        WHERE lower(replace(name, ' ', '')) = lower(?)
+                        """,
+                        (str(artist_id), normalized_artist.replace(" ", "")),
+                    )
+                logger.debug("tidarr: stored tidal_artist_id %s for '%s'", artist_id, artist)
+            except Exception as e:
+                logger.debug("tidarr: failed to store tidal_artist_id: %s", e)
+
+            # Step 3: Get all releases by this artist (singles + EPs)
+            all_releases = []
+            seen_ids = set()
+            for filter_type in ("ALBUMS", "EPSANDSINGLES"):
+                releases = self._get_artist_releases(token, artist_id, filter_type=filter_type)
+                for r in releases:
+                    album_id = r.get("id")
+                    if album_id and album_id not in seen_ids:
+                        all_releases.append(r)
+                        seen_ids.add(album_id)
+
+            if not all_releases:
+                logger.debug("tidarr: no releases found for artist_id %s", artist_id)
+                return None
+
+            # Step 4: Score using existing matcher
+            candidates = [self._tidal_result_to_candidate(r) for r in all_releases]
+            evaluated = evaluate_tidarr_candidates(
+                artist=artist,
+                album=album,
+                metadata=metadata,
+                candidates=candidates,
+                min_confidence=0.88,
+                ambiguous_margin=0.05,
+                snapshot_limit=5,
+            )
+
+            if evaluated.get("match_status") == "confident":
+                selected = evaluated.get("selected")
+                if selected:
+                    tidal_id = str(selected.get("tidal_id") or "").strip()
+                    if tidal_id:
+                        logger.info(
+                            "tidarr: resolved tidal_id via fresh artist search: %s "
+                            "(artist_id=%s confidence=%.2f stored_for_cache=true)",
+                            tidal_id,
+                            artist_id,
+                            evaluated.get("match_confidence", 0.0),
+                        )
+                        return {"tidal_album_id": tidal_id}
+            else:
+                logger.debug(
+                    "tidarr: fresh artist catalog search found %d releases but no confident match "
+                    "(best_confidence=%.2f status=%s)",
+                    len(all_releases),
+                    evaluated.get("match_confidence", 0.0),
+                    evaluated.get("match_status"),
+                )
+        except Exception as e:
+            logger.warning("tidarr: fresh artist resolution failed: %s", e)
+
+        return None
 
     def _resolve_via_musicbrainz(self, metadata: dict) -> dict | None:
         """

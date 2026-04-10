@@ -91,132 +91,71 @@ class TestValidateEnrichmentResult:
         assert result == {}
 
 
-class TestMusicBrainzGetReleaseWithUrlRels:
-    """Test musicbrainz_client.get_release() with url-rels include."""
+class TestTidarrPreFetchEnrichCachedArtistPath:
+    """Test Tidarr pre_fetch_enrich via cached artist ID (Path A)."""
 
-    def test_parses_tidal_url_relationship(self):
-        """Extract Tidal album ID from MB URL relationships."""
-        from app.clients import musicbrainz_client
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "id": "release-mbid-123",
-            "release-group": {
-                "id": "rg-id-456",
-                "first-release-date": "2014-10-27",
-            },
-            "relationships": [
-                {
-                    "type": "external links",
-                    "url": {
-                        "resource": "https://tidal.com/album/37269992",
-                        "type": "tidal",
-                    },
-                },
-            ],
-        }
-
-        with patch.object(musicbrainz_client._session, "get", return_value=mock_response):
-            result = musicbrainz_client.get_release("release-mbid-123", inc="url-rels")
-
-        assert result is not None
-        assert result["release_group_id"] == "rg-id-456"
-        assert result["first_release_date"] == "2014-10-27"
-        assert "url-rels" in result
-        assert len(result["url-rels"]) == 1
-        assert result["url-rels"][0]["url"] == "https://tidal.com/album/37269992"
-
-    def test_defaults_to_release_groups_include(self):
-        """Default inc parameter works without url-rels."""
-        from app.clients import musicbrainz_client
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "id": "release-mbid-123",
-            "release-group": {
-                "id": "rg-id-456",
-                "first-release-date": "2014-10-27",
-            },
-            "relationships": [],
-        }
-
-        with patch.object(musicbrainz_client._session, "get", return_value=mock_response) as mock_get:
-            result = musicbrainz_client.get_release("release-mbid-123")
-
-        assert result is not None
-        # Verify default inc parameter was used
-        mock_get.assert_called_once()
-        call_args = mock_get.call_args
-        assert call_args[1]["params"]["inc"] == "release-groups"
-
-
-class TestTidarrPreFetchEnrichMusicBrainzPath:
-    """Test Tidarr pre_fetch_enrich via MusicBrainz URL relationships (Path A)."""
-
-    def test_resolves_tidal_id_from_musicbrainz_url_rel(self, monkeypatch):
-        """Resolve Tidal ID when MB has url-rel to tidal.com/album."""
+    def test_resolves_via_cached_artist_id(self, monkeypatch):
+        """Resolve Tidal ID when artist has cached tidal_artist_id in DB."""
         monkeypatch.setenv("TIDARR_URL", "http://tidarr")
         monkeypatch.setenv("TIDARR_API_KEY", "abc")
         downloader = TidarrDownloader()
 
-        # Mock musicbrainz_client.get_release to return a Tidal URL relationship
-        mock_mb_result = {
-            "release_group_id": "rg-123",
-            "first_release_date": "2014-10-27",
-            "url-rels": [
-                {
-                    "url": "https://tidal.com/album/37269992",
-                    "type": "tidal",
-                }
-            ],
+        # Mock DB lookup to return cached artist ID
+        def mock_connect():
+            from unittest.mock import MagicMock
+            conn = MagicMock()
+            # Return row with tidal_artist_id
+            conn.execute.return_value.fetchone.return_value = (1, "taylor_swift_artist_id")
+            return conn.__enter__.return_value
+
+        monkeypatch.setattr("app.db.rythmx_store._connect", mock_connect)
+
+        # Mock token fetching
+        monkeypatch.setattr(downloader, "_get_tidal_token", lambda: "mock_token")
+
+        # Mock artist releases and evaluation
+        tidal_album = {
+            "id": 37269992,
+            "title": "1989",
+            "artists": [{"name": "Taylor Swift"}],
+            "releaseDate": "2014-10-27",
+            "numberOfTracks": 13,
         }
         monkeypatch.setattr(
-            "app.clients.musicbrainz_client.get_release",
-            lambda mbid, inc=None: mock_mb_result,
+            downloader,
+            "_get_artist_releases",
+            lambda token, artist_id, filter_type: [tidal_album],
         )
 
-        metadata = {"musicbrainz_release_id": "release-mbid-123"}
-        result = downloader.pre_fetch_enrich("Taylor Swift", "1989", metadata)
+        monkeypatch.setattr(
+            "app.services.fetch_matching.evaluate_tidarr_candidates",
+            lambda **kwargs: {
+                "match_status": "confident",
+                "match_confidence": 0.95,
+                "selected": {"tidal_id": "37269992"},
+            },
+        )
 
+        result = downloader.pre_fetch_enrich("Taylor Swift", "1989", {})
         assert result == {"tidal_album_id": "37269992"}
 
-    def test_returns_empty_when_no_musicbrainz_id(self, monkeypatch):
-        """Fallback to empty dict when no MB ID in metadata."""
+    def test_returns_empty_when_no_cached_artist(self, monkeypatch):
+        """Falls through to fresh search if no cached artist ID."""
         monkeypatch.setenv("TIDARR_URL", "http://tidarr")
         monkeypatch.setenv("TIDARR_API_KEY", "abc")
         downloader = TidarrDownloader()
 
-        metadata = {}  # No musicbrainz_release_id
-        result = downloader.pre_fetch_enrich("Taylor Swift", "1989", metadata)
+        # Mock DB lookup to return no cached ID
+        def mock_connect():
+            from unittest.mock import MagicMock
+            conn = MagicMock()
+            conn.execute.return_value.fetchone.return_value = None
+            return conn.__enter__.return_value
 
-        assert result == {}
+        monkeypatch.setattr("app.db.rythmx_store._connect", mock_connect)
+        monkeypatch.setattr(downloader, "_get_tidal_token", lambda: None)
 
-    def test_returns_empty_when_mb_has_no_tidal_url(self, monkeypatch):
-        """Fallback to empty dict when MB has no Tidal link."""
-        monkeypatch.setenv("TIDARR_URL", "http://tidarr")
-        monkeypatch.setenv("TIDARR_API_KEY", "abc")
-        downloader = TidarrDownloader()
-
-        # Mock musicbrainz_client to return no Tidal URL
-        mock_mb_result = {
-            "release_group_id": "rg-123",
-            "first_release_date": "2014-10-27",
-            "url-rels": [
-                {"url": "https://spotify.com/album/xyz", "type": "spotify"},
-            ],
-        }
-        monkeypatch.setattr(
-            "app.clients.musicbrainz_client.get_release",
-            lambda mbid, inc=None: mock_mb_result,
-        )
-
-        metadata = {"musicbrainz_release_id": "release-mbid-123"}
-        result = downloader.pre_fetch_enrich("Taylor Swift", "1989", metadata)
-
-        # Path A fails, Path D would be tried, but we mock it to return empty
-        # Since we don't mock _get_tidal_token, it will fail gracefully
+        result = downloader.pre_fetch_enrich("Unknown Artist", "Unknown Album", {})
         assert result == {}
 
 

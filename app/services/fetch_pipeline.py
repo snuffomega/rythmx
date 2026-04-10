@@ -811,23 +811,17 @@ def _submit_queued_tasks(*, run_id: str | None = None, limit: int = 100) -> dict
         return {"submitted": 0, "unresolved": 0, "failed": 0, "jobs": []}
 
     downloader = _plugins.get_downloader()
-    submitted = 0
-    unresolved = 0
-    failed = 0
-    jobs: list[dict[str, str]] = []
+
+    # ========================================================================
+    # PHASE 1: RESOLVE ALL (Tidal API only - no Tidarr calls)
+    # ========================================================================
+    logger.info("fetch_pipeline: phase 1 starting - resolve %d tasks via pre-fetch enrichment", len(tasks))
 
     for task in tasks:
         task_id = int(task["id"])
         artist = str(task.get("artist_name") or "")
         album = str(task.get("album_name") or "")
         metadata = task.get("metadata") or {}
-        job_id = ""
-        match_status = ""
-        match_strategy = ""
-        match_confidence: float | None = None
-        match_reasons: list[str] = []
-        match_candidates: list[dict[str, Any]] = []
-        outcome_error = ""
 
         # Pre-fetch enrichment (if plugin provides it)
         if hasattr(downloader, "pre_fetch_enrich") and callable(downloader.pre_fetch_enrich):
@@ -843,14 +837,50 @@ def _submit_queued_tasks(*, run_id: str | None = None, limit: int = 100) -> dict
                         metadata_json = json.dumps(metadata, ensure_ascii=True)
                         _set_task_fields(task_id, metadata_json=metadata_json)
                         logger.info(
-                            "fetch_pipeline: pre-fetch enrichment for %s - %s: added keys %s",
+                            "fetch_pipeline: phase 1 - enriched %s - %s: added keys %s",
                             artist,
                             album,
                             list(validated_enrichment.keys()),
                         )
             except Exception as e:
                 # Non-fatal: log and continue
-                logger.warning("fetch_pipeline: pre_fetch_enrich failed for %s - %s: %s", artist, album, e)
+                logger.warning("fetch_pipeline: phase 1 - pre_fetch_enrich failed for %s - %s: %s", artist, album, e)
+
+    logger.info("fetch_pipeline: phase 1 complete - all tasks enriched, proceeding to phase 2")
+
+    # ========================================================================
+    # PHASE 2: SUBMIT ALL (Tidarr only - with resolved IDs)
+    # ========================================================================
+    logger.info("fetch_pipeline: phase 2 starting - submit %d tasks to Tidarr", len(tasks))
+
+    submitted = 0
+    unresolved = 0
+    failed = 0
+    jobs: list[dict[str, str]] = []
+
+    for task in tasks:
+        task_id = int(task["id"])
+        artist = str(task.get("artist_name") or "")
+        album = str(task.get("album_name") or "")
+        # Re-fetch metadata from DB to get enriched version
+        with rythmx_store._connect() as conn:
+            row = conn.execute(
+                "SELECT metadata_json FROM fetch_tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+        metadata = {}
+        if row and row[0]:
+            try:
+                metadata = json.loads(row[0])
+            except Exception:
+                metadata = {}
+
+        job_id = ""
+        match_status = ""
+        match_strategy = ""
+        match_confidence: float | None = None
+        match_reasons: list[str] = []
+        match_candidates: list[dict[str, Any]] = []
+        outcome_error = ""
 
         try:
             submit_with_match = getattr(downloader, "submit_with_match", None)
@@ -937,6 +967,7 @@ def _submit_queued_tasks(*, run_id: str | None = None, limit: int = 100) -> dict
         submitted += 1
         jobs.append({"task_id": str(task_id), "job_id": job_id, "artist": artist, "album": album})
 
+    logger.info("fetch_pipeline: phase 2 complete - submitted=%d unresolved=%d failed=%d", submitted, unresolved, failed)
     return {"submitted": submitted, "unresolved": unresolved, "failed": failed, "jobs": jobs}
 
 
