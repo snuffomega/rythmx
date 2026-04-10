@@ -112,8 +112,40 @@ def _emit_error(*, run_id: str, message: str) -> None:
 
 def _build_fetch_candidates(build: dict[str, Any]) -> list[dict[str, Any]]:
     track_list = build.get("track_list") or []
-    seen: set[tuple[str, str]] = set()
-    out: list[dict[str, Any]] = []
+    grouped: dict[tuple[str, str], dict[str, Any]] = {}
+
+    def _maybe_track_title(item: dict[str, Any], album_name: str) -> str:
+        for key in ("track_name", "track_title", "name", "title"):
+            value = str(item.get(key) or "").strip()
+            if value:
+                break
+        else:
+            value = ""
+        if not value:
+            return ""
+        # In some Forge payloads `title` is the album title; avoid polluting track hints.
+        if _normalize_text(value) == _normalize_text(album_name):
+            return ""
+        return value
+
+    def _coerce_tidal_id(item: dict[str, Any]) -> str | None:
+        for key in ("manual_tidal_album_id", "tidal_album_id", "tidal_id"):
+            raw = str(item.get(key) or "").strip()
+            if raw.isdigit():
+                return raw
+        return None
+
+    def _coerce_track_count(item: dict[str, Any]) -> int | None:
+        for key in ("track_count", "total_tracks"):
+            raw = str(item.get(key) or "").strip()
+            if not raw:
+                continue
+            try:
+                return int(float(raw))
+            except Exception:
+                continue
+        return None
+
     for idx, item in enumerate(track_list):
         if not isinstance(item, dict):
             continue
@@ -126,15 +158,14 @@ def _build_fetch_candidates(build: dict[str, Any]) -> list[dict[str, Any]]:
             continue
 
         key = (artist.lower(), album.lower())
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(
-            {
+        entry = grouped.get(key)
+        if not entry:
+            entry = {
                 "artist_name": artist,
                 "album_name": album,
                 "artist_key": key[0],
                 "album_key": key[1],
+                "track_titles_set": set(),
                 "metadata": {
                     "deezer_album_id": item.get("deezer_album_id") or item.get("deezer_id"),
                     "itunes_album_id": item.get("itunes_album_id"),
@@ -143,9 +174,49 @@ def _build_fetch_candidates(build: dict[str, Any]) -> list[dict[str, Any]]:
                     "release_date": item.get("release_date"),
                     "thumb_url": item.get("thumb_url") or item.get("cover_url"),
                     "item_index": idx,
+                    "tidal_album_id": _coerce_tidal_id(item),
+                    "track_count": _coerce_track_count(item),
                 },
             }
-        )
+            grouped[key] = entry
+
+        metadata = entry["metadata"]
+        if not metadata.get("deezer_album_id"):
+            metadata["deezer_album_id"] = item.get("deezer_album_id") or item.get("deezer_id")
+        if not metadata.get("itunes_album_id"):
+            metadata["itunes_album_id"] = item.get("itunes_album_id")
+        if not metadata.get("spotify_album_id"):
+            metadata["spotify_album_id"] = item.get("spotify_album_id")
+        if not metadata.get("musicbrainz_release_id"):
+            metadata["musicbrainz_release_id"] = item.get("musicbrainz_release_id")
+        if not metadata.get("release_date"):
+            metadata["release_date"] = item.get("release_date")
+        if not metadata.get("thumb_url"):
+            metadata["thumb_url"] = item.get("thumb_url") or item.get("cover_url")
+        if not metadata.get("tidal_album_id"):
+            metadata["tidal_album_id"] = _coerce_tidal_id(item)
+
+        tc = _coerce_track_count(item)
+        if tc is not None:
+            existing_tc = metadata.get("track_count")
+            try:
+                existing_tc_i = int(existing_tc) if existing_tc is not None else 0
+            except Exception:
+                existing_tc_i = 0
+            metadata["track_count"] = max(existing_tc_i, tc)
+
+        maybe_title = _maybe_track_title(item, album)
+        if maybe_title:
+            entry["track_titles_set"].add(maybe_title)
+
+    out: list[dict[str, Any]] = []
+    for entry in grouped.values():
+        track_titles = sorted(str(v) for v in entry.pop("track_titles_set", set()) if str(v).strip())
+        if track_titles:
+            entry["metadata"]["track_titles"] = track_titles[:100]
+            if not entry["metadata"].get("track_count"):
+                entry["metadata"]["track_count"] = len(track_titles)
+        out.append(entry)
     return out
 
 
@@ -235,6 +306,8 @@ def _resolve_source_dir(storage_path: str, downloader: Any) -> tuple[str | None,
 def _task_from_row(row: dict[str, Any]) -> dict[str, Any]:
     task = dict(row)
     task["metadata"] = _safe_json(task.get("metadata_json"), {})
+    task["match_reasons"] = _safe_json(task.get("match_reasons_json"), [])
+    task["match_candidates"] = _safe_json(task.get("match_candidates_json"), [])
     return task
 
 
@@ -261,6 +334,33 @@ def _set_task_fields(task_id: int, **fields: Any) -> None:
             f"UPDATE fetch_tasks SET {', '.join(updates)} WHERE id = ?",
             tuple(params),
         )
+
+
+def _set_task_match(
+    task_id: int,
+    *,
+    status: str | None = None,
+    strategy: str | None = None,
+    confidence: float | None = None,
+    reasons: list[str] | None = None,
+    candidates: list[dict[str, Any]] | None = None,
+) -> None:
+    payload: dict[str, Any] = {}
+    if status is not None:
+        payload["match_status"] = str(status or "").strip() or None
+    if strategy is not None:
+        payload["match_strategy"] = str(strategy or "").strip() or None
+    if confidence is not None:
+        try:
+            payload["match_confidence"] = float(confidence)
+        except Exception:
+            payload["match_confidence"] = None
+    if reasons is not None:
+        payload["match_reasons_json"] = json.dumps(list(reasons), ensure_ascii=True)
+    if candidates is not None:
+        payload["match_candidates_json"] = json.dumps(list(candidates), ensure_ascii=True)
+    if payload:
+        _set_task_fields(task_id, **payload)
 
 
 def _set_run_fields(run_id: str, **fields: Any) -> None:
@@ -642,9 +742,43 @@ def _submit_queued_tasks(*, run_id: str | None = None, limit: int = 100) -> dict
         artist = str(task.get("artist_name") or "")
         album = str(task.get("album_name") or "")
         metadata = task.get("metadata") or {}
+        job_id = ""
+        match_status = ""
+        match_strategy = ""
+        match_confidence: float | None = None
+        match_reasons: list[str] = []
+        match_candidates: list[dict[str, Any]] = []
+        outcome_error = ""
 
         try:
-            job_id = str(downloader.submit(artist, album, metadata))
+            submit_with_match = getattr(downloader, "submit_with_match", None)
+            if callable(submit_with_match):
+                outcome = submit_with_match(artist, album, metadata)
+                if isinstance(outcome, dict):
+                    job_id = str(outcome.get("job_id") or "")
+                    match_status = str(outcome.get("match_status") or outcome.get("status") or "").strip()
+                    match_strategy = str(outcome.get("match_strategy") or "").strip()
+                    try:
+                        match_confidence = (
+                            float(outcome["match_confidence"])
+                            if outcome.get("match_confidence") is not None
+                            else None
+                        )
+                    except Exception:
+                        match_confidence = None
+                    raw_reasons = outcome.get("match_reasons")
+                    if isinstance(raw_reasons, list):
+                        match_reasons = [str(v) for v in raw_reasons][:20]
+                    raw_candidates = outcome.get("candidates")
+                    if isinstance(raw_candidates, list):
+                        match_candidates = [
+                            dict(v) for v in raw_candidates[:20] if isinstance(v, dict)
+                        ]
+                    outcome_error = str(outcome.get("error_message") or "").strip()
+                else:
+                    job_id = str(outcome or "")
+            else:
+                job_id = str(downloader.submit(artist, album, metadata))
         except Exception as exc:
             etype, ecode, emsg = _classify_error(exc)
             _set_task_stage(
@@ -657,13 +791,28 @@ def _submit_queued_tasks(*, run_id: str | None = None, limit: int = 100) -> dict
             failed += 1
             continue
 
-        if job_id.startswith("unresolved:"):
+        if match_status or match_strategy or match_confidence is not None or match_reasons or match_candidates:
+            _set_task_match(
+                task_id,
+                status=match_status or None,
+                strategy=match_strategy or None,
+                confidence=match_confidence,
+                reasons=match_reasons,
+                candidates=match_candidates,
+            )
+
+        if not job_id or job_id.startswith("unresolved:"):
+            unresolved_code = "unresolved"
+            if match_status == "ambiguous":
+                unresolved_code = "ambiguous_match"
+            elif match_status == "search_inconsistent":
+                unresolved_code = "search_inconsistent"
             _set_task_stage(
                 task_id,
                 "unresolved",
                 error_type="permanent",
-                error_code="unresolved",
-                error_message=job_id,
+                error_code=unresolved_code,
+                error_message=outcome_error or job_id or f"unresolved:{artist}:{album}",
             )
             unresolved += 1
             continue
@@ -1574,6 +1723,143 @@ def list_fetch_tasks_for_run(
     return [_task_from_row(dict(r)) for r in rows]
 
 
+def set_manual_release_for_task(run_id: str, task_id: int, tidal_album_id: str) -> dict[str, Any]:
+    tidal_album_id = str(tidal_album_id or "").strip()
+    if not tidal_album_id.isdigit():
+        raise ValueError("tidal_album_id must be numeric")
+
+    with rythmx_store._connect() as conn:
+        row = conn.execute(
+            """
+            SELECT *
+            FROM fetch_tasks
+            WHERE id = ? AND run_id = ?
+            LIMIT 1
+            """,
+            (int(task_id), run_id),
+        ).fetchone()
+        if not row:
+            raise ValueError("Fetch task not found")
+        task = dict(row)
+        metadata = _safe_json(task.get("metadata_json"), {})
+        metadata["manual_tidal_album_id"] = tidal_album_id
+        metadata["tidal_album_id"] = metadata.get("tidal_album_id") or tidal_album_id
+        now = _utcnow()
+        conn.execute(
+            """
+            UPDATE fetch_tasks
+            SET metadata_json = ?,
+                match_status = 'queued',
+                match_strategy = 'manual_id',
+                match_confidence = NULL,
+                match_reasons_json = '[]',
+                match_candidates_json = '[]',
+                updated_at = ?,
+                last_transition_at = ?
+            WHERE id = ?
+            """,
+            (json.dumps(metadata, ensure_ascii=True), now, now, int(task_id)),
+        )
+
+    refreshed = list_fetch_tasks_for_run(run_id, limit=10000)
+    for item in refreshed:
+        if int(item["id"]) == int(task_id):
+            return item
+    raise ValueError("Fetch task not found")
+
+
+def probe_fetch_match(
+    *,
+    build_id: str | None = None,
+    run_id: str | None = None,
+    limit: int = 200,
+) -> dict[str, Any]:
+    if not build_id and not run_id:
+        raise ValueError("build_id or run_id is required")
+
+    downloader = _plugins.get_downloader()
+    preview = getattr(downloader, "preview_match", None)
+    if not callable(preview):
+        raise RuntimeError(f"Downloader '{getattr(downloader, 'name', 'unknown')}' does not support preview_match")
+
+    work_items: list[dict[str, Any]] = []
+    if run_id:
+        run = get_fetch_run(run_id)
+        if not run:
+            raise ValueError("Fetch run not found")
+        for task in list_fetch_tasks_for_run(run_id, limit=max(1, min(limit, 5000))):
+            work_items.append(
+                {
+                    "task_id": int(task["id"]),
+                    "artist_name": str(task.get("artist_name") or ""),
+                    "album_name": str(task.get("album_name") or ""),
+                    "metadata": dict(task.get("metadata") or {}),
+                }
+            )
+    else:
+        build = rythmx_store.get_forge_build(str(build_id))
+        if not build:
+            raise ValueError("Build not found")
+        for idx, item in enumerate(_build_fetch_candidates(build)):
+            work_items.append(
+                {
+                    "task_id": None,
+                    "artist_name": str(item.get("artist_name") or ""),
+                    "album_name": str(item.get("album_name") or ""),
+                    "metadata": dict(item.get("metadata") or {}),
+                    "candidate_index": idx,
+                }
+            )
+        work_items = work_items[: max(1, min(limit, 5000))]
+
+    counts = {"confident": 0, "ambiguous": 0, "unresolved": 0, "search_inconsistent": 0}
+    rows: list[dict[str, Any]] = []
+    for item in work_items:
+        artist = str(item.get("artist_name") or "")
+        album = str(item.get("album_name") or "")
+        metadata = dict(item.get("metadata") or {})
+        try:
+            result = preview(artist, album, metadata)
+            if not isinstance(result, dict):
+                result = {}
+        except Exception as exc:
+            result = {
+                "match_status": "unresolved",
+                "match_strategy": "probe_error",
+                "match_confidence": 0.0,
+                "match_reasons": [str(exc)],
+                "candidates": [],
+            }
+
+        match_status = str(result.get("match_status") or result.get("status") or "unresolved")
+        if match_status not in counts:
+            match_status = "unresolved"
+        counts[match_status] += 1
+
+        rows.append(
+            {
+                "task_id": item.get("task_id"),
+                "artist_name": artist,
+                "album_name": album,
+                "match_status": match_status,
+                "match_strategy": str(result.get("match_strategy") or ""),
+                "match_confidence": float(result.get("match_confidence") or 0.0),
+                "match_reasons": list(result.get("match_reasons") or []),
+                "candidates": list(result.get("candidates") or []),
+                "selected": result.get("selected"),
+            }
+        )
+
+    return {
+        "build_id": build_id,
+        "run_id": run_id,
+        "provider": str(getattr(downloader, "name", "unknown")),
+        "counts": counts,
+        "total": len(rows),
+        "items": rows,
+    }
+
+
 def retry_fetch_run(run_id: str, *, task_ids: list[int] | None = None) -> dict[str, Any]:
     summary = _run_summary(run_id)
     if not summary:
@@ -1611,6 +1897,11 @@ def retry_fetch_run(run_id: str, *, task_ids: list[int] | None = None) -> dict[s
                     error_type = NULL,
                     error_code = NULL,
                     error_message = NULL,
+                    match_status = NULL,
+                    match_strategy = NULL,
+                    match_confidence = NULL,
+                    match_reasons_json = '[]',
+                    match_candidates_json = '[]',
                     scan_deadline_at = NULL,
                     completed_at = NULL,
                     updated_at = ?,
