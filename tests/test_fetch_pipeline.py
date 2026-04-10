@@ -48,7 +48,6 @@ def _build_with_missing_album(name: str, *, artist: str = "Artist A", album: str
         track_list=[
             {"artist_name": artist, "title": album, "in_library": 0},
             {"artist_name": artist, "title": album, "in_library": 0},  # duplicate
-            {"artist_name": "Owned Artist", "title": "Owned Album", "in_library": 1},
         ],
         summary={},
     )
@@ -77,6 +76,38 @@ def test_start_fetch_run_creates_deduped_tasks_and_jobs(tmp_db, monkeypatch):  #
     jobs = rythmx_store.get_download_jobs_for_build(build["id"])
     assert len(jobs) == 1
     assert jobs[0]["job_id"] == "tidarr_nzo_1"
+
+
+def test_start_fetch_run_ignores_stale_build_in_library_flags(tmp_db, monkeypatch):  # noqa: ARG001
+    class _Downloader:
+        name = "tidarr"
+
+        @staticmethod
+        def submit(_artist: str, _album: str, _metadata: dict) -> str:
+            return "tidarr_nzo_stale"
+
+    monkeypatch.setattr("app.plugins.get_downloader", lambda: _Downloader())
+
+    build = rythmx_store.create_forge_build(
+        name="Fetch Stale Flags",
+        source="new_music",
+        status="ready",
+        run_mode="build",
+        track_list=[
+            {
+                "artist_name": "Artist Stale",
+                "title": "Album Stale",
+                "in_library": 1,
+                "is_owned": True,
+                "deezer_album_id": "999999999",
+            }
+        ],
+        summary={},
+    )
+
+    run = fetch_pipeline.start_fetch_run(build["id"])
+    assert run["total_tasks"] == 1
+    assert run["submission"]["submitted"] == 1
 
 
 def test_poll_once_flows_to_in_library(tmp_db, monkeypatch, tmp_path):  # noqa: ARG001

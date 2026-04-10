@@ -68,8 +68,34 @@ def test_tidarr_preview_match_marks_search_inconsistent_with_explicit_id(monkeyp
     )
 
     assert result["match_status"] == "search_inconsistent"
-    selected = result.get("selected") or {}
-    assert str(selected.get("tidal_id")) == "510517322"
+    assert result.get("selected") is None
+    reasons = " ".join(result.get("match_reasons") or [])
+    assert "expected_tidal_id_not_found_in_search" in reasons
+
+
+def test_tidarr_submit_with_match_requires_confident(monkeypatch):
+    monkeypatch.setenv("TIDARR_URL", "http://tidarr")
+    monkeypatch.setenv("TIDARR_API_KEY", "abc")
+    downloader = TidarrDownloader()
+    monkeypatch.setattr(
+        downloader,
+        "preview_match",
+        lambda _artist, _album, _metadata: {
+            "match_status": "ambiguous",
+            "match_strategy": "search_score",
+            "match_confidence": 0.81,
+            "match_reasons": ["ambiguous_margin=0.01"],
+            "candidates": [{"tidal_id": "12345", "score": 0.81}],
+            "selected": {
+                "tidal_id": "12345",
+                "enclosure_url": "http://example.local/download/12345/file.nzb",
+            },
+        },
+    )
+
+    out = downloader.submit_with_match("Artist", "Album", {})
+    assert out["status"] == "unresolved"
+    assert out["job_id"] == ""
 
 
 def test_tidarr_submit_with_match_returns_unresolved_when_no_candidate(monkeypatch):
