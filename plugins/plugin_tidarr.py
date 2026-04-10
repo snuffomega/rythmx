@@ -104,15 +104,49 @@ class TidarrDownloader:
                 "job_id": "",
             }
 
-        preview = self.preview_match(artist, album, metadata or {})
+        metadata = dict(metadata or {})
+        manual_tidal_id = str(metadata.get("manual_tidal_album_id") or "").strip()
+        if manual_tidal_id.isdigit():
+            preview = {
+                "status": "confident",
+                "match_status": "confident",
+                "match_strategy": "manual_id",
+                "match_confidence": 1.0,
+                "match_reasons": ["manual_override"],
+                "candidates": [
+                    {
+                        "tidal_id": manual_tidal_id,
+                        "artist": artist,
+                        "album": album,
+                        "quality": self._quality,
+                        "source": "manual_id",
+                        "score": 1.0,
+                    }
+                ],
+                "selected": {
+                    "artist": artist,
+                    "album": album,
+                    "tidal_id": manual_tidal_id,
+                    "quality": self._quality,
+                    "source": "manual_id",
+                    "enclosure_url": (
+                        f"{self._url}/api/lidarr/download/"
+                        f"{manual_tidal_id}/{self._quality}?apikey={self._key}"
+                    ),
+                },
+            }
+        else:
+            preview = self.preview_match(artist, album, metadata)
+
+        match_status = str(preview.get("match_status") or "unresolved")
         selected = preview.get("selected")
         enclosure_url = str((selected or {}).get("enclosure_url") or "").strip()
         tidal_id = str((selected or {}).get("tidal_id") or "").strip()
-        if not selected or not enclosure_url or not tidal_id:
+        if match_status != "confident" or not selected or not enclosure_url or not tidal_id:
             logger.warning("tidarr: no confident match for %s - %s", artist, album)
             return {
                 "status": "unresolved",
-                "match_status": str(preview.get("match_status") or "unresolved"),
+                "match_status": match_status,
                 "match_strategy": str(preview.get("match_strategy") or "search_score"),
                 "match_confidence": float(preview.get("match_confidence") or 0.0),
                 "match_reasons": list(preview.get("match_reasons") or []),
@@ -246,57 +280,59 @@ class TidarrDownloader:
                 "selected": None,
             }
 
+        expected_tidal_ids = self._expected_tidal_ids(metadata)
         searched = self._search_candidates(artist, album)
-        evaluated = evaluate_tidarr_candidates(
-            artist=artist,
-            album=album,
-            metadata=metadata,
-            candidates=searched,
-            min_confidence=self._match_min_score,
-            ambiguous_margin=0.04,
-            snapshot_limit=10,
-        )
-
-        best_score = float(evaluated.get("best_score") or 0.0)
-        search_weak_or_empty = (not searched) or best_score < max(0.72, self._match_min_score - 0.10)
-
-        if str(evaluated.get("match_status") or "") != "confident" and search_weak_or_empty:
-            explicit = self._candidate_from_explicit_id(artist, album, metadata)
-            if explicit:
-                direct_eval = evaluate_tidarr_candidates(
-                    artist=artist,
-                    album=album,
-                    metadata=metadata,
-                    candidates=[explicit],
-                    min_confidence=0.80,
-                    ambiguous_margin=0.01,
-                    snapshot_limit=1,
-                )
-                direct_candidates = list(evaluated.get("candidates") or [])
-                direct_candidates.insert(
-                    0,
+        if expected_tidal_ids:
+            id_scoped = [
+                candidate
+                for candidate in searched
+                if str(candidate.get("tidal_id") or "").strip() in expected_tidal_ids
+            ]
+            if not id_scoped:
+                snapshot = [
                     {
-                        "tidal_id": explicit["tidal_id"],
-                        "artist": explicit["artist"],
-                        "album": explicit["album"],
-                        "quality": explicit["quality"],
-                        "year": explicit.get("year"),
-                        "track_count": explicit.get("track_count"),
-                        "source": explicit.get("source"),
-                        "score": float(direct_eval.get("best_score") or 0.0),
-                    },
-                )
-                reasons = list(direct_eval.get("match_reasons") or [])
-                reasons.append("search_weak_or_empty_with_explicit_id")
+                        "tidal_id": str(c.get("tidal_id") or ""),
+                        "artist": str(c.get("artist") or ""),
+                        "album": str(c.get("album") or ""),
+                        "quality": str(c.get("quality") or ""),
+                        "year": c.get("year"),
+                        "track_count": c.get("track_count"),
+                        "source": str(c.get("source") or "search"),
+                        "score": float(c.get("score") or 0.0),
+                    }
+                    for c in searched[:10]
+                ]
                 return {
                     "status": "search_inconsistent",
                     "match_status": "search_inconsistent",
-                    "match_strategy": str((direct_eval.get("selected") or {}).get("match_strategy") or "id_signature"),
-                    "match_confidence": float(direct_eval.get("best_score") or 0.0),
-                    "match_reasons": reasons,
-                    "candidates": direct_candidates[:10],
-                    "selected": direct_eval.get("selected"),
+                    "match_strategy": "id_signature",
+                    "match_confidence": 0.0,
+                    "match_reasons": [
+                        "expected_tidal_id_not_found_in_search",
+                        f"expected_tidal_ids={','.join(sorted(expected_tidal_ids))}",
+                    ],
+                    "candidates": snapshot,
+                    "selected": None,
                 }
+            evaluated = evaluate_tidarr_candidates(
+                artist=artist,
+                album=album,
+                metadata=metadata,
+                candidates=id_scoped,
+                min_confidence=self._match_min_score,
+                ambiguous_margin=0.04,
+                snapshot_limit=10,
+            )
+        else:
+            evaluated = evaluate_tidarr_candidates(
+                artist=artist,
+                album=album,
+                metadata=metadata,
+                candidates=searched,
+                min_confidence=self._match_min_score,
+                ambiguous_margin=0.04,
+                snapshot_limit=10,
+            )
 
         return {
             "status": str(evaluated.get("status") or "unresolved"),
@@ -307,6 +343,15 @@ class TidarrDownloader:
             "candidates": list(evaluated.get("candidates") or []),
             "selected": evaluated.get("selected"),
         }
+
+    @staticmethod
+    def _expected_tidal_ids(metadata: dict[str, Any]) -> set[str]:
+        expected: set[str] = set()
+        for key in ("manual_tidal_album_id", "tidal_album_id", "tidal_id"):
+            raw = str((metadata or {}).get(key) or "").strip()
+            if raw.isdigit():
+                expected.add(raw)
+        return expected
 
     def translate_path(self, storage_path: str) -> str:
         if (
@@ -685,4 +730,3 @@ CONFIG_SCHEMA = [
         "placeholder": "/app/downloads",
     },
 ]
-
