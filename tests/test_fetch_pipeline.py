@@ -328,3 +328,89 @@ def test_fetch_queue_batch_cancel_soft_delete(tmp_db, monkeypatch):  # noqa: ARG
     assert str(queue_rows[queue_c_id]["status"]) == "canceled"
     # First item stays active/running until it reaches terminal state.
     assert str((queued_a.get("queue") or {}).get("status")) in {"running", "pending"}
+
+
+def test_submit_with_match_persists_task_match_diagnostics(tmp_db, monkeypatch):  # noqa: ARG001
+    class _Downloader:
+        name = "tidarr"
+
+        @staticmethod
+        def submit_with_match(_artist: str, _album: str, _metadata: dict) -> dict:
+            return {
+                "status": "unresolved",
+                "match_status": "ambiguous",
+                "match_strategy": "search_score",
+                "match_confidence": 0.81,
+                "match_reasons": ["ambiguous_margin=0.01"],
+                "candidates": [{"tidal_id": "111", "score": 0.81}],
+                "error_message": "Multiple close matches",
+                "job_id": "",
+            }
+
+    monkeypatch.setattr("app.plugins.get_downloader", lambda: _Downloader())
+    build = _build_with_missing_album("Fetch Match Diagnostics")
+    run = fetch_pipeline.start_fetch_run(build["id"])
+
+    tasks = fetch_pipeline.list_fetch_tasks_for_run(run["id"])
+    assert len(tasks) == 1
+    task = tasks[0]
+    assert task["stage"] == "unresolved"
+    assert task["error_code"] == "ambiguous_match"
+    assert task["match_status"] == "ambiguous"
+    assert task["match_strategy"] == "search_score"
+    assert float(task["match_confidence"] or 0.0) > 0.8
+    assert "ambiguous_margin" in " ".join(task.get("match_reasons") or [])
+    assert isinstance(task.get("match_candidates"), list)
+
+
+def test_set_manual_release_for_task_updates_metadata(tmp_db, monkeypatch):  # noqa: ARG001
+    class _Downloader:
+        name = "tidarr"
+
+        @staticmethod
+        def submit_with_match(_artist: str, _album: str, _metadata: dict) -> dict:
+            return {
+                "status": "unresolved",
+                "match_status": "unresolved",
+                "match_strategy": "search_score",
+                "match_confidence": 0.0,
+                "match_reasons": ["No candidates"],
+                "candidates": [],
+                "error_message": "No candidates",
+                "job_id": "",
+            }
+
+    monkeypatch.setattr("app.plugins.get_downloader", lambda: _Downloader())
+    build = _build_with_missing_album("Fetch Manual Release")
+    run = fetch_pipeline.start_fetch_run(build["id"])
+    task = fetch_pipeline.list_fetch_tasks_for_run(run["id"])[0]
+
+    updated = fetch_pipeline.set_manual_release_for_task(run["id"], int(task["id"]), "510517322")
+    assert str((updated.get("metadata") or {}).get("manual_tidal_album_id")) == "510517322"
+    assert str(updated.get("match_strategy") or "") == "manual_id"
+
+
+def test_probe_fetch_match_uses_preview_without_mutating(tmp_db, monkeypatch):  # noqa: ARG001
+    class _Downloader:
+        name = "tidarr"
+
+        @staticmethod
+        def preview_match(_artist: str, _album: str, _metadata: dict) -> dict:
+            return {
+                "status": "confident",
+                "match_status": "confident",
+                "match_strategy": "search_score",
+                "match_confidence": 0.92,
+                "match_reasons": ["artist_score=1.00", "album_score=1.00"],
+                "candidates": [{"tidal_id": "123", "score": 0.92}],
+                "selected": {"tidal_id": "123"},
+            }
+
+    monkeypatch.setattr("app.plugins.get_downloader", lambda: _Downloader())
+    build = _build_with_missing_album("Fetch Probe")
+    report = fetch_pipeline.probe_fetch_match(build_id=build["id"])
+
+    assert report["provider"] == "tidarr"
+    assert report["total"] == 1
+    assert report["counts"]["confident"] == 1
+    assert report["counts"]["ambiguous"] == 0
