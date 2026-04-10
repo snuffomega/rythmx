@@ -89,6 +89,7 @@ PLUGIN_VERSION = "1.1.0"
 PLUGIN_DESCRIPTION = "Copies downloaded audio files into your music library."
 CAPABILITIES = {
     "fetch_contract_version": 1,
+    # NO pre_fetch_enrichment_version — this plugin doesn't participate in enrichment
     "roles": ["file_handler"],
     "error_taxonomy": ["recoverable", "permanent", "config"],
 }

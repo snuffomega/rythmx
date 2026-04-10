@@ -15,6 +15,7 @@ from typing import Any, Optional
 
 import requests
 
+from app.clients import musicbrainz_client
 from app.services.enrichment._helpers import match_album_title, strip_title_suffixes
 from app.services.fetch_matching import evaluate_tidarr_candidates
 
@@ -709,12 +710,146 @@ class TidarrDownloader:
             logger.warning("tidarr: poll_queue error: %s", exc)
             return []
 
+    def pre_fetch_enrich(self, artist: str, album: str, metadata: dict) -> dict:
+        """
+        Resolve provider-specific Tidal IDs before fetch task submission.
+        Tries A → D → {} chain: MusicBrainz URL rels → Tidal API search → fallback.
+        """
+        # A: MusicBrainz URL relationships
+        result = self._resolve_via_musicbrainz(metadata)
+        if result:
+            return result
+
+        # D: Tidal API search
+        result = self._resolve_via_tidal_api(artist, album, metadata)
+        if result:
+            return result
+
+        # Fallback: manual override required
+        return {}
+
+    def _resolve_via_musicbrainz(self, metadata: dict) -> dict | None:
+        """
+        If metadata has musicbrainz_release_id, fetch its URL relationships
+        and look for tidal.com/album/{id} links.
+        """
+        mbid = str(metadata.get("musicbrainz_release_id") or "").strip()
+        if not mbid:
+            return None
+
+        try:
+            release = musicbrainz_client.get_release(mbid, inc="url-rels")
+            if not release:
+                return None
+
+            # Parse URL rels for tidal.com/album/{id}
+            url_rels = release.get("url-rels") or []
+            for url_rel in url_rels:
+                url = str(url_rel.get("url") or "")
+                if "tidal.com/album/" in url:
+                    match = re.search(r"/album/([0-9]+)", url)
+                    if match:
+                        tidal_id = match.group(1)
+                        logger.info("tidarr: resolved tidal_id via MB url-rel: %s", tidal_id)
+                        return {"tidal_album_id": tidal_id}
+        except Exception as e:
+            logger.debug("tidarr: _resolve_via_musicbrainz failed: %s", e)
+
+        return None
+
+    def _resolve_via_tidal_api(self, artist: str, album: str, metadata: dict) -> dict | None:
+        """
+        Call Tidal API search using rich metadata (year, track_count).
+        Score results and return confident match or None.
+        """
+        token = self._get_tidal_token()
+        if not token:
+            logger.debug("tidarr: tidal token not available for pre-fetch")
+            return None
+
+        try:
+            # Tidal API search
+            results = self._tidal_search(token, artist, album)
+            if not results:
+                return None
+
+            # Convert to candidates and score
+            candidates = [self._tidal_result_to_candidate(r) for r in results]
+            evaluated = evaluate_tidarr_candidates(
+                artist=artist,
+                album=album,
+                metadata=metadata,
+                candidates=candidates,
+                min_confidence=0.88,
+                ambiguous_margin=0.05,
+                snapshot_limit=5,
+            )
+
+            if evaluated.get("match_status") == "confident":
+                selected = evaluated.get("selected")
+                if selected:
+                    tidal_id = str(selected.get("tidal_id") or "").strip()
+                    if tidal_id:
+                        logger.info("tidarr: resolved tidal_id via Tidal API: %s", tidal_id)
+                        return {"tidal_album_id": tidal_id}
+        except Exception as e:
+            logger.debug("tidarr: _resolve_via_tidal_api failed: %s", e)
+
+        return None
+
+    def _get_tidal_token(self) -> str | None:
+        """Fetch fresh token from Tidarr settings. Never stored."""
+        try:
+            resp = self._session.get(f"{self._url}/api/settings", timeout=8)
+            resp.raise_for_status()
+            data = resp.json()
+            token = data.get("tiddl_config", {}).get("auth", {}).get("token", "")
+            return token if token else None
+        except Exception as e:
+            logger.debug("tidarr: failed to fetch tidal token: %s", e)
+            return None
+
+    def _tidal_search(self, token: str, artist: str, album: str) -> list[dict]:
+        """Call Tidal's native API search (not Newznab proxy)."""
+        try:
+            resp = requests.get(
+                "https://api.tidal.com/v1/search",
+                params={
+                    "query": f"{artist} {album}",
+                    "types": "ALBUMS",
+                    "limit": 25,
+                    "countryCode": "US",
+                },
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=15,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return data.get("albums", {}).get("items", [])
+        except Exception as e:
+            logger.debug("tidarr: tidal search failed: %s", e)
+            return []
+
+    def _tidal_result_to_candidate(self, tidal_item: dict) -> dict:
+        """Convert Tidal API album result to candidate dict for scoring."""
+        return {
+            "tidal_id": str(tidal_item.get("id", "")),
+            "artist": str(tidal_item.get("artists", [{}])[0].get("name", "")),
+            "album": str(tidal_item.get("title", "")),
+            "year": str(tidal_item.get("releaseDate", ""))[:4],
+            "track_count": tidal_item.get("numberOfTracks"),
+            "quality": self._quality,
+            "source": "tidal_api",
+            "version": tidal_item.get("version"),
+        }
+
 
 PLUGIN_API_VERSION = 2
 PLUGIN_VERSION = "2.2.0"
 PLUGIN_DESCRIPTION = "Downloads albums via Tidarr (Tidal) with strict release matching."
 CAPABILITIES = {
     "fetch_contract_version": 1,
+    "pre_fetch_enrichment_version": 1,
     "roles": ["downloader"],
     "error_taxonomy": ["recoverable", "permanent", "config"],
 }
