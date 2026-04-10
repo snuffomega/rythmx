@@ -1720,6 +1720,85 @@ def get_fetch_run(run_id: str) -> dict[str, Any] | None:
     return summary or None
 
 
+def delete_fetch_run(run_id: str, *, remove_queue_item: bool = True) -> dict[str, Any]:
+    summary = _run_summary(run_id)
+    if not summary:
+        raise ValueError("Fetch run not found")
+    if str(summary.get("status") or "").strip().lower() == "running":
+        raise RuntimeError("Cannot delete a running fetch run")
+
+    queue_id = str(summary.get("queue_id") or "").strip()
+    with rythmx_store._connect() as conn:
+        tasks_deleted = int(
+            (conn.execute("DELETE FROM fetch_tasks WHERE run_id = ?", (run_id,)).rowcount or 0)
+        )
+        runs_deleted = int(
+            (conn.execute("DELETE FROM fetch_runs WHERE id = ?", (run_id,)).rowcount or 0)
+        )
+        queue_deleted = 0
+        if remove_queue_item:
+            if queue_id:
+                queue_deleted += int(
+                    (conn.execute("DELETE FROM fetch_queue WHERE id = ?", (queue_id,)).rowcount or 0)
+                )
+            queue_deleted += int(
+                (conn.execute("DELETE FROM fetch_queue WHERE run_id = ?", (run_id,)).rowcount or 0)
+            )
+
+    return {
+        "deleted": bool(runs_deleted > 0),
+        "run_id": run_id,
+        "tasks_deleted": tasks_deleted,
+        "queue_deleted": queue_deleted,
+    }
+
+
+def delete_fetch_runs_for_build(build_id: str, *, include_running: bool = False) -> dict[str, Any]:
+    with rythmx_store._connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, status, queue_id
+            FROM fetch_runs
+            WHERE build_id = ?
+            """,
+            (build_id,),
+        ).fetchall()
+
+        run_ids: list[str] = []
+        tasks_deleted = 0
+        queue_deleted = 0
+        skipped_running = 0
+
+        for row in rows:
+            run_id = str(row["id"])
+            status = str(row["status"] or "").strip().lower()
+            queue_id = str(row["queue_id"] or "").strip()
+            if status == "running" and not include_running:
+                skipped_running += 1
+                continue
+            tasks_deleted += int(
+                (conn.execute("DELETE FROM fetch_tasks WHERE run_id = ?", (run_id,)).rowcount or 0)
+            )
+            queue_deleted += int(
+                (conn.execute("DELETE FROM fetch_queue WHERE run_id = ?", (run_id,)).rowcount or 0)
+            )
+            if queue_id:
+                queue_deleted += int(
+                    (conn.execute("DELETE FROM fetch_queue WHERE id = ?", (queue_id,)).rowcount or 0)
+                )
+            deleted = int((conn.execute("DELETE FROM fetch_runs WHERE id = ?", (run_id,)).rowcount or 0))
+            if deleted > 0:
+                run_ids.append(run_id)
+
+    return {
+        "deleted": len(run_ids),
+        "run_ids": run_ids,
+        "tasks_deleted": tasks_deleted,
+        "queue_deleted": queue_deleted,
+        "skipped_running": skipped_running,
+    }
+
+
 def list_fetch_tasks_for_run(
     run_id: str,
     *,

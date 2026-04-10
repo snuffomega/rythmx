@@ -9,11 +9,13 @@ from __future__ import annotations
 import logging
 import os
 import re
+import unicodedata
 import xml.etree.ElementTree as ET
 from typing import Any, Optional
 
 import requests
 
+from app.services.enrichment._helpers import match_album_title, strip_title_suffixes
 from app.services.fetch_matching import evaluate_tidarr_candidates
 
 logger = logging.getLogger(__name__)
@@ -289,6 +291,33 @@ class TidarrDownloader:
                 if str(candidate.get("tidal_id") or "").strip() in expected_tidal_ids
             ]
             if not id_scoped:
+                fallback_eval = evaluate_tidarr_candidates(
+                    artist=artist,
+                    album=album,
+                    metadata=metadata,
+                    candidates=searched,
+                    min_confidence=max(self._match_min_score, 0.92),
+                    ambiguous_margin=0.06,
+                    snapshot_limit=10,
+                )
+                selected = fallback_eval.get("selected")
+                if isinstance(selected, dict) and self._is_strict_text_match(
+                    artist,
+                    album,
+                    str(selected.get("artist") or ""),
+                    str(selected.get("album") or ""),
+                ):
+                    reasons = list(fallback_eval.get("match_reasons") or [])
+                    reasons.append("expected_tidal_id_missing_recovered_by_strict_title_match")
+                    return {
+                        "status": "confident",
+                        "match_status": "confident",
+                        "match_strategy": "search_score",
+                        "match_confidence": float(fallback_eval.get("match_confidence") or 0.0),
+                        "match_reasons": reasons,
+                        "candidates": list(fallback_eval.get("candidates") or []),
+                        "selected": selected,
+                    }
                 snapshot = [
                     {
                         "tidal_id": str(c.get("tidal_id") or ""),
@@ -352,6 +381,31 @@ class TidarrDownloader:
             if raw.isdigit():
                 expected.add(raw)
         return expected
+
+    @staticmethod
+    def _normalize_text(value: str) -> str:
+        text = unicodedata.normalize("NFKD", str(value or ""))
+        text = text.encode("ascii", "ignore").decode("ascii")
+        text = text.lower().strip()
+        text = text.replace("&", " and ")
+        text = re.sub(r"[^\w\s]", " ", text)
+        text = re.sub(r"\s+", " ", text)
+        return text.strip()
+
+    def _is_strict_text_match(
+        self,
+        expected_artist: str,
+        expected_album: str,
+        candidate_artist: str,
+        candidate_album: str,
+    ) -> bool:
+        if self._normalize_text(expected_artist) != self._normalize_text(candidate_artist):
+            return False
+        expected_clean = self._normalize_text(strip_title_suffixes(expected_album))
+        candidate_clean = self._normalize_text(strip_title_suffixes(candidate_album))
+        if expected_clean == candidate_clean and expected_clean:
+            return True
+        return float(match_album_title(expected_album, candidate_album)) >= 0.98
 
     def translate_path(self, storage_path: str) -> str:
         if (

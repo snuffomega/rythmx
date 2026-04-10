@@ -516,6 +516,16 @@ export const forgeFetchApi = {
   getRun: (runId: string) =>
     request<{ status: string; run: FetchRun }>(`/forge/fetch/runs/${encodeURIComponent(runId)}`)
       .then(r => r.run),
+  deleteRun: (runId: string) =>
+    request<{
+      status: string;
+      deleted: boolean;
+      run_id: string;
+      tasks_deleted: number;
+      queue_deleted: number;
+    }>(`/forge/fetch/runs/${encodeURIComponent(runId)}`, {
+      method: 'DELETE',
+    }),
   getRunTasks: (runId: string, params: { stage?: string; provider?: string; limit?: number } = {}) => {
     const qs = new URLSearchParams(
       Object.entries(params).filter(([, v]) => v != null && v !== '') as [string, string][]

@@ -311,6 +311,7 @@ from app.routes.forge_sync_build_routes import (
     forge_builds_publish,
     forge_builds_resync,
     forge_builds_update,
+    forge_fetch_run_delete,
     forge_fetch_run_get,
     forge_fetch_run_retry,
     forge_fetch_run_tasks,

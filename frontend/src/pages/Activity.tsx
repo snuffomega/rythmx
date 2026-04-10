@@ -106,6 +106,7 @@ export function ActivityPage({ toast }: ActivityPageProps) {
   const [queueStatusFilter, setQueueStatusFilter] = useState('active');
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [retryingRunId, setRetryingRunId] = useState<string | null>(null);
+  const [deletingRunId, setDeletingRunId] = useState<string | null>(null);
   const [retryingTaskId, setRetryingTaskId] = useState<number | null>(null);
   const [selectingReleaseTaskId, setSelectingReleaseTaskId] = useState<number | null>(null);
   const [cancelingQueueId, setCancelingQueueId] = useState<string | null>(null);
@@ -293,6 +294,29 @@ export function ActivityPage({ toast }: ActivityPageProps) {
       toast.error(err instanceof Error ? err.message : 'Failed to retry run');
     } finally {
       setRetryingRunId(null);
+    }
+  };
+
+  const handleDeleteRun = async (run: FetchRun) => {
+    if (run.status === 'running') {
+      toast.error('Cannot remove a running fetch run');
+      return;
+    }
+    const confirmed = window.confirm(`Remove fetch run "${run.build_name || run.id}" from Activity history?`);
+    if (!confirmed) return;
+
+    setDeletingRunId(run.id);
+    try {
+      await forgeFetchApi.deleteRun(run.id);
+      if (selectedRunId === run.id) {
+        setSelectedRunId(null);
+      }
+      toast.success('Fetch run removed from activity');
+      refreshAll(true);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to remove run');
+    } finally {
+      setDeletingRunId(null);
     }
   };
 
@@ -531,6 +555,16 @@ export function ActivityPage({ toast }: ActivityPageProps) {
                       }}
                     >
                       Open Build
+                    </button>
+                    <button
+                      className="btn-secondary text-[11px] px-2 py-1"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteRun(run);
+                      }}
+                      disabled={deletingRunId === run.id || run.status === 'running'}
+                    >
+                      {deletingRunId === run.id ? 'Removing...' : 'Remove Run'}
                     </button>
                     <button
                       className="btn-secondary text-[11px] px-2 py-1"

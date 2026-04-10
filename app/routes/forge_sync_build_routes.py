@@ -581,6 +581,13 @@ def forge_builds_create(data: Optional[dict[str, Any]] = Body(default=None)):
 @router.delete("/forge/builds/{build_id}")
 def forge_builds_delete(build_id: str):
     from app.routes import forge as facade
+    from app.services import fetch_pipeline
+
+    # Keep Activity in sync with Build deletion: remove terminal fetch runs tied to this build.
+    try:
+        fetch_pipeline.delete_fetch_runs_for_build(build_id, include_running=False)
+    except Exception as exc:
+        logger.warning("forge/builds/%s delete: failed to purge fetch history: %s", build_id, exc)
 
     deleted = facade.rythmx_store.delete_forge_build(build_id)
     if not deleted:
@@ -984,6 +991,24 @@ def forge_fetch_run_get(run_id: str):
     if not run:
         return facade._error("Fetch run not found", status_code=404, code="FORGE_FETCH_RUN_NOT_FOUND")
     return {"status": "ok", "run": run}
+
+
+@router.delete("/forge/fetch/runs/{run_id}")
+def forge_fetch_run_delete(run_id: str):
+    from app.routes import forge as facade
+    from app.services import fetch_pipeline
+
+    try:
+        result = fetch_pipeline.delete_fetch_run(run_id, remove_queue_item=True)
+    except ValueError:
+        return facade._error("Fetch run not found", status_code=404, code="FORGE_FETCH_RUN_NOT_FOUND")
+    except RuntimeError as exc:
+        return facade._error(str(exc), status_code=409, code="FORGE_FETCH_RUN_DELETE_BLOCKED")
+    except Exception as exc:
+        logger.error("forge/fetch run delete failed run=%s: %s", run_id, exc, exc_info=True)
+        return facade._error(str(exc), status_code=500, code="FORGE_FETCH_RUN_DELETE_FAILED")
+
+    return {"status": "ok", **result}
 
 
 @router.get("/forge/fetch/runs/{run_id}/tasks")
