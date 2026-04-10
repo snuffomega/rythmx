@@ -908,11 +908,7 @@ class TidarrDownloader:
                     continue
 
                 # Reuse existing matcher for artist name scoring
-                confidence = match_album_title(
-                    expected=artist_name,
-                    actual=result_name,
-                    min_overlap=self._artist_min_overlap,
-                )
+                confidence = match_album_title(lib_title=artist_name, api_title=result_name)
 
                 popularity = result.get("popularity", 0)
                 scored.append({
