@@ -8,6 +8,7 @@ const {
   listQueueMock,
   getRunTasksMock,
   retryRunMock,
+  deleteRunMock,
   cancelQueueItemMock,
   cancelQueueBatchMock,
   navigateMock,
@@ -16,6 +17,7 @@ const {
   listQueueMock: vi.fn(),
   getRunTasksMock: vi.fn(),
   retryRunMock: vi.fn(),
+  deleteRunMock: vi.fn(),
   cancelQueueItemMock: vi.fn(),
   cancelQueueBatchMock: vi.fn(),
   navigateMock: vi.fn(),
@@ -39,6 +41,7 @@ vi.mock('../services/api', async (importOriginal) => {
       listQueue: (...args: unknown[]) => listQueueMock(...args),
       getRunTasks: (...args: unknown[]) => getRunTasksMock(...args),
       retryRun: (...args: unknown[]) => retryRunMock(...args),
+      deleteRun: (...args: unknown[]) => deleteRunMock(...args),
       cancelQueueItem: (...args: unknown[]) => cancelQueueItemMock(...args),
       cancelQueueBatch: (...args: unknown[]) => cancelQueueBatchMock(...args),
     },
@@ -53,13 +56,17 @@ describe('ActivityPage', () => {
     listQueueMock.mockReset()
     getRunTasksMock.mockReset()
     retryRunMock.mockReset()
+    deleteRunMock.mockReset()
     cancelQueueItemMock.mockReset()
     cancelQueueBatchMock.mockReset()
     toast.success.mockReset()
     toast.error.mockReset()
     navigateMock.mockReset()
     useForgePipelineStore.getState().resetPipeline('fetch')
+    listRunsMock.mockResolvedValue([])
     listQueueMock.mockResolvedValue([])
+    getRunTasksMock.mockResolvedValue([])
+    deleteRunMock.mockResolvedValue({ status: 'ok', deleted: true, run_id: 'run-1', tasks_deleted: 1, queue_deleted: 1 })
     cancelQueueItemMock.mockResolvedValue({ status: 'ok', canceled: true })
     cancelQueueBatchMock.mockResolvedValue({ status: 'ok', canceled: 0, queue_ids: [] })
   })
@@ -291,5 +298,47 @@ describe('ActivityPage', () => {
     const pollIntervals = setIntervalSpy.mock.calls.map(call => call[1])
     expect(pollIntervals).toContain(30000)
     expect(pollIntervals).not.toContain(10000)
+  })
+
+  it('removes a terminal run from activity history', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    listRunsMock.mockResolvedValue([
+      {
+        id: 'run-del',
+        build_id: 'build-del',
+        build_name: 'Build Delete',
+        build_source: 'new_music',
+        provider: 'tidarr',
+        status: 'failed',
+        total_tasks: 1,
+        processed_tasks: 1,
+        active_tasks: 0,
+        in_library: 0,
+        failed: 1,
+        unresolved: 0,
+        stage_counts: { failed: 1 },
+        config: {},
+        started_at: '2026-04-01T00:00:00',
+        finished_at: '2026-04-01T00:01:00',
+        created_at: '2026-04-01T00:00:00',
+        updated_at: '2026-04-01T00:01:00',
+      },
+    ])
+    getRunTasksMock.mockResolvedValue([])
+    deleteRunMock.mockResolvedValue({
+      status: 'ok',
+      deleted: true,
+      run_id: 'run-del',
+      tasks_deleted: 1,
+      queue_deleted: 1,
+    })
+
+    render(<ActivityPage toast={toast} />)
+    await waitFor(() => expect(screen.getByText('Build Delete')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByText('Remove Run'))
+    await waitFor(() => expect(confirmSpy).toHaveBeenCalled())
+    await waitFor(() => expect(deleteRunMock).toHaveBeenCalledWith('run-del'))
+    await waitFor(() => expect(toast.success).toHaveBeenCalled())
   })
 })

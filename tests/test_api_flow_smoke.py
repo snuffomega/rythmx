@@ -510,6 +510,16 @@ def test_forge_build_get_and_delete_contract(monkeypatch):
         "delete_forge_build",
         lambda build_id: build_id == "build-1",
     )
+    monkeypatch.setattr(
+        "app.services.fetch_pipeline.delete_fetch_runs_for_build",
+        lambda build_id, include_running=False: {
+            "deleted": 0,
+            "run_ids": [],
+            "tasks_deleted": 0,
+            "queue_deleted": 0,
+            "skipped_running": 0,
+        },
+    )
 
     found = forge.forge_builds_get("build-1")
     assert found["status"] == "ok"
@@ -530,6 +540,33 @@ def test_forge_build_get_and_delete_contract(monkeypatch):
     assert missing_delete.status_code == 404
     del_body = json.loads(missing_delete.body.decode("utf-8"))
     assert del_body["code"] == "FORGE_BUILD_NOT_FOUND"
+
+
+def test_forge_fetch_run_delete_contract(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.fetch_pipeline.delete_fetch_run",
+        lambda run_id, remove_queue_item=True: {
+            "deleted": True,
+            "run_id": run_id,
+            "tasks_deleted": 3,
+            "queue_deleted": 1,
+        },
+    )
+
+    deleted = forge.forge_fetch_run_delete("run-1")
+    assert deleted["status"] == "ok"
+    assert deleted["deleted"] is True
+    assert deleted["run_id"] == "run-1"
+
+    monkeypatch.setattr(
+        "app.services.fetch_pipeline.delete_fetch_run",
+        lambda run_id, remove_queue_item=True: (_ for _ in ()).throw(ValueError("not found")),
+    )
+    missing = forge.forge_fetch_run_delete("missing")
+    assert isinstance(missing, JSONResponse)
+    assert missing.status_code == 404
+    missing_body = json.loads(missing.body.decode("utf-8"))
+    assert missing_body["code"] == "FORGE_FETCH_RUN_NOT_FOUND"
 
 
 def test_forge_build_update_contract(monkeypatch):
