@@ -1034,3 +1034,47 @@ def forge_fetch_run_retry(run_id: str, data: Optional[dict[str, Any]] = Body(def
         return facade._error(str(exc), status_code=500, code="FORGE_FETCH_RETRY_FAILED")
 
     return {"status": "ok", "run_id": run_id, **result}
+
+
+@router.post("/forge/fetch/runs/{run_id}/tasks/{task_id}/select-release")
+def forge_fetch_task_select_release(
+    run_id: str,
+    task_id: int,
+    data: Optional[dict[str, Any]] = Body(default=None),
+):
+    from app.routes import forge as facade
+    from app.services import fetch_pipeline
+
+    payload = data if isinstance(data, dict) else {}
+    tidal_album_id = str(
+        payload.get("tidal_album_id")
+        or payload.get("release_id")
+        or payload.get("tidal_id")
+        or ""
+    ).strip()
+    if not tidal_album_id:
+        return facade._error("tidal_album_id is required", status_code=400, code="FORGE_VALIDATION_ERROR")
+
+    try:
+        task = fetch_pipeline.set_manual_release_for_task(run_id, task_id, tidal_album_id)
+        retry_result = fetch_pipeline.retry_fetch_run(run_id, task_ids=[task_id])
+    except ValueError as exc:
+        return facade._error(str(exc), status_code=404, code="FORGE_FETCH_TASK_NOT_FOUND")
+    except Exception as exc:
+        logger.error(
+            "forge/fetch select-release failed run=%s task=%s: %s",
+            run_id,
+            task_id,
+            exc,
+            exc_info=True,
+        )
+        return facade._error(str(exc), status_code=500, code="FORGE_FETCH_SELECT_RELEASE_FAILED")
+
+    return {
+        "status": "ok",
+        "run_id": run_id,
+        "task_id": int(task_id),
+        "selected_release_id": tidal_album_id,
+        "task": task,
+        "retry": retry_result,
+    }

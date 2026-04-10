@@ -532,6 +532,20 @@ export const forgeFetchApi = {
         body: JSON.stringify(taskIds && taskIds.length ? { task_ids: taskIds } : {}),
       }
     ),
+  selectTaskRelease: (runId: string, taskId: number, tidalAlbumId: string) =>
+    request<{
+      status: string;
+      run_id: string;
+      task_id: number;
+      selected_release_id: string;
+      retry: { retried: number; submission: Record<string, unknown>; run: FetchRun };
+    }>(
+      `/forge/fetch/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(String(taskId))}/select-release`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ tidal_album_id: tidalAlbumId }),
+      }
+    ),
   listQueue: (params: {
     status?: string;
     build_source?: string;

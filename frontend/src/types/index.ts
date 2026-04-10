@@ -716,6 +716,11 @@ export interface FetchTask {
   error_type?: 'recoverable' | 'permanent' | 'config' | string | null;
   error_code?: string | null;
   error_message?: string | null;
+  match_status?: 'confident' | 'ambiguous' | 'unresolved' | 'search_inconsistent' | string | null;
+  match_strategy?: string | null;
+  match_confidence?: number | null;
+  match_reasons?: string[];
+  match_candidates?: Array<Record<string, unknown>>;
   retry_count: number;
   scan_deadline_at?: string | null;
   completed_at?: string | null;

@@ -107,6 +107,7 @@ export function ActivityPage({ toast }: ActivityPageProps) {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [retryingRunId, setRetryingRunId] = useState<string | null>(null);
   const [retryingTaskId, setRetryingTaskId] = useState<number | null>(null);
+  const [selectingReleaseTaskId, setSelectingReleaseTaskId] = useState<number | null>(null);
   const [cancelingQueueId, setCancelingQueueId] = useState<string | null>(null);
   const [cancelingBatch, setCancelingBatch] = useState(false);
   const [selectedQueueIds, setSelectedQueueIds] = useState<Set<string>>(new Set());
@@ -310,6 +311,29 @@ export function ActivityPage({ toast }: ActivityPageProps) {
       toast.error(err instanceof Error ? err.message : 'Failed to retry task');
     } finally {
       setRetryingTaskId(null);
+    }
+  };
+
+  const handleSelectRelease = async (task: FetchTask) => {
+    if (!selectedRunId) return;
+    const suggested = String((task.metadata || {}).manual_tidal_album_id || (task.metadata || {}).tidal_album_id || '').trim();
+    const input = window.prompt('Enter Tidarr/Tidal album ID for this task', suggested);
+    const releaseId = String(input || '').trim();
+    if (!releaseId) return;
+    setSelectingReleaseTaskId(task.id);
+    try {
+      const result = await forgeFetchApi.selectTaskRelease(selectedRunId, task.id, releaseId);
+      const retried = Number(result?.retry?.retried || 0);
+      if (retried > 0) {
+        toast.success('Release selected; task retry queued');
+      } else {
+        toast.success('Release selected');
+      }
+      refreshAll(true);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to select release');
+    } finally {
+      setSelectingReleaseTaskId(null);
     }
   };
 
@@ -665,17 +689,33 @@ export function ActivityPage({ toast }: ActivityPageProps) {
                         </td>
                         <td className="px-3 py-2 text-text-soft">{task.updated_at}</td>
                         <td className="px-3 py-2 text-text-soft max-w-[340px]">
-                          {task.error_message || '-'}
+                          <div>{task.error_message || '-'}</div>
+                          {task.match_status && (
+                            <div className="text-[10px] uppercase tracking-wide text-text-dim mt-1">
+                              match: {task.match_status}
+                              {typeof task.match_confidence === 'number' ? ` (${task.match_confidence.toFixed(2)})` : ''}
+                            </div>
+                          )}
                         </td>
                         <td className="px-3 py-2">
                           {(task.stage === 'failed' || task.stage === 'unresolved') ? (
-                            <button
-                              className="btn-secondary text-[11px] px-2 py-1"
-                              onClick={() => handleRetryTask(task)}
-                              disabled={retryingTaskId === task.id}
-                            >
-                              {retryingTaskId === task.id ? 'Retrying...' : 'Retry Task'}
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <button
+                                className="btn-secondary text-[11px] px-2 py-1"
+                                onClick={() => handleRetryTask(task)}
+                                disabled={retryingTaskId === task.id}
+                              >
+                                {retryingTaskId === task.id ? 'Retrying...' : 'Retry Task'}
+                              </button>
+                              <button
+                                className="btn-secondary text-[11px] px-2 py-1"
+                                onClick={() => handleSelectRelease(task)}
+                                disabled={selectingReleaseTaskId === task.id}
+                                title="Set explicit Tidarr/Tidal album ID for this task"
+                              >
+                                {selectingReleaseTaskId === task.id ? 'Saving...' : 'Set Release ID'}
+                              </button>
+                            </div>
                           ) : (
                             <span className="text-text-dim text-[11px]">-</span>
                           )}
