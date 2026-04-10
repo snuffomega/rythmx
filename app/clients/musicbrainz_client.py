@@ -102,17 +102,26 @@ def get_artist(mbid: str) -> dict | None:
         return None
 
 
-def get_release(release_mbid: str) -> dict | None:
-    """Fetch a specific release and its release group to get first-release-date.
+def get_release(release_mbid: str, inc: str = "release-groups") -> dict | None:
+    """Fetch a specific release with optional includes.
 
-    Calls /ws/2/release/{id}?inc=release-groups&fmt=json.
-    Returns {"release_group_id": str, "first_release_date": str} or None.
+    Args:
+        release_mbid: Release MBID
+        inc: Comma-separated includes (default: "release-groups")
+             Common options: "release-groups", "url-rels"
+
+    Calls /ws/2/release/{id}?inc={inc}&fmt=json.
+    Returns dict with:
+        - "release_group_id": str
+        - "first_release_date": str or None
+        - "url-rels": list[{"url": str, "type": str}] (if url-rels included)
+    Or None on error.
     """
     rate_limiter.acquire("musicbrainz")
     try:
         resp = _session.get(
             f"{_BASE_URL}/release/{release_mbid}",
-            params={"inc": "release-groups", "fmt": "json"},
+            params={"inc": inc, "fmt": "json"},
             timeout=15,
         )
         if resp.status_code == 429:
@@ -132,10 +141,24 @@ def get_release(release_mbid: str) -> dict | None:
         if not release_group_id:
             return None
 
-        return {
+        result = {
             "release_group_id": release_group_id,
             "first_release_date": first_release_date or None,
         }
+
+        # Parse URL relationships if requested
+        if "url-rels" in inc:
+            url_rels = []
+            for rel in data.get("relationships", []):
+                if rel.get("type") == "external links":
+                    url_obj = rel.get("url", {})
+                    url_rels.append({
+                        "url": url_obj.get("resource", ""),
+                        "type": url_obj.get("type", ""),
+                    })
+            result["url-rels"] = url_rels
+
+        return result
     except requests.RequestException as e:
         logger.error("MusicBrainz get_release failed for '%s': %s", release_mbid, type(e).__name__)
         return None
